@@ -49,6 +49,7 @@ def test_parser_streams_nested_folders_and_ignores_inline_icons(tmp_path: Path) 
         ("书签栏", "开发 & 文档"),
     ]
     assert [folder.source_order for folder in folders] == [1, 2]
+    assert [event.source_sequence for event in events] == [1, 2, 3]
     assert len(bookmarks) == 1
     assert bookmarks[0].folder_path == ("书签栏", "开发 & 文档")
     assert bookmarks[0].source_folder_id == folders[1].source_folder_id
@@ -56,6 +57,37 @@ def test_parser_streams_nested_folders_and_ignores_inline_icons(tmp_path: Path) 
     assert bookmarks[0].title == "示例 & API"
     assert bookmarks[0].add_date == 123
     assert stats.inline_icon_count == 1
+
+
+def test_source_sequence_is_global_and_independent_of_chunk_boundaries(tmp_path: Path) -> None:
+    source = _write_export(
+        tmp_path / "source-order.html",
+        """
+        <DT><H3>Root</H3><DL><p>
+          <DT><A HREF="https://root.example/one">Root one</A>
+          <DT><H3>Nested</H3><DL><p>
+            <DT><A HREF="https://nested.example">Nested bookmark</A>
+          </DL><p>
+          <DT><A HREF="https://root.example/two">Root two</A>
+        </DL><p>
+        """,
+    )
+
+    expected = list(iter_netscape_events(source, chunk_size=source.stat().st_size + 1))
+
+    assert [type(event) for event in expected] == [
+        ParsedFolder,
+        ParsedBookmark,
+        ParsedFolder,
+        ParsedBookmark,
+        ParsedBookmark,
+    ]
+    assert [event.source_sequence for event in expected] == [1, 2, 3, 4, 5]
+    assert [event.position for event in expected if isinstance(event, ParsedBookmark)] == [1, 2, 3]
+    assert [event.source_order for event in expected if isinstance(event, ParsedFolder)] == [1, 2]
+
+    for chunk_size in (1, 2, 7, 31):
+        assert list(iter_netscape_events(source, chunk_size=chunk_size)) == expected
 
 
 def test_parser_assigns_distinct_ids_to_duplicate_folder_paths(tmp_path: Path) -> None:

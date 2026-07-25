@@ -33,6 +33,7 @@ class ParserLimits:
 @dataclass(frozen=True, slots=True)
 class ParsedBookmark:
     position: int
+    source_sequence: int
     raw_url: str
     title: str
     folder_path: tuple[str, ...]
@@ -47,6 +48,7 @@ class ParsedFolder:
     source_folder_id: int
     parent_source_folder_id: int | None
     source_order: int
+    source_sequence: int
     title: str
     folder_path: tuple[str, ...]
     depth: int

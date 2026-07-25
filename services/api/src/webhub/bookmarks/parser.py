@@ -19,7 +19,7 @@ from webhub.bookmarks.models import (
 
 _CHARSET_PATTERN = re.compile(rb"charset\s*=\s*['\"]?([A-Za-z0-9._-]+)", re.IGNORECASE)
 _NETSCAPE_MARKER = "NETSCAPE-BOOKMARK-FILE-1"
-PARSER_VERSION = "netscape-html.v1"
+PARSER_VERSION = "netscape-html.v2"
 
 
 def _clean_text(value: str, limit: int) -> tuple[str, bool]:
@@ -77,6 +77,7 @@ class _BookmarkHTMLParser(HTMLParser):
         self._capture_size = 0
         self._capture_truncated = False
         self._capture_attrs: dict[str, str] = {}
+        self._source_sequence = 0
 
     def feed(self, data: str) -> None:
         super().feed(data)
@@ -172,6 +173,7 @@ class _BookmarkHTMLParser(HTMLParser):
                 raise BookmarkFormatError(
                     f"Bookmark folder count exceeds {self._limits.max_folders}"
                 )
+            self._source_sequence += 1
             title = text or "(untitled)"
             folder = ParsedFolder(
                 source_folder_id=self._stats.folder_count,
@@ -179,6 +181,7 @@ class _BookmarkHTMLParser(HTMLParser):
                     self._folder_stack[-1].source_folder_id if self._folder_stack else None
                 ),
                 source_order=self._stats.folder_count,
+                source_sequence=self._source_sequence,
                 title=title,
                 folder_path=tuple(item.title for item in self._folder_stack) + (title,),
                 depth=len(self._folder_stack) + 1,
@@ -189,6 +192,7 @@ class _BookmarkHTMLParser(HTMLParser):
             self._stats.bookmark_count += 1
             if self._stats.bookmark_count > self._limits.max_bookmarks:
                 raise BookmarkFormatError(f"Bookmark count exceeds {self._limits.max_bookmarks}")
+            self._source_sequence += 1
             raw_url = self._capture_attrs.get("href", "")
             issues: tuple[str, ...] = ()
             if len(raw_url) > self._limits.max_url_chars:
@@ -198,6 +202,7 @@ class _BookmarkHTMLParser(HTMLParser):
             self._records.append(
                 ParsedBookmark(
                     position=self._stats.bookmark_count,
+                    source_sequence=self._source_sequence,
                     raw_url=raw_url,
                     title=text,
                     folder_path=tuple(item.title for item in self._folder_stack),

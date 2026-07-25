@@ -34,7 +34,7 @@ from webhub.bookmarks.privacy import (
     sensitive_url_keys,
 )
 
-_SCHEMA_VERSION = "webhub.bookmark-import-preview.v1"
+_SCHEMA_VERSION = "webhub.bookmark-import-preview.v2"
 
 
 def _connect(database_path: Path) -> sqlite3.Connection:
@@ -68,6 +68,7 @@ def _connect(database_path: Path) -> sqlite3.Connection:
             source_folder_id INTEGER PRIMARY KEY,
             parent_source_folder_id INTEGER,
             source_order INTEGER NOT NULL,
+            source_sequence INTEGER NOT NULL UNIQUE,
             title TEXT NOT NULL,
             folder_path TEXT NOT NULL,
             depth INTEGER NOT NULL,
@@ -88,6 +89,7 @@ def _connect(database_path: Path) -> sqlite3.Connection:
 
         CREATE TABLE occurrences (
             position INTEGER PRIMARY KEY,
+            source_sequence INTEGER NOT NULL UNIQUE,
             original_url TEXT NOT NULL,
             title TEXT NOT NULL,
             normalized_url TEXT,
@@ -141,15 +143,17 @@ def _stage_source(
                     source_folder_id,
                     parent_source_folder_id,
                     source_order,
+                    source_sequence,
                     title,
                     folder_path,
                     depth
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.source_folder_id,
                     event.parent_source_folder_id,
                     event.source_order,
+                    event.source_sequence,
                     event.title,
                     json.dumps(event.folder_path, ensure_ascii=False, separators=(",", ":")),
                     event.depth,
@@ -175,6 +179,7 @@ def _stage_source(
                 """
                 INSERT INTO occurrences (
                     position,
+                    source_sequence,
                     original_url,
                     title,
                     normalized_url,
@@ -184,10 +189,11 @@ def _stage_source(
                     reason,
                     add_date,
                     last_modified
-                ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     bookmark.position,
+                    bookmark.source_sequence,
                     bookmark.raw_url,
                     bookmark.title,
                     bookmark.source_folder_id,
@@ -281,6 +287,7 @@ def _stage_source(
             """
             INSERT INTO occurrences (
                 position,
+                source_sequence,
                 original_url,
                 title,
                 normalized_url,
@@ -290,10 +297,11 @@ def _stage_source(
                 reason,
                 add_date,
                 last_modified
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
             """,
             (
                 bookmark.position,
+                bookmark.source_sequence,
                 bookmark.raw_url,
                 bookmark.title,
                 normalized.normalized_url,
@@ -369,7 +377,7 @@ def _write_candidate_sources(connection: sqlite3.Connection, target: Path) -> No
 
 def _write_occurrences(connection: sqlite3.Connection, target: Path) -> None:
     with target.open("w", encoding="utf-8", newline="\n") as stream:
-        for row in connection.execute("SELECT * FROM occurrences ORDER BY position"):
+        for row in connection.execute("SELECT * FROM occurrences ORDER BY source_sequence"):
             value = dict(row)
             value["folder_path"] = json.loads(value["folder_path"])
             _json_line(stream, value)
@@ -377,7 +385,7 @@ def _write_occurrences(connection: sqlite3.Connection, target: Path) -> None:
 
 def _write_source_folders(connection: sqlite3.Connection, target: Path) -> None:
     with target.open("w", encoding="utf-8", newline="\n") as stream:
-        for row in connection.execute("SELECT * FROM source_folders ORDER BY source_order"):
+        for row in connection.execute("SELECT * FROM source_folders ORDER BY source_sequence"):
             value = dict(row)
             value["folder_path"] = json.loads(value["folder_path"])
             _json_line(stream, value)
@@ -386,7 +394,7 @@ def _write_source_folders(connection: sqlite3.Connection, target: Path) -> None:
 def _write_rejected(connection: sqlite3.Connection, target: Path) -> None:
     with target.open("w", encoding="utf-8", newline="\n") as stream:
         for row in connection.execute(
-            "SELECT * FROM occurrences WHERE status != ? ORDER BY position",
+            "SELECT * FROM occurrences WHERE status != ? ORDER BY source_sequence",
             (NormalizationStatus.ACCEPTED.value,),
         ):
             value = dict(row)

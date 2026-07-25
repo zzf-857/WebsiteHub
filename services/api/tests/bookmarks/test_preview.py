@@ -58,7 +58,7 @@ def test_preview_is_disk_backed_and_preserves_occurrences(tmp_path: Path) -> Non
         "public_fetch_requires_dns_revalidation": 2,
     }
     assert preview.summary["pipeline_versions"] == {
-        "parser": "netscape-html.v1",
+        "parser": "netscape-html.v2",
         "normalizer": "conservative-url.v1",
         "classification_rules": "bookmark-category-rules.v2",
         "sensitive_url_rules": "sensitive-url-keys.v2",
@@ -76,6 +76,9 @@ def test_preview_is_disk_backed_and_preserves_occurrences(tmp_path: Path) -> Non
     assert len(candidates) == 3
     assert len(occurrences) == 6
     assert len(folders) == 3
+    assert [item["position"] for item in occurrences] == [1, 2, 3, 4, 5, 6]
+    assert [item["source_sequence"] for item in occurrences] == [3, 4, 6, 7, 8, 9]
+    assert [item["source_sequence"] for item in folders] == [1, 2, 5]
     assert rejected[0]["reason"] == "unsupported_scheme:file"
     assert {item["normalized_url"] for item in candidates} >= {
         "https://example.com/docs#one",
@@ -88,8 +91,16 @@ def test_preview_is_disk_backed_and_preserves_occurrences(tmp_path: Path) -> Non
         folder_ids = connection.execute(
             "SELECT source_folder_id FROM source_folders WHERE title = 'Same'"
         ).fetchall()
+        staged_occurrences = connection.execute(
+            "SELECT position, source_sequence FROM occurrences ORDER BY position"
+        ).fetchall()
+        staged_folders = connection.execute(
+            "SELECT source_order, source_sequence FROM source_folders ORDER BY source_order"
+        ).fetchall()
     assert len(folder_ids) == 2
     assert folder_ids[0] != folder_ids[1]
+    assert staged_occurrences == [(1, 3), (2, 4), (3, 6), (4, 7), (5, 8), (6, 9)]
+    assert staged_folders == [(1, 1), (2, 2), (3, 5)]
 
 
 def test_preview_refuses_to_overwrite_an_existing_directory(tmp_path: Path) -> None:
