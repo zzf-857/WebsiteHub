@@ -1,0 +1,30 @@
+{
+  "name": "websitehub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent-first personal website knowledge hub",
+  "packageManager": "pnpm@11.1.3",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names web,api --prefix-colors cyan,green \"pnpm dev:web\" \"pnpm dev:api\"",
+    "dev:web": "pnpm --filter @webhub/web dev",
+    "dev:api": "uv run --project services/api webhub-db upgrade && uv run --project services/api uvicorn webhub.main:app --reload --no-proxy-headers --host 127.0.0.1 --port 8100",
+    "start": "concurrently --kill-others-on-fail --names web,api --prefix-colors cyan,green \"pnpm start:web\" \"pnpm start:api\"",
+    "start:web": "pnpm --filter @webhub/web start",
+    "start:api": "uv run --project services/api webhub-db upgrade && uv run --project services/api uvicorn webhub.main:app --workers 1 --no-proxy-headers --host 127.0.0.1 --port 8100",
+    "lint": "pnpm lint:web && pnpm lint:api",
+    "lint:web": "pnpm --filter @webhub/web lint",
+    "lint:api": "uv run --project services/api ruff check services/api/src services/api/tests services/api/alembic skills/import-browser-bookmarks/scripts",
+    "typecheck": "pnpm --filter @webhub/web typecheck",
+    "test": "pnpm test:web && pnpm test:api",
+    "test:web": "pnpm --filter @webhub/web test",
+    "test:api": "uv run --project services/api pytest",
+    "build": "pnpm --filter @webhub/web build",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "concurrently": "10.0.4"
+  }
+}

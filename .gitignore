@@ -32,6 +32,7 @@ MockData/
 logs/
 
 # Tool caches
+.playwright-cli/
 .pnpm-store/
 .uv-cache/
 

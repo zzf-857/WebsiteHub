@@ -1,0 +1,33 @@
+{
+  "name": "@webhub/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs --dev --hostname 0.0.0.0 --port 3100",
+    "build": "next build",
+    "start": "node server.mjs --hostname 0.0.0.0 --port 3100",
+    "lint": "eslint .",
+    "test": "node --test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/react": "4.0.40",
+    "ai": "7.0.37",
+    "lucide-react": "1.26.0",
+    "motion": "12.23.12",
+    "next": "16.2.11",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.2.11",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3"
+  }
+}
