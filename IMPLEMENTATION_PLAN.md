@@ -1,10 +1,10 @@
 # WebHub 实施计划
 
-> 文档版本：v1.1
+> 文档版本：v1.2
 > 更新日期：2026-07-26
 > 需求基线：`PRD.md v0.8 Draft`
 > 产品形态：局域网部署的跨平台 Web 网站系统
-> 当前阶段：Phase 1 进行中；后端账号认证与 Alembic 数据内核已验证，网站端账号联调、本机密码重置和业务资源隔离仍待完成；书签 parser/dry-run/Skill 合同已验证，正式账号导入闭环未实现
+> 当前阶段：Phase 1 进行中；后端账号认证、Alembic 数据内核、本机密码重置和网站端账号入口已验证，可复用的业务资源账号范围与拒绝测试基座仍待完成；书签 parser/dry-run/Skill 合同已验证，正式账号导入闭环未实现
 
 ## 1. 计划目的
 
@@ -36,7 +36,7 @@ WebHub 是运行在浏览器中的网站系统，不是 Electron、Tauri、PWA �
 - Vercel AI SDK `7.0.37`
 - `@ai-sdk/react` `4.0.40`
 
-Next.js 是唯一向局域网公开的 Web 入口。网站监听可配置地址，开发期默认 `0.0.0.0:3100`；页面和 API 使用同源路径，浏览器不直接访问 Python 端口。
+Next.js 是唯一向局域网公开的 Web 入口。网站监听可配置地址，开发期默认 `0.0.0.0:3100`；页面和 API 使用同源路径，浏览器不直接访问 Python 端口。开发与生产启动均经过仓库内置 Node 入口，在 Next 处理请求前用 socket 信息覆盖外部传入的 forwarding headers，并只接受启动时检测到的本机地址、机器名或 `WEBHUB_ALLOWED_HOSTS` 显式增加的 Host。
 
 ### 3.2 Python 服务
 
@@ -118,6 +118,8 @@ WebHub/
 - 网站至少保留 `/login`、`/register`、`/chat/[id]`、`/library`、`/spaces/[id]`、`/settings` 等稳定路由。
 - 页面刷新或直接打开深层 URL 后，必须能由服务端恢复账号和页面状态。
 - Next.js 通过 rewrite 将 `/api/backend/*` 转发到 FastAPI，并保留流式响应。
+- FastAPI 使用 `--no-proxy-headers` 监听 loopback；只有来自 loopback 网站入口的单跳原始 Host 和客户端 IP 可用于 Origin 校验与登录限流，非 loopback 或多值/畸形 forwarding headers 不受信任。
+- 登录在执行 Argon2 前原子占用“客户端 + 账号”与“客户端总量”两级窗口，限制并发穿透和轮换随机用户名；桶状态有容量上限与过期清理。MVP 固定单 API worker，重启会清空限流窗口，多 worker 前必须迁移到共享限流存储。
 - Next 的路由保护只改善导航体验，所有真实权限判断都由 FastAPI 完成。
 - MVP 不依赖浏览器扩展、桌面系统 API 或原生客户端能力。
 
@@ -197,7 +199,7 @@ WebHub/
 
 ### Phase 1 - Identity & Data Kernel
 
-当前进展（2026-07-26）：后端已实现注册、登录、退出、`/me`、主题偏好、改密、Argon2id、opaque Cookie token hash、会话撤销、Origin 校验、登录限流、SQLite WAL 和首个 Alembic migration；自动化测试覆盖迁移往返与漂移、未版本化库拒绝启动、跨重启会话/偏好恢复和双账号偏好隔离。登录/注册网页联调、本机密码重置、Provider 配置 API 及后续业务资源的跨账号拒绝模板仍未完成，因此本阶段保持“进行中”。
+当前进展（2026-07-26）：后端已实现注册、登录、退出、`/me`、主题偏好、改密、本机密码重置、Argon2id、opaque Cookie token hash、会话撤销、Origin 校验、按代理后真实客户端隔离的两级原子登录限流、SQLite WAL 和首个 Alembic migration；网站已接入登录、注册、路由守卫、退出和账号主题持久化。自动化测试覆盖迁移往返与漂移、未版本化库拒绝启动、畸形/伪造 Origin、Host allowlist、代理后客户端隔离、并发限流占位、跨用户名总桶、限流容量回收、跨重启会话/偏好恢复和双账号偏好隔离。后续业务资源的统一账号范围仓储与跨账号拒绝模板仍未完成，因此本阶段保持“进行中”；Provider 配置 API 仍按 Phase 4 实施，不作为 Phase 1 完成前置。
 
 交付：
 
@@ -423,6 +425,7 @@ Phase 5B 是跨依赖的独立纵向轨道：各里程碑随前置阶段落地�
 | AI SDK v7 跨语言流协议变化 | 独立 codec、固定版本和 fixture 合同测试 |
 | LangGraph checkpoint 与业务消息双存储 | main DB 作为 UI 事实源，以 run/message ID 对齐 |
 | SQLite + Qdrant Local 单写者限制 | Windows MVP 固定单 API worker；扩容时迁移服务型存储 |
+| 进程内登录限流在重启后清空 | MVP 固定单 API worker 并使用两级有界窗口；多 worker 或更高安全等级前迁移到共享持久限流 |
 | Ollama / bge-m3 不可用 | 显示索引状态，始终保留 FTS 与手动管理 |
 | 任意模型不支持 tool/structured output | 明确报错并回退手动流程，禁止猜测执行 |
 | 局域网 HTTP 无传输加密 | 明示仅适用于受信任 LAN；公网或不可信网络必须先加 HTTPS |
@@ -448,4 +451,4 @@ Phase 5B 是跨依赖的独立纵向轨道：各里程碑随前置阶段落地�
 
 ## 10. 当前迭代
 
-Phase 0 网站与 API Foundation 已完成，主线正在实现 Phase 1 账号闭环。后端认证与迁移内核已通过 40 项测试，网站端账号联调、本机密码重置和可复用的业务资源账号隔离模板是本阶段剩余工作。浏览器书签方向已经完成 parser/dry-run、2,541 occurrence mock、100,000 occurrence 合成基准和 `import-browser-bookmarks` Skill 合同；接下来提交脱敏 golden fixtures，并等待 Phase 1/2/4/5/7 的账号、业务表、Provider、任务 API 与确认能力逐步接入。不得把本地预检与 Skill 合同表述为正式导入、真实自动分类、两阶段写库确认或 Agent 运行时闭环。
+Phase 0 网站与 API Foundation 已完成，主线正在收尾 Phase 1 账号闭环。后端认证、迁移、本机密码重置以及网站端注册/登录/退出/主题同步已经接通；当前整仓后端测试基线为 50 项，可复用的业务资源账号范围仓储与跨账号拒绝模板是本阶段剩余工作。浏览器书签方向已经完成 parser/dry-run、2,541 occurrence mock、100,000 occurrence 合成基准和 `import-browser-bookmarks` Skill 合同；接下来提交脱敏 golden fixtures，并等待 Phase 2/4/5/7 的业务表、Provider、任务 API 与确认能力逐步接入。不得把本地预检与 Skill 合同表述为正式导入、真实自动分类、两阶段写库确认或 Agent 运行时闭环。
