@@ -72,6 +72,16 @@ def test_register_me_logout_and_login_round_trip(
 
     rejected_logout = client.post("/api/auth/logout", headers={"Origin": "http://attacker.invalid"})
     assert rejected_logout.status_code == 403
+    malformed_origin = client.post(
+        "/api/auth/logout",
+        headers={"Origin": "http://testserver/not-an-origin"},
+    )
+    assert malformed_origin.status_code == 403
+    invalid_ipv6_origin = client.post(
+        "/api/auth/logout",
+        headers={"Origin": "http://[::1"},
+    )
+    assert invalid_ipv6_origin.status_code == 403
     assert client.get("/api/auth/me").status_code == 200
 
     logout = client.post("/api/auth/logout", headers=SAME_ORIGIN_HEADERS)
@@ -206,6 +216,116 @@ def test_login_rate_limit_blocks_repeated_failures(auth_client: tuple[TestClient
     )
     assert limited.status_code == 429
     assert int(limited.headers["Retry-After"]) > 0
+
+
+def test_loopback_proxy_rate_limits_lan_clients_independently(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    proxy_headers = {
+        "Host": "127.0.0.1:8100",
+        "Origin": "http://192.168.1.20:3100",
+        "X-Forwarded-Host": "192.168.1.20:3100",
+    }
+    with TestClient(
+        create_app(settings=settings),
+        client=("127.0.0.1", 50_000),
+    ) as client:
+        registered = client.post(
+            "/api/auth/register",
+            json={"username": "lan-user", "password": "a secure lan password"},
+            headers={**proxy_headers, "X-Forwarded-For": "192.168.1.50"},
+        )
+        assert registered.status_code == 201
+        client.cookies.clear()
+
+        for _ in range(5):
+            failed = client.post(
+                "/api/auth/login",
+                json={"username": "lan-user", "password": "wrong password"},
+                headers={**proxy_headers, "X-Forwarded-For": "192.168.1.50"},
+            )
+            assert failed.status_code == 401
+
+        other_device = client.post(
+            "/api/auth/login",
+            json={"username": "lan-user", "password": "a secure lan password"},
+            headers={**proxy_headers, "X-Forwarded-For": "192.168.1.51"},
+        )
+        assert other_device.status_code == 200
+
+        still_limited = client.post(
+            "/api/auth/login",
+            json={"username": "lan-user", "password": "wrong password"},
+            headers={**proxy_headers, "X-Forwarded-For": "192.168.1.50"},
+        )
+        assert still_limited.status_code == 429
+
+
+def test_rate_limit_ignores_forwarded_client_from_non_loopback_peer(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    with TestClient(
+        create_app(settings=settings),
+        client=("192.168.1.60", 50_000),
+    ) as client:
+        for attempt in range(5):
+            response = client.post(
+                "/api/auth/login",
+                json={"username": "missing", "password": "wrong password"},
+                headers={
+                    **SAME_ORIGIN_HEADERS,
+                    "Host": "testserver",
+                    "X-Forwarded-For": f"192.168.1.{61 + attempt}",
+                },
+            )
+            assert response.status_code == 401
+
+        limited = client.post(
+            "/api/auth/login",
+            json={"username": "missing", "password": "wrong password"},
+            headers={
+                **SAME_ORIGIN_HEADERS,
+                "Host": "testserver",
+                "X-Forwarded-For": "192.168.1.99",
+            },
+        )
+        assert limited.status_code == 429
+
+
+def test_loopback_next_proxy_can_forward_the_original_lan_host(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    with TestClient(
+        create_app(settings=settings),
+        client=("127.0.0.1", 50_000),
+    ) as client:
+        response = client.post(
+            "/api/auth/register",
+            json={"username": "lan-user", "password": "a secure lan password"},
+            headers={
+                "Host": "127.0.0.1:8100",
+                "Origin": "http://192.168.1.20:3100",
+                "X-Forwarded-Host": "192.168.1.20:3100",
+            },
+        )
+
+    assert response.status_code == 201
+
+
+def test_non_loopback_client_cannot_spoof_the_forwarded_host(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    with TestClient(
+        create_app(settings=settings),
+        client=("192.168.1.50", 50_000),
+    ) as client:
+        response = client.post(
+            "/api/auth/register",
+            json={"username": "spoofed", "password": "a secure lan password"},
+            headers={
+                "Host": "127.0.0.1:8100",
+                "Origin": "http://192.168.1.20:3100",
+                "X-Forwarded-Host": "192.168.1.20:3100",
+            },
+        )
+
+    assert response.status_code == 403
 
 
 def test_account_survives_application_restart(tmp_path: Path) -> None:

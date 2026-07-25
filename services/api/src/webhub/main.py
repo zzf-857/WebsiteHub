@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from webhub.auth.rate_limit import SlidingWindowRateLimiter
+from webhub.auth.rate_limit import LoginRateLimiter
 from webhub.config import Settings, get_settings
 from webhub.db.database import Database
 from webhub.routes import router
@@ -35,7 +35,7 @@ def create_app(
     )
     application.state.settings = selected_settings
     application.state.database = selected_database
-    application.state.login_rate_limiter = SlidingWindowRateLimiter()
+    application.state.login_rate_limiter = LoginRateLimiter()
     application.include_router(router)
     return application
 

@@ -11,7 +11,7 @@ from webhub.auth.dependencies import (
     SettingsDependency,
     require_trusted_origin,
 )
-from webhub.auth.rate_limit import SlidingWindowRateLimiter
+from webhub.auth.rate_limit import LoginRateLimiter, RateLimitExceededError
 from webhub.auth.schemas import (
     AuthResponse,
     ChangePasswordRequest,
@@ -22,7 +22,7 @@ from webhub.auth.schemas import (
     RegisterRequest,
     UserResponse,
 )
-from webhub.auth.security import normalize_username, rate_limit_key
+from webhub.auth.security import normalize_username, rate_limit_client_host, rate_limit_key
 from webhub.auth.service import (
     InvalidCredentialsError,
     IssuedSession,
@@ -68,17 +68,20 @@ def _set_session_cookie(
     )
 
 
-def _rate_limiter(request: Request) -> SlidingWindowRateLimiter:
+def _rate_limiter(request: Request) -> LoginRateLimiter:
     return request.app.state.login_rate_limiter
 
 
-def _client_key(request: Request, username: str) -> str:
-    client_host = request.client.host if request.client else "unknown"
+def _rate_limit_keys(request: Request, username: str) -> tuple[str, str]:
+    client_host = rate_limit_client_host(request)
     try:
         normalized_username = normalize_username(username)
     except ValueError:
         normalized_username = "invalid"
-    return rate_limit_key(client_host, normalized_username)
+    return (
+        rate_limit_key("client", client_host),
+        rate_limit_key("account", client_host, normalized_username),
+    )
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
@@ -113,14 +116,15 @@ async def login(
     session: DatabaseSessionDependency,
 ) -> AuthResponse:
     limiter = _rate_limiter(request)
-    key = _client_key(request, payload.username)
-    retry_after = limiter.retry_after(key)
-    if retry_after is not None:
+    client_key, account_key = _rate_limit_keys(request, payload.username)
+    try:
+        attempt = limiter.reserve(client_key=client_key, account_key=account_key)
+    except RateLimitExceededError as error:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "登录尝试过多，请稍后再试",
-            headers={"Retry-After": str(retry_after)},
-        )
+            headers={"Retry-After": str(error.retry_after)},
+        ) from error
     try:
         issued = await authenticate_user(
             session,
@@ -129,9 +133,12 @@ async def login(
             ttl_seconds=settings.session_ttl_seconds,
         )
     except InvalidCredentialsError as error:
-        limiter.record_failure(key)
+        limiter.record_failure(attempt)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或密码错误") from error
-    limiter.reset(key)
+    except BaseException:
+        limiter.cancel(attempt)
+        raise
+    limiter.record_success(attempt)
     _set_session_cookie(response, token=issued.raw_token, settings=settings)
     return AuthResponse(user=_user_response(issued))
 

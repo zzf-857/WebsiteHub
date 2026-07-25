@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import secrets
 import unicodedata
 from urllib.parse import urlsplit
@@ -34,6 +35,43 @@ def rate_limit_key(*parts: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _ip_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.ip_address(value.partition("%")[0])
+    except ValueError:
+        return None
+
+
+def _request_from_loopback(request: Request) -> bool:
+    client_host = request.client.host if request.client else ""
+    address = _ip_address(client_host)
+    return bool(address and address.is_loopback)
+
+
+def _loopback_forwarded_host(request: Request) -> str | None:
+    if not _request_from_loopback(request):
+        return None
+
+    forwarded_host = request.headers.get("x-forwarded-host", "").partition(",")[0].strip()
+    if not forwarded_host or any(character.isspace() for character in forwarded_host):
+        return None
+    return forwarded_host.casefold()
+
+
+def rate_limit_client_host(request: Request) -> str:
+    client_host = request.client.host if request.client else "unknown"
+    if not _request_from_loopback(request):
+        return client_host
+
+    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+    if not forwarded_for or "," in forwarded_for or any(
+        character.isspace() for character in forwarded_for
+    ):
+        return client_host
+    forwarded_address = _ip_address(forwarded_for)
+    return forwarded_address.compressed if forwarded_address else client_host
+
+
 def validate_request_origin(request: Request, settings: Settings) -> None:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return
@@ -45,11 +83,30 @@ def validate_request_origin(request: Request, settings: Settings) -> None:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "缺少请求来源信息")
         return
 
-    parsed = urlsplit(origin)
+    try:
+        parsed = urlsplit(origin)
+    except ValueError as error:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "请求来源不受信任",
+        ) from error
     normalized_origin = f"{parsed.scheme.casefold()}://{parsed.netloc.casefold()}"
     request_host = request.headers.get("host", "").casefold()
-    if parsed.scheme in {"http", "https"} and parsed.netloc.casefold() == request_host:
+    origin_host = parsed.netloc.casefold()
+    valid_origin = (
+        parsed.scheme in {"http", "https"}
+        and bool(origin_host)
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path in {"", "/"}
+        and not parsed.query
+        and not parsed.fragment
+    )
+    trusted_request_hosts = {request_host}
+    if forwarded_host := _loopback_forwarded_host(request):
+        trusted_request_hosts.add(forwarded_host)
+    if valid_origin and origin_host in trusted_request_hosts:
         return
-    if normalized_origin.rstrip("/") in settings.allowed_origins:
+    if valid_origin and normalized_origin.rstrip("/") in settings.allowed_origins:
         return
     raise HTTPException(status.HTTP_403_FORBIDDEN, "请求来源不受信任")
