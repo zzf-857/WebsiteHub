@@ -11,6 +11,7 @@ node_modules/
 .next/
 dist/
 coverage/
+*.tsbuildinfo
 
 # Python
 .venv/
@@ -22,11 +23,17 @@ __pycache__/
 .ruff_cache/
 
 # Local databases and runtime output
+.data/
+MockData/
 *.db
 *.sqlite
 *.sqlite3
 *.log
 logs/
+
+# Tool caches
+.pnpm-store/
+.uv-cache/
 
 # Editors and operating systems
 .idea/
