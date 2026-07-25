@@ -21,6 +21,8 @@ from webhub.db.models import (
     Category,
     Site,
     SiteTag,
+    Space,
+    SpaceMember,
     Tag,
     utc_now,
 )
@@ -157,6 +159,15 @@ async def _owned_site(session: AsyncSession, user_id: str, site_id: str) -> Site
     if site is None:
         raise LibraryNotFoundError("网站不存在")
     return site
+
+
+async def _owned_space(session: AsyncSession, user_id: str, space_id: str) -> Space:
+    space = await session.scalar(
+        select(Space).where(Space.user_id == user_id, Space.id == space_id)
+    )
+    if space is None:
+        raise LibraryNotFoundError("Space 不存在")
+    return space
 
 
 async def _category_count(session: AsyncSession, user_id: str, category_id: str) -> int:
@@ -589,6 +600,16 @@ async def delete_site(
     site_id: str,
 ) -> SiteDeleteResponse:
     site = await _owned_site(session, user_id, site_id)
+    now = utc_now()
+    related_space_ids = select(SpaceMember.space_id).where(
+        SpaceMember.user_id == user_id,
+        SpaceMember.site_id == site_id,
+    )
+    await session.execute(
+        update(Space)
+        .where(Space.user_id == user_id, Space.id.in_(related_space_ids))
+        .values(version=Space.version + 1, updated_at=now)
+    )
     await session.delete(site)
     await session.commit()
     return SiteDeleteResponse(message="网站已删除", site_id=site_id)
@@ -600,20 +621,26 @@ def _cursor_scope(
     q: str | None,
     category_id: str | None,
     tag_id: str | None,
+    space_id: str | None,
+    space_version: int | None,
     pinned: bool | None,
     sort: SortKey,
     direction: SortDirection,
 ) -> str:
+    scope_payload: dict[str, object] = {
+        "user_id": user_id,
+        "q": (q or "").strip(),
+        "category_id": category_id,
+        "tag_id": tag_id,
+        "space_id": space_id,
+        "pinned": pinned,
+        "sort": sort,
+        "direction": direction,
+    }
+    if space_id is not None:
+        scope_payload["space_version"] = space_version
     payload = json.dumps(
-        {
-            "user_id": user_id,
-            "q": (q or "").strip(),
-            "category_id": category_id,
-            "tag_id": tag_id,
-            "pinned": pinned,
-            "sort": sort,
-            "direction": direction,
-        },
+        scope_payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -736,6 +763,7 @@ def _site_filters(
     q: str | None,
     category_id: str | None,
     tag_id: str | None,
+    space_id: str | None,
     pinned: bool | None,
 ):
     conditions = [Site.user_id == user_id]
@@ -753,6 +781,16 @@ def _site_filters(
                 )
             )
         )
+    if space_id:
+        conditions.append(
+            exists(
+                select(SpaceMember.site_id).where(
+                    SpaceMember.user_id == user_id,
+                    SpaceMember.space_id == space_id,
+                    SpaceMember.site_id == Site.id,
+                )
+            )
+        )
     if pinned is not None:
         conditions.append(Site.pinned.is_(pinned))
     return conditions
@@ -765,22 +803,28 @@ async def list_sites(
     q: str | None,
     category_id: str | None,
     tag_id: str | None,
+    space_id: str | None,
     pinned: bool | None,
     sort: SortKey,
     direction: SortDirection,
     cursor: str | None,
     limit: int,
 ) -> SiteListResponse:
+    space_version: int | None = None
     if category_id:
         await _owned_category(session, user_id, category_id)
     if tag_id:
         await _owned_tag(session, user_id, tag_id)
+    if space_id:
+        space = await _owned_space(session, user_id, space_id)
+        space_version = space.version
 
     filters = _site_filters(
         user_id=user_id,
         q=q,
         category_id=category_id,
         tag_id=tag_id,
+        space_id=space_id,
         pinned=pinned,
     )
     matched_count = int(
@@ -797,6 +841,7 @@ async def list_sites(
         q=q,
         category_id=category_id,
         tag_id=tag_id,
+        space_id=space_id,
         pinned=True,
     )
     pinned_count = int(
@@ -819,6 +864,8 @@ async def list_sites(
         q=q,
         category_id=category_id,
         tag_id=tag_id,
+        space_id=space_id,
+        space_version=space_version,
         pinned=pinned,
         sort=sort,
         direction=direction,
