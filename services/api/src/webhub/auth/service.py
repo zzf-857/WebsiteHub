@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.auth.passwords import password_manager
 from webhub.auth.security import new_session_token, normalize_username, token_hash
-from webhub.db.models import LoginSession, User, UserPreference
+from webhub.db.models import (
+    DEFAULT_CATEGORY_NAME,
+    Category,
+    LoginSession,
+    User,
+    UserPreference,
+)
 
 
 class UsernameTakenError(ValueError):
@@ -57,6 +63,15 @@ async def register_user(
     raw_token, login_session = _new_login_session(user, ttl_seconds)
     session.add_all((user, preferences, login_session))
     try:
+        await session.flush()
+        session.add(
+            Category(
+                user_id=user.id,
+                name=DEFAULT_CATEGORY_NAME,
+                normalized_name=DEFAULT_CATEGORY_NAME,
+                is_default=True,
+            )
+        )
         await session.commit()
     except IntegrityError as error:
         await session.rollback()

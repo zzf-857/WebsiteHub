@@ -8,15 +8,19 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from webhub.db.base import Base
+
+DEFAULT_CATEGORY_NAME = "未分类"
 
 
 def new_id() -> str:
@@ -118,4 +122,134 @@ class ProviderConfig(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
+class Category(Base):
+    __tablename__ = "categories"
+    __table_args__ = (
+        UniqueConstraint("user_id", "id", name="category_account_identity"),
+        UniqueConstraint("user_id", "normalized_name", name="category_name_per_user"),
+        CheckConstraint("length(name) BETWEEN 1 AND 80", name="valid_name_length"),
+        Index(
+            "uq_categories_default_per_user",
+            "user_id",
+            unique=True,
+            sqlite_where=text("is_default = 1"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+    __table_args__ = (
+        UniqueConstraint("user_id", "id", name="tag_account_identity"),
+        UniqueConstraint("user_id", "normalized_name", name="tag_name_per_user"),
+        CheckConstraint("length(name) BETWEEN 1 AND 40", name="valid_name_length"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
+class Site(Base):
+    __tablename__ = "sites"
+    __table_args__ = (
+        UniqueConstraint("user_id", "id", name="site_account_identity"),
+        UniqueConstraint("user_id", "identity_url", name="site_identity_per_user"),
+        ForeignKeyConstraint(
+            ["user_id", "category_id"],
+            ["categories.user_id", "categories.id"],
+            name="site_category_same_account",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("length(name) BETWEEN 1 AND 160", name="valid_name_length"),
+        CheckConstraint("version > 0", name="positive_version"),
+        CheckConstraint(
+            "source IN ('manual', 'agent', 'browser_import', 'backup')",
+            name="valid_source",
+        ),
+        CheckConstraint(
+            "analysis_status IN ('not_analyzed', 'pending', 'complete', 'failed', 'limited')",
+            name="valid_analysis_status",
+        ),
+        Index("ix_sites_user_updated_id", "user_id", "updated_at", "id"),
+        Index("ix_sites_user_created_id", "user_id", "created_at", "id"),
+        Index("ix_sites_user_name_id", "user_id", "normalized_name", "id"),
+        Index("ix_sites_user_category", "user_id", "category_id"),
+        Index("ix_sites_user_pinned", "user_id", "pinned"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    category_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    original_url: Mapped[str] = mapped_column(Text, nullable=False)
+    identity_url: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    favicon_url: Mapped[str | None] = mapped_column(Text)
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    analysis_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="not_analyzed"
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+
+class SiteTag(Base):
+    __tablename__ = "site_tags"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "site_id"],
+            ["sites.user_id", "sites.id"],
+            name="site_tag_site_same_account",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["user_id", "tag_id"],
+            ["tags.user_id", "tags.id"],
+            name="site_tag_tag_same_account",
+            ondelete="CASCADE",
+        ),
+        Index("ix_site_tags_user_tag_site", "user_id", "tag_id", "site_id"),
+    )
+
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    site_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tag_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
     )

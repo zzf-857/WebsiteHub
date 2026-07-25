@@ -1,10 +1,10 @@
 # WebHub 实施计划
 
-> 文档版本：v1.2
+> 文档版本：v1.3
 > 更新日期：2026-07-26
 > 需求基线：`PRD.md v0.8 Draft`
 > 产品形态：局域网部署的跨平台 Web 网站系统
-> 当前阶段：Phase 1 进行中；后端账号认证、Alembic 数据内核、本机密码重置和网站端账号入口已验证，可复用的业务资源账号范围与拒绝测试基座仍待完成；书签 parser/dry-run/Skill 合同已验证，正式账号导入闭环未实现
+> 当前阶段：Phase 2A 后端 checkpoint 已完成；账号隔离的 Category、Tag、Site CRUD、保守 URL identity、FTS5、短词回退与有界游标已验证。Phase 2 整体仍在进行：网站前端集成、Space、正式书签入库表与 100,000 Site 性能门禁未完成
 
 ## 1. 计划目的
 
@@ -235,6 +235,25 @@ WebHub/
 - 单账号 100,000 条网站关键词查询 P95 小于 1 秒，列表/筛选使用有界分页响应。
 - 删除 Space 不删除网站；同一网站可同时属于多个 Space。
 
+#### Phase 2A checkpoint（2026-07-26）
+
+后端逻辑已完成：
+
+- Category、Tag、Site 及关系表的 Alembic migration 与账号级复合外键
+- 注册时创建唯一默认“未分类”，已有账号在 migration 中补齐
+- 保守 URL identity，保留 query/fragment 内容与顺序，同账号重复返回 `409`
+- 账号限定的 FTS5 投影、中文/短词/混合多词 fallback、筛选与有界键集游标
+- 游标绑定账号与筛选作用域，Site 更新使用原子 `expected_version` CAS
+- 分类删除影响预览与原子迁移，标签删除只解除关系
+- 匿名、Origin、跨账号 `404`、关系篡改、FTS 同步、游标、冲突与并发版本竞争自动化测试
+
+未完成，不得将 Phase 2 整体标记完成：
+
+- `/library` 与 `/library/[siteId]` 的正式网站集成与浏览器验收
+- Space、Space 成员排序与删除影响预览
+- `bookmark_imports`、source folder、occurrence、staging 与确认入库闭环
+- 100,000 Site 隔离、分页、聚合与 FTS P95 性能门禁
+
 ### Phase 3 - Conversation & Stream Contract
 
 交付：
@@ -451,4 +470,4 @@ Phase 5B 是跨依赖的独立纵向轨道：各里程碑随前置阶段落地�
 
 ## 10. 当前迭代
 
-Phase 0 网站与 API Foundation 已完成，主线正在收尾 Phase 1 账号闭环。后端认证、迁移、本机密码重置以及网站端注册/登录/退出/主题同步已经接通；当前整仓后端测试基线为 50 项，可复用的业务资源账号范围仓储与跨账号拒绝模板是本阶段剩余工作。浏览器书签方向已经完成 parser/dry-run、2,541 occurrence mock、100,000 occurrence 合成基准和 `import-browser-bookmarks` Skill 合同；接下来提交脱敏 golden fixtures，并等待 Phase 2/4/5/7 的业务表、Provider、任务 API 与确认能力逐步接入。不得把本地预检与 Skill 合同表述为正式导入、真实自动分类、两阶段写库确认或 Agent 运行时闭环。
+Phase 0 网站与 API Foundation 已完成，Phase 1 账号闭环已稳定支撑首个真实业务资源。当前完成 Phase 2A 后端 checkpoint：Category、Tag、Site CRUD、默认“未分类”、保守 URL identity、FTS5/短词搜索、有界游标、原子版本冲突和跨账号拒绝已接通；后端自动化测试基线为 60 项。下一步先完成资料库网站集成与真实浏览器验收，再实施 Space、书签持久化表和 100,000 Site 性能门禁。浏览器书签 parser/dry-run、2,541 occurrence mock、100,000 occurrence 合成预检和 `import-browser-bookmarks` Skill 仍只是只读管线与合同；不得表述为正式导入、真实自动分类、两阶段写库确认或 Agent 运行时闭环。

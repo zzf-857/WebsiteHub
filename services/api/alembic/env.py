@@ -23,6 +23,21 @@ config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
+def include_object(
+    _: object,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    __: object | None,
+) -> bool:
+    return not (
+        reflected
+        and type_ == "table"
+        and name is not None
+        and (name == "site_search" or name.startswith("site_search_"))
+    )
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=config.get_main_option("sqlalchemy.url"),
@@ -31,6 +46,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
         render_as_batch=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -42,6 +58,7 @@ def run_sync_migrations(connection: Connection) -> None:
         target_metadata=target_metadata,
         compare_type=True,
         render_as_batch=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
