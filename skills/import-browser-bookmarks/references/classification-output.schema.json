@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webhub.local/schemas/bookmark-classification-output.v1.json",
+  "title": "WebHub Bookmark Classification Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "batch_id", "mappings"],
+  "properties": {
+    "schema_version": {
+      "const": "webhub.bookmark-classification.v1"
+    },
+    "batch_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "mappings": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subject_id",
+          "category_action",
+          "category_id",
+          "category_name",
+          "tags",
+          "confidence",
+          "needs_review",
+          "reason_code"
+        ],
+        "properties": {
+          "subject_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "category_action": {
+            "enum": ["existing", "propose", "uncategorized"]
+          },
+          "category_id": {
+            "type": ["string", "null"],
+            "maxLength": 128
+          },
+          "category_name": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "tags": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "needs_review": {
+            "type": "boolean"
+          },
+          "reason_code": {
+            "enum": [
+              "folder_match",
+              "host_match",
+              "title_match",
+              "mixed_evidence",
+              "insufficient_evidence"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "category_action": {"const": "existing"}
+              }
+            },
+            "then": {
+              "properties": {
+                "category_id": {"type": "string", "minLength": 1},
+                "category_name": {"minLength": 1}
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "category_action": {"const": "propose"}
+              }
+            },
+            "then": {
+              "properties": {
+                "category_id": {"type": "null"},
+                "category_name": {"minLength": 1}
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "category_action": {"const": "uncategorized"}
+              }
+            },
+            "then": {
+              "properties": {
+                "category_id": {"type": "null"},
+                "category_name": {"const": "未分类"}
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

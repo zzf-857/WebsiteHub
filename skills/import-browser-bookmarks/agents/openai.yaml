@@ -1,0 +1,4 @@
+interface:
+  display_name: "浏览器书签导入"
+  short_description: "流式解析、清洗、去重并生成可确认的浏览器书签分类入库预览"
+  default_prompt: "使用 $import-browser-bookmarks 分析浏览器导出的书签文件，并生成安全、可确认的分类入库预览。"
