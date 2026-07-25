@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import sqlite3
 from collections.abc import Iterator
@@ -6,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from webhub.auth.cli import reset_local_password
 from webhub.config import Settings
 from webhub.db.migrations import upgrade_database
 from webhub.main import create_app
@@ -232,3 +234,29 @@ def test_account_survives_application_restart(tmp_path: Path) -> None:
         )
         assert login.status_code == 200
         assert second_client.get("/api/auth/me").status_code == 200
+
+
+def test_local_password_reset_revokes_every_existing_session(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    with TestClient(create_app(settings=settings)) as first_client:
+        _, old_token = _register(first_client)
+
+    asyncio.run(reset_local_password(settings.database_url, "ALICE", "a replacement password"))
+
+    with TestClient(create_app(settings=settings)) as second_client:
+        _use_token(second_client, old_token)
+        assert second_client.get("/api/auth/me").status_code == 401
+
+        old_login = second_client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "correct horse battery staple"},
+            headers=SAME_ORIGIN_HEADERS,
+        )
+        new_login = second_client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "a replacement password"},
+            headers=SAME_ORIGIN_HEADERS,
+        )
+
+    assert old_login.status_code == 401
+    assert new_login.status_code == 200

@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 webhub-bookmarks-preview = "webhub.bookmarks.cli:main"
 webhub-db = "webhub.db.cli:main"
+webhub-account = "webhub.auth.cli:main"
 
 [dependency-groups]
 dev = [

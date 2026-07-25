@@ -24,6 +24,15 @@ The identity API exposes register, login, logout, current-account, password-chan
 account-preference endpoints under `/api/auth/*`. Session cookies are opaque and HttpOnly; only
 their SHA-256 hashes are persisted, while passwords use Argon2id.
 
+If an account owner loses access, reset the password from the host machine:
+
+```powershell
+uv run --project services/api webhub-account reset-password <username>
+```
+
+The command reads and confirms the password through hidden interactive prompts. It never accepts a
+password argument, and a successful reset revokes every existing session for that account.
+
 Create a read-only browser bookmark import preview:
 
 ```powershell

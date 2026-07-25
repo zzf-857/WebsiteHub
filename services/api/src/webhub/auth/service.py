@@ -20,6 +20,10 @@ class InvalidCredentialsError(ValueError):
     pass
 
 
+class UserNotFoundError(ValueError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class IssuedSession:
     user: User
@@ -124,6 +128,25 @@ async def change_password(
             LoginSession.id != current_session_id,
             LoginSession.revoked_at.is_(None),
         )
+        .values(revoked_at=datetime.now(UTC))
+    )
+    await session.commit()
+
+
+async def reset_password(
+    session: AsyncSession,
+    *,
+    username: str,
+    new_password: str,
+) -> None:
+    normalized_username = normalize_username(username)
+    user = await session.scalar(select(User).where(User.username == normalized_username))
+    if user is None:
+        raise UserNotFoundError
+    user.password_hash = password_manager.hash(new_password)
+    await session.execute(
+        update(LoginSession)
+        .where(LoginSession.user_id == user.id, LoginSession.revoked_at.is_(None))
         .values(revoked_at=datetime.now(UTC))
     )
     await session.commit()
