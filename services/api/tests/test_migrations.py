@@ -1,6 +1,7 @@
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from alembic.script import ScriptDirectory
@@ -8,8 +9,9 @@ from fastapi.testclient import TestClient
 
 from alembic import command
 from webhub.config import Settings
+from webhub.db import cli as db_cli
 from webhub.db.database import DATABASE_SCHEMA_HEADS, DatabaseSchemaError
-from webhub.db.migrations import create_alembic_config
+from webhub.db.migrations import create_alembic_config, upgrade_database
 from webhub.main import create_app
 
 SAME_ORIGIN_HEADERS = {"Origin": "http://testserver"}
@@ -50,6 +52,88 @@ BOOKMARK_TRIGGERS = {
     for table_name in _TERMINAL_PARSE_FACT_TABLES
     for operation in ("insert", "update", "delete")
 }
+
+
+def test_db_cli_allows_an_existing_empty_sqlite_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "empty.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    sqlite3.connect(database_path).close()
+    monkeypatch.setattr(
+        db_cli,
+        "get_settings",
+        lambda: SimpleNamespace(database_url=database_url),
+    )
+
+    assert db_cli.main(["upgrade"]) == 0
+
+    config = create_alembic_config(database_url)
+    expected_heads = set(ScriptDirectory.from_config(config).get_heads())
+    with sqlite3.connect(database_path) as connection:
+        actual_versions = {
+            str(row[0]) for row in connection.execute("SELECT version_num FROM alembic_version")
+        }
+    assert actual_versions == expected_heads
+
+
+def test_db_cli_refuses_a_half_migrated_unversioned_database_before_ddl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database_path = tmp_path / "main.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);
+            CREATE TABLE users (id VARCHAR(36) NOT NULL PRIMARY KEY);
+            """
+        )
+        schema_before = connection.execute(
+            "SELECT type, name, sql FROM sqlite_master ORDER BY type, name"
+        ).fetchall()
+
+    monkeypatch.setattr(
+        db_cli,
+        "get_settings",
+        lambda: SimpleNamespace(database_url=database_url),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        db_cli.main(["upgrade"])
+
+    assert raised.value.code == 2
+    error_output = capsys.readouterr().err
+    assert "Stop all WebHub website and API processes" in error_output
+    assert "`main.sqlite3`, `main.sqlite3-wal`, `main.sqlite3-shm`" in error_output
+    assert "fresh database" in error_output
+    assert "stamp/adopt" in error_output
+    with sqlite3.connect(database_path) as connection:
+        schema_after = connection.execute(
+            "SELECT type, name, sql FROM sqlite_master ORDER BY type, name"
+        ).fetchall()
+        versions = connection.execute("SELECT version_num FROM alembic_version").fetchall()
+    assert schema_after == schema_before
+    assert versions == []
+
+
+def test_upgrade_preflight_allows_a_versioned_database(tmp_path: Path) -> None:
+    database_path = tmp_path / "versioned.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    config = create_alembic_config(database_url)
+    command.upgrade(config, "head")
+
+    upgrade_database(database_url)
+
+    expected_heads = set(ScriptDirectory.from_config(config).get_heads())
+    with sqlite3.connect(database_path) as connection:
+        actual_versions = {
+            str(row[0]) for row in connection.execute("SELECT version_num FROM alembic_version")
+        }
+    assert actual_versions == expected_heads
 
 
 @pytest.fixture

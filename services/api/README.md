@@ -21,6 +21,27 @@ readiness only verify that the database is at the current Alembic head. They nev
 or silently adopt an unversioned database. Use `webhub-db current` and `webhub-db check` to inspect
 an existing database before migration.
 
+### Recover an unversioned or partially migrated SQLite database
+
+`webhub-db upgrade` runs a read-only schema preflight before Alembic. If `alembic_version` is
+missing or empty while WebHub business tables already exist, the command refuses to migrate. This
+guard prevents SQLite's non-transactional DDL from retrying the initial migration and failing at a
+later `users already exists` error. It never guesses a revision and never stamps or adopts the
+database automatically.
+
+To recover from this state:
+
+1. Stop the WebHub website, API, worker, and every other process using the database.
+2. Archive `.data/main.sqlite3`, `.data/main.sqlite3-wal`, and `.data/main.sqlite3-shm` together.
+   Keep the three files as one recovery set; do not copy only the main file while WAL mode is in
+   use.
+3. Move the archived files out of `.data` so that `main.sqlite3` no longer exists there.
+4. Run `uv run --project services/api webhub-db upgrade` to create a fresh, versioned database.
+5. Start WebHub and verify `/api/ready` before deciding how to recover data from the archive.
+
+There is intentionally no automatic repair command. Restoring data from a partial schema requires
+an explicit, reviewed recovery procedure; do not run `alembic stamp` as a shortcut.
+
 Keep Uvicorn on loopback with `--no-proxy-headers`, and start Next.js through the repository's
 `pnpm dev:web` or `pnpm start` scripts. The custom website server replaces inbound forwarding
 headers with the real socket address before Next handles the request. WebHub only trusts that

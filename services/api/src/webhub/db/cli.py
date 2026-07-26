@@ -5,7 +5,8 @@ from collections.abc import Sequence
 
 from alembic import command
 from webhub.config import get_settings
-from webhub.db.migrations import create_alembic_config
+from webhub.db.migrations import create_alembic_config, upgrade_database
+from webhub.db.preflight import MigrationPreflightError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,12 +16,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    arguments = build_parser().parse_args(argv)
-    config = create_alembic_config(get_settings().database_url)
+    parser = build_parser()
+    arguments = parser.parse_args(argv)
+    database_url = get_settings().database_url
     if arguments.command == "upgrade":
-        command.upgrade(config, "head")
+        try:
+            upgrade_database(database_url)
+        except MigrationPreflightError as error:
+            parser.exit(status=2, message=f"error: {error}\n")
     elif arguments.command == "current":
-        command.current(config, check_heads=True)
+        command.current(create_alembic_config(database_url), check_heads=True)
     else:
-        command.check(config)
+        command.check(create_alembic_config(database_url))
     return 0
