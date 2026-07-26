@@ -1196,3 +1196,32 @@ class SiteImportOrigin(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
+
+
+class SiteEmbedding(Base):
+    """派生缓存，不是记录本身：删掉可以从 sites 完整重建。"""
+
+    __tablename__ = "site_embeddings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "site_id"],
+            ["sites.user_id", "sites.id"],
+            name="site_embedding_site_same_account",
+            # 网站删了向量跟着走：留着的孤儿向量会一直把已不存在的行捞出来。
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("dimensions > 0", name="positive_dimensions"),
+        CheckConstraint("length(content_hash) = 64", name="valid_content_hash"),
+        Index("ix_site_embeddings_user_model", "user_id", "model"),
+    )
+
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    site_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # 不同模型产出的向量不可比较，所以换模型必须让缓存失效而不是混用。
+    model: Mapped[str] = mapped_column(String(160), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
