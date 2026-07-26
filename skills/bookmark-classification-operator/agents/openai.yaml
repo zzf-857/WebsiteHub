@@ -1,0 +1,4 @@
+interface:
+  display_name: "书签分类执行器"
+  short_description: "按隐私和预算边界批量分类并安全恢复书签任务与结果预览"
+  default_prompt: "使用 $bookmark-classification-operator 对已解析的书签分类批次执行校验、重试、降级和可恢复汇总。"
