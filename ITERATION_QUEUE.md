@@ -15,10 +15,36 @@
 
 ---
 
-## Q1 · Provider 配置界面
+## Q1a · Provider 前端契约层与 HTTP 客户端
+
+状态: 已完成 · 见下方 commit
+对应: Phase 4（前端部分，第一半）
+
+交付已落地：`lib/provider-contract.ts`（类型 + 归一化 + 三种 secret action 的请求体构造）、
+`lib/provider-client.ts`（8 个导出，含 429 的 Retry-After 解析与 409 版本冲突中文文案）、
+`app/styles/providers.css`（727 行，全令牌化）、17 个新测试。
+
+安全性已逐条自查（不是靠子代理自述）：
+- 三处 secret action 分别正确：create=`write`、update=`replace|clear`、test=`test`
+- create 请求体不含 `expected_version`（后端 `extra="forbid"`，多传即 422）
+- `normalizeProviderConfig` 会拒绝任何含 `secret`/`api_key`/`apiKey`/`token` 的响应并抛错，
+  理由是宁可中断也不让明文进 state
+- 两个文件零 `console` 调用
+
+---
+
+## Q1b · Provider 配置页面与组件
 
 状态: 待做
-对应: Phase 4（前端部分）· todolist 基本功能第 3 条(a)(b)
+对应: Phase 4（前端部分，第二半）· todolist 基本功能第 3 条(a)(b)
+
+**这是「空白页」真正被消除的那一步。** Q1a 已经把契约层和样式铺好，
+但 `app/(workspace)/settings/providers/page.tsx` 仍是纯 `WorkspaceEmptyState` 占位，
+`components/settings/` 目录还不存在。所以用户依然无法通过 UI 填 API Key。
+
+直接复用 Q1a 的成果：`@/lib/provider-client` 的 8 个函数、`@/lib/provider-contract` 的类型、
+`app/styles/providers.css` 里已写好的 `provider-` 前缀类名（动手前先读那个 CSS，按已有类名写组件，
+不要另造一套）。
 
 **为什么排第一**：这就是用户实测看到的空白页。后端 providers 模块已全功能（CRUD、AES-GCM
 加密、SSRF 校验、registry 内置厂商预设含申请地址），但前端零消费——

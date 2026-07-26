@@ -1,0 +1,727 @@
+/* providers：服务商配置页（设置 → 服务商），只用 globals.css 中定义的设计令牌。
+   页面外壳沿用 .site-main.workspace-page（居中 + --content-max 封顶），
+   本文件只负责其内部的分区 / 卡片 / 表单 / 反馈条。
+   命名约定：一律 provider- 前缀；状态优先用 data-* 属性（与全站一致），
+   同时保留同义 modifier 类作为兜底，方便并行开发的组件两种写法都能对上。 */
+
+/* ============ 页面骨架 ============ */
+
+/* 标题下方的内容区：kind 分区纵向堆叠，满宽自适应 */
+.provider-page {
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  margin-top: 24px;
+}
+
+/* 页级加载 / 出错时的占位行：Spinner 组件 + 一句说明 */
+.provider-loading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 28px 0;
+  color: var(--text-subtle);
+  font-size: 13px;
+}
+
+/* ============ kind 分区 ============ */
+
+.provider-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 分区头：左侧标题 + 说明，右侧「添加配置」按钮 */
+.provider-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.provider-section-titles {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 字阶 1f：17 分区标题 */
+.provider-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.provider-section-title svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.provider-section-desc {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.provider-section-count {
+  color: var(--text-subtle);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+/* 分区空态：与首页 .home-empty 同款虚线框，引导去添加 */
+.provider-empty {
+  margin: 0;
+  padding: 18px 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text-subtle);
+  font-size: 13px;
+}
+
+/* ============ 配置卡片 ============ */
+
+/* 满宽自适应：够宽时多列，窄屏自动收单列 */
+.provider-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+/* hover 只改边框与阴影，不位移不缩放（规范 1f） */
+.provider-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  /* ::before 启用竖条要贴左缘，裁掉超出圆角的部分 */
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-hover) var(--ease-standard);
+}
+
+.provider-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 启用中的卡片：左缘 3px 青柠竖条标识当前生效项（二选一方案取竖条，
+   不动边框底色，避免与 hover 态互相打架） */
+.provider-card[data-enabled="true"]::before,
+.provider-card--enabled::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--accent);
+  content: "";
+}
+
+.provider-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.provider-card-name {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ============ 徽标 ============ */
+
+.provider-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* 「已启用」：青柠底 + 深青柠字 */
+.provider-badge[data-tone="enabled"],
+.provider-badge--enabled {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/* 「已停用」等弱化态 */
+.provider-badge[data-tone="muted"],
+.provider-badge--muted {
+  color: var(--text-subtle);
+}
+
+/* ============ 卡片元信息（密钥掩码 / base_url / 模型名） ============ */
+
+.provider-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.provider-card-meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.provider-card-meta-label {
+  flex-shrink: 0;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.provider-card-meta-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 密钥掩码：等宽字体，弱化色；全站只显示掩码，绝不显示明文 */
+.provider-secret-mask {
+  color: var(--text-subtle);
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+}
+
+.provider-card-time {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* ============ 卡片操作区 ============ */
+
+.provider-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.provider-card-actions-spacer {
+  flex: 1;
+}
+
+/* ============ 按钮 ============ */
+
+.provider-btn {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.provider-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.provider-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 主按钮：保存 / 添加 */
+.provider-btn-primary {
+  background: var(--action);
+  color: var(--on-action);
+}
+
+.provider-btn-primary:hover:not(:disabled) {
+  background: var(--action-hover);
+}
+
+/* 次按钮：编辑 / 测试连接 / 取消 */
+.provider-btn-secondary {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.provider-btn-secondary:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* 危险按钮：删除确认等最终动作 */
+.provider-btn-danger {
+  background: var(--danger);
+  color: var(--on-action);
+}
+
+.provider-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 86%, var(--text));
+}
+
+/* 危险幽灵按钮：卡片上的删除入口，默认弱化、hover 才亮出危险色 */
+.provider-btn-danger-ghost {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--text-subtle);
+}
+
+.provider-btn-danger-ghost:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* 小号变体：卡片操作区里用 */
+.provider-btn-sm {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 12.5px;
+}
+
+/* ============ 表单（新建 / 编辑，弹层或行内均适用） ============ */
+
+.provider-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.provider-form-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 跨两列的长字段（base_url、密钥输入） */
+.provider-form-field--full {
+  grid-column: 1 / -1;
+}
+
+.provider-form-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* label 内的必填 / 可选标记 */
+.provider-form-optional {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.provider-input,
+.provider-select {
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  transition:
+    border-color var(--duration-focus) var(--ease-standard),
+    box-shadow var(--duration-focus) var(--ease-standard);
+}
+
+.provider-input::placeholder {
+  color: var(--text-faint);
+}
+
+.provider-input:focus-visible,
+.provider-select:focus-visible {
+  border-color: var(--accent-hover);
+  /* 3px 聚焦环：从 --focus 混出的半透明青柠 */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent);
+  outline: none;
+}
+
+/* 密钥输入框本身不留痕：初始为空、提交即清；掩码展示交给 .provider-secret-mask */
+.provider-input--secret {
+  font-family: ui-monospace, monospace;
+}
+
+/* 字段下方的说明（如「留空表示保留原密钥」） */
+.provider-form-hint {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 字段级错误 */
+.provider-form-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+/* 「去申请密钥 ↗」外链 */
+.provider-apply-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-strong);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+
+.provider-apply-link:hover {
+  text-decoration: underline;
+}
+
+.provider-apply-link svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.provider-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
+/* ============ 厂商选择（注册表九宫格，新建第一步可用） ============ */
+
+.provider-registry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+
+.provider-registry-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-hover) var(--ease-standard);
+}
+
+.provider-registry-item:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 选中的厂商：青柠边框 + 极浅青柠底 */
+.provider-registry-item[data-selected="true"],
+.provider-registry-item--selected {
+  border-color: var(--accent-hover);
+  background: var(--accent-tint);
+}
+
+.provider-registry-item-note {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* ============ 反馈条（错误 / 测试结果） ============ */
+
+/* 错误提示条：--danger 字 + 从 --danger 混出的浅底 */
+.provider-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.provider-error svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  /* 图标与首行文字对齐 */
+  margin-top: 2px;
+}
+
+/* 测试连接结果条：按 data-status 换色。
+   后端当前恒返回 unsupported（中性说明），429 限流按警示色处理 */
+.provider-test-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.provider-test-result svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.provider-test-result[data-status="ok"] {
+  border-color: color-mix(in srgb, var(--accent-strong) 25%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.provider-test-result[data-status="rate-limited"] {
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  color: var(--warning);
+}
+
+.provider-test-result[data-status="error"] {
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  color: var(--danger);
+}
+
+/* ============ 弹层（新建 / 编辑 / 删除确认的兜底样式） ============ */
+
+.provider-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  /* 遮罩从主按钮色混出，深浅主题都能压住底层内容 */
+  background: color-mix(in srgb, var(--action) 32%, transparent);
+}
+
+.provider-dialog {
+  display: flex;
+  max-height: min(640px, calc(100vh - 48px));
+  flex-direction: column;
+  gap: 14px;
+  width: min(560px, 100%);
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow-y: auto;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-panel);
+  outline: none;
+  animation: provider-dialog-in var(--duration-panel) var(--ease-standard);
+}
+
+@keyframes provider-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.provider-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.provider-dialog-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.provider-dialog-close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-subtle);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.provider-dialog-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.provider-dialog-close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.provider-dialog-text {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* ============ 骨架（列表加载占位） ============ */
+
+.provider-skeleton-bar {
+  display: block;
+  flex-shrink: 0;
+  border-radius: var(--radius-xs);
+  background: var(--surface-subtle);
+  animation: provider-skeleton-pulse 1.2s var(--ease-standard) infinite;
+}
+
+@keyframes provider-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ============ 可达性 ============ */
+
+.provider-btn:focus-visible,
+.provider-apply-link:focus-visible,
+.provider-registry-item:focus-visible,
+.provider-dialog-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ============ 响应式 ============ */
+
+/* <1024：表单收单列 */
+@media (max-width: 1023px) {
+  .provider-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .provider-form-field--full,
+  .provider-form-actions,
+  .provider-registry-grid {
+    grid-column: auto;
+  }
+}
+
+/* <768：分区头与卡片操作区换行，卡片收单列 */
+@media (max-width: 767px) {
+  .provider-page {
+    gap: 28px;
+  }
+
+  .provider-section-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .provider-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .provider-card-actions {
+    flex-wrap: wrap;
+  }
+
+  .provider-form-actions {
+    justify-content: stretch;
+  }
+
+  .provider-form-actions .provider-btn {
+    flex: 1;
+  }
+}
+
+/* ============ 降级动效（规范 1f：reduced-motion 一律静态） ============ */
+
+@media (prefers-reduced-motion: reduce) {
+  [class*="provider-"],
+  [class*="provider-"]::before,
+  [class*="provider-"]::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
