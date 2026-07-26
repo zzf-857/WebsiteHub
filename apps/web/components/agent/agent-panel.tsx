@@ -22,6 +22,7 @@ import { Spinner } from "@/components/react-bits/spinner";
 import { StaggerList } from "@/components/react-bits/stagger-list";
 import { SiteFavicon } from "@/components/site-favicon";
 import {
+  confirmAgentSiteBatch,
   confirmAgentSiteDraft,
   confirmAgentSiteUpdate,
   confirmAgentSpaceMembership,
@@ -494,13 +495,17 @@ export function AgentPanel() {
   const handleConfirmDraft = useCallback(async (toolCallId: string, action: AgentDraftAction) => {
     setDraftStates((current) => ({ ...current, [toolCallId]: { status: "saving" } }));
     try {
-      let confirmation: Parameters<typeof recordAgentDraftConfirmation>[1];
+      // 批量确认没有单一 site_id，因此不走 draft-confirmations 回写；
+      // 保持 null 而不是硬塞一个「代表性」的 id，那会让转录记录以偏概全。
+      let confirmation: Parameters<typeof recordAgentDraftConfirmation>[1] | null = null;
       if (action.kind === "site") {
         const created = await confirmAgentSiteDraft(action.draft);
         confirmation = { toolCallId, kind: "site_created", siteId: created.id };
       } else if (action.kind === "site_update") {
         const updated = await confirmAgentSiteUpdate(action.draft);
         confirmation = { toolCallId, kind: "site_updated", siteId: updated.id };
+      } else if (action.kind === "site_batch") {
+        await confirmAgentSiteBatch(action.draft);
       } else {
         await confirmAgentSpaceMembership(action.draft);
         confirmation = {
@@ -516,7 +521,7 @@ export function AgentPanel() {
       // Agent 会否认它自己刚存过的东西。这一步失败不能让已经成功的写入显示成失败：
       // 用户的数据已经落库了，丢的只是一条转录记录。
       const conversationId = conversationIdRef.current;
-      if (conversationId) {
+      if (conversationId && confirmation) {
         try {
           await recordAgentDraftConfirmation(conversationId, confirmation);
         } catch {

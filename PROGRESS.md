@@ -13,10 +13,10 @@
 
 ## 一句话状态
 
-Provider 配置、Agent 增改查、书签导入、网页抓取四条链路**已跑通**；
-批量入库、自定义排序、RAG、视觉收尾尚未开工。
+Provider 配置、Agent 增改查、书签导入、网页抓取、批量入库五条链路**已跑通**；
+自定义排序、RAG、视觉收尾尚未开工。
 
-测试基线：**前端 124 / 后端 368**。只能涨不能降。
+测试基线：**前端 128 / 后端 380**。只能涨不能降。
 
 ---
 
@@ -38,13 +38,13 @@ Provider 配置、Agent 增改查、书签导入、网页抓取四条链路**已
 | 书签导入前端入口 | ✅ | `/settings/import`，浏览器实测 |
 | 书签导入 Agent 工具 | ✅ | 三件套 + skill 已写成真契约 |
 | 网页元数据抓取 | ✅ | 建站后自动分析 + 详情页「重新分析」，SSRF 每跳复验 |
+| 批量 URL 入库 | ✅ | URL 由代码抽取；预览只读、确认后逐项独立提交 |
 
 ## 不能跑的
 
 | 缺口 | 说明 |
 | --- | --- |
 | LLM 分类**未接线** | `bookmarks/classifier.py` 已完成且有测试，但没有入口把结果落到 Site 上 |
-| 批量 URL 入库（Q5） | `ProposeSiteArgs` 只收单个 url，无批量端点 |
 | Site 自定义排序（Q6） | `Site` 没有排序列，全站无拖拽 |
 | Space 一键全开（Q7） | 只在首页且只覆盖最近 8 个，重试会重复开标签 |
 | 检索与 RAG（Q8） | LlamaIndex 依赖都没装，`embedding` Provider 槽位是死预留 |
@@ -111,7 +111,7 @@ agent → 全部        顶层编排，只有它可以依赖所有模块
 1. 给 LLM 分类接线：做成对整个资料库通用的重分类（用户要的是「所有网站」，
    不只是导入的），`propose_reclassify` → 带成本预估的确认草稿 → 确认后才花 token。
    `estimated_request_count` / `estimated_input_characters` 已备好。
-2. 之后按 `ITERATION_QUEUE.md` 顺序走 Q5 → Q10。
+2. 之后按 `ITERATION_QUEUE.md` 顺序走 Q6 → Q10。
 
 ### 花钱的决策（需要用户点头，别自作主张）
 

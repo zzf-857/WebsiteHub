@@ -7,6 +7,7 @@ import {
   type AgentConversationDetail,
   type AgentConversationHistory,
   type AgentSiteDraft,
+  type AgentSiteBatchDraft,
   type AgentSiteUpdateDraft,
   type AgentSpaceMembershipDraft,
 } from "./agent-contract.ts";
@@ -15,6 +16,7 @@ import {
   createLibrarySite,
   createLibraryTag,
   listLibraryCategories,
+  createLibrarySiteBatch,
   listLibraryTags,
   updateLibrarySite,
 } from "./library-client.ts";
@@ -249,6 +251,21 @@ export async function confirmAgentSiteUpdate(draft: AgentSiteUpdateDraft): Promi
   if (changes.tags !== undefined) input.tagIds = await resolveTagIds(changes.tags);
 
   return updateLibrarySite(draft.siteId, input);
+}
+
+export type AgentBatchConfirmResult = { created: number; duplicate: number; failed: number };
+
+/**
+ * Apply a confirmed `propose_sites` draft.
+ *
+ * The URL list travels back to the server, which re-checks each one and
+ * creates them item by item — one failure cannot take the rest down.
+ */
+export async function confirmAgentSiteBatch(
+  draft: AgentSiteBatchDraft,
+): Promise<AgentBatchConfirmResult> {
+  const result = await createLibrarySiteBatch(draft.urls);
+  return { created: result.created, duplicate: result.duplicate, failed: result.failed };
 }
 
 /**

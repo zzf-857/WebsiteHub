@@ -24,6 +24,7 @@ import {
   normalizeAgentToolResult,
   type AgentDraftAction,
   type AgentSiteDraft,
+  type AgentSiteBatchDraft,
   type AgentSiteUpdateDraft,
   type AgentSpaceMembershipDraft,
   type AgentToolCall,
@@ -256,6 +257,51 @@ function SiteUpdateCard({
   );
 }
 
+const BATCH_STATUS_LABELS = {
+  ready: "将新增",
+  duplicate: "已存在",
+  invalid: "无法识别",
+} as const;
+
+function SiteBatchCard({
+  toolCallId,
+  draft,
+  state,
+  onConfirm,
+}: Readonly<{
+  toolCallId: string;
+  draft: AgentSiteBatchDraft;
+  state: AgentDraftState;
+  onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
+}>) {
+  return (
+    <div className="draft-card" data-variant="batch">
+      <p className="draft-card-description">
+        共 {draft.total} 个网址：将新增 <strong>{draft.ready}</strong> 个
+        {draft.duplicate > 0 && <>，{draft.duplicate} 个已存在</>}
+        {draft.invalid > 0 && <>，{draft.invalid} 个无法识别</>}
+        。已存在与无法识别的都会跳过，不会重复写入。
+      </p>
+      <ul className="draft-batch-list">
+        {draft.items.map((item) => (
+          <li key={item.url} data-status={item.status}>
+            <span className="draft-batch-status">{BATCH_STATUS_LABELS[item.status]}</span>
+            <span className="draft-batch-url" title={item.url}>{item.url}</span>
+          </li>
+        ))}
+      </ul>
+      <DraftActions
+        state={state}
+        icon={<Bookmark aria-hidden="true" />}
+        idleLabel={`确认收录 ${draft.ready} 个`}
+        busyLabel="收录中…"
+        doneLabel="已批量收录"
+        onConfirm={() => onConfirm(toolCallId, { kind: "site_batch", draft })}
+      />
+    </div>
+  );
+}
+
 function SpaceMembershipCard({
   toolCallId,
   draft,
@@ -345,6 +391,14 @@ function ToolCard({
       )}
       {view.kind === "site-update" && (
         <SiteUpdateCard
+          toolCallId={result.toolCallId}
+          draft={view.draft}
+          state={draftState}
+          onConfirm={onConfirmDraft}
+        />
+      )}
+      {view.kind === "site-batch" && (
+        <SiteBatchCard
           toolCallId={result.toolCallId}
           draft={view.draft}
           state={draftState}

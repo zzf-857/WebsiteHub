@@ -199,6 +199,7 @@ def test_web_search_tool_is_absent_without_a_search_provider(tmp_path: Path) -> 
         "propose_bookmark_import",
         "propose_site",
         "propose_site_update",
+        "propose_sites",
         "propose_space_membership",
         "search_library",
     ]
@@ -545,3 +546,67 @@ def test_a_stale_update_draft_conflicts_instead_of_overwriting(tmp_path: Path) -
         current = client.get(f"/api/library/sites/{site_id}").json()
         assert current["name"] == "Figma"
         assert current["description"] == "别处先改的说明"
+
+
+def test_propose_sites_extracts_every_url_without_the_model_looping(tmp_path: Path) -> None:
+    """The queue's acceptance case, at the tool boundary."""
+
+    with _account_with_space(tmp_path) as settings:
+        before = _site_rows(settings)
+        result = _invoke(
+            settings,
+            "alice",
+            "propose_sites",
+            text=(
+                "帮我把这些都存了：https://a.example.com/1 https://b.example.com/2\n"
+                "还有 https://figma.com （这个已经有了）\n"
+                "以及一个坏的 ftp://nope.example.com/x\n"
+                "重复一次 https://a.example.com/1"
+            ),
+        )
+        after = _site_rows(settings)
+
+    assert result["status"] == "awaiting_confirmation"
+    draft = result["draft"]
+    assert draft["kind"] == "site_batch"
+    # Three distinct http(s) URLs survive extraction; the ftp one never counts
+    # as a URL at all, and the repeat is collapsed textually.
+    assert draft["total"] == 3
+    assert draft["ready"] == 2
+    assert draft["duplicate"] == 1
+    assert set(draft["urls"]) == {"https://a.example.com/1", "https://b.example.com/2"}
+    # Nothing was written: a draft is a draft.
+    assert after == before
+
+
+def test_propose_sites_reports_noop_when_everything_is_already_saved(
+    tmp_path: Path,
+) -> None:
+    with _account_with_space(tmp_path) as settings:
+        result = _invoke(
+            settings,
+            "alice",
+            "propose_sites",
+            text="再存一次 https://figma.com",
+        )
+    assert result["status"] == "noop"
+    assert "draft" not in result
+
+
+def test_propose_sites_rejects_text_without_any_url(tmp_path: Path) -> None:
+    with _account_with_space(tmp_path) as settings:
+        result = _invoke(settings, "alice", "propose_sites", text="帮我存一下那个网站 example.com")
+    assert result["status"] == "rejected"
+    assert "draft" not in result
+
+
+def test_propose_sites_is_account_scoped(tmp_path: Path) -> None:
+    """Bob must not learn that Alice already has figma."""
+
+    with _account_with_space(tmp_path) as settings:
+        alice = _invoke(settings, "alice", "propose_sites", text="https://figma.com")
+        bob = _invoke(settings, "bob", "propose_sites", text="https://figma.com")
+
+    assert alice["status"] == "noop"
+    assert bob["status"] == "awaiting_confirmation"
+    assert bob["draft"]["ready"] == 1

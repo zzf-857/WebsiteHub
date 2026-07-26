@@ -4319,3 +4319,55 @@ textarea:focus-visible {
     background: none;
   }
 }
+
+/* 阶段C：批量收录草稿的逐项状态列表 */
+
+.draft-batch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow-y: auto;
+  background: var(--surface-subtle);
+  list-style: none;
+}
+
+.draft-batch-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.draft-batch-status {
+  flex: 0 0 52px;
+  color: var(--text-subtle);
+  font-size: 11.5px;
+}
+
+/* 会真正写入的那些用青柠强调，跳过的弱化——一眼能数清将新增几条 */
+.draft-batch-list li[data-status="ready"] .draft-batch-status {
+  color: var(--accent-strong);
+}
+
+.draft-batch-list li[data-status="invalid"] .draft-batch-status {
+  color: var(--danger);
+}
+
+.draft-batch-url {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draft-batch-list li[data-status="duplicate"] .draft-batch-url,
+.draft-batch-list li[data-status="invalid"] .draft-batch-url {
+  color: var(--text-subtle);
+}

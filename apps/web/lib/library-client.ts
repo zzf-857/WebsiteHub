@@ -212,3 +212,27 @@ export async function analyzeLibrarySite(id: string): Promise<LibrarySite> {
     method: "POST",
   }));
 }
+
+export type LibrarySiteBatchResult = {
+  created: number;
+  duplicate: number;
+  invalid: number;
+  failed: number;
+};
+
+/** 批量入库。逐项独立提交，一条失败不影响其余。 */
+export async function createLibrarySiteBatch(urls: string[]): Promise<LibrarySiteBatchResult> {
+  const payload = await request("/sites/batch", {
+    method: "POST",
+    body: JSON.stringify({ urls, confirm: true }),
+  });
+  const record = (payload ?? {}) as Record<string, unknown>;
+  const count = (key: string): number =>
+    Number.isSafeInteger(record[key]) && (record[key] as number) >= 0 ? (record[key] as number) : 0;
+  return {
+    created: count("created"),
+    duplicate: count("duplicate"),
+    invalid: count("invalid"),
+    failed: count("failed"),
+  };
+}

@@ -30,6 +30,7 @@ export type AgentToolName =
   | "web_search"
   | "propose_site"
   | "propose_site_update"
+  | "propose_sites"
   | "propose_space_membership";
 
 const AGENT_TOOL_LABELS: Record<string, string> = {
@@ -41,6 +42,7 @@ const AGENT_TOOL_LABELS: Record<string, string> = {
   web_search: "联网搜索",
   propose_site: "生成收录草稿",
   propose_site_update: "生成修改草稿",
+  propose_sites: "生成批量收录草稿",
   propose_space_membership: "生成 Space 变更草稿",
 };
 
@@ -197,6 +199,21 @@ export type AgentSiteUpdateDraft = {
   after: AgentToolLink;
 };
 
+export type AgentBatchItem = {
+  url: string;
+  status: "ready" | "duplicate" | "invalid";
+  reason: string | null;
+};
+
+export type AgentSiteBatchDraft = {
+  urls: string[];
+  total: number;
+  ready: number;
+  duplicate: number;
+  invalid: number;
+  items: AgentBatchItem[];
+};
+
 export type AgentSpaceMembershipDraft = {
   action: "add" | "remove";
   siteId: string;
@@ -210,6 +227,7 @@ export type AgentSpaceMembershipDraft = {
 export type AgentDraftAction =
   | { kind: "site"; draft: AgentSiteDraft }
   | { kind: "site_update"; draft: AgentSiteUpdateDraft }
+  | { kind: "site_batch"; draft: AgentSiteBatchDraft }
   | { kind: "space_membership"; draft: AgentSpaceMembershipDraft };
 
 export type AgentToolFacet = {
@@ -224,6 +242,7 @@ export type AgentToolView =
   | { kind: "facets"; source: string | null; items: AgentToolFacet[] }
   | { kind: "draft"; draft: AgentSiteDraft; duplicate: AgentToolLink | null }
   | { kind: "site-update"; draft: AgentSiteUpdateDraft }
+  | { kind: "site-batch"; draft: AgentSiteBatchDraft }
   | { kind: "space-membership"; draft: AgentSpaceMembershipDraft }
   | { kind: "noop"; message: string }
   | { kind: "rejected"; reason: string }
@@ -323,6 +342,38 @@ function toSiteUpdateDraft(value: unknown): AgentSiteUpdateDraft | null {
   return { siteId, expectedVersion, before, changes, after };
 }
 
+function toBatchItems(value: unknown): AgentBatchItem[] {
+  if (!Array.isArray(value)) return [];
+  const items: AgentBatchItem[] = [];
+  for (const entry of value) {
+    const candidate = asRecord(entry);
+    if (candidate === null) continue;
+    const url = asTrimmed(candidate.url);
+    const status = candidate.status;
+    if (url === null) continue;
+    if (status !== "ready" && status !== "duplicate" && status !== "invalid") continue;
+    items.push({ url, status, reason: asTrimmed(candidate.reason) });
+  }
+  return items;
+}
+
+function toSiteBatchDraft(value: unknown): AgentSiteBatchDraft | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const urls = asStringList(candidate.urls);
+  const items = toBatchItems(candidate.items);
+  // 一张确认卡如果一条都不会写，就不该出现——它点了等于没点。
+  if (urls.length === 0) return null;
+  return {
+    urls,
+    total: asCount(candidate.total) ?? items.length,
+    ready: asCount(candidate.ready) ?? urls.length,
+    duplicate: asCount(candidate.duplicate) ?? 0,
+    invalid: asCount(candidate.invalid) ?? 0,
+    items,
+  };
+}
+
 function toSpaceMembershipDraft(value: unknown): AgentSpaceMembershipDraft | null {
   const candidate = asRecord(value);
   if (candidate === null) return null;
@@ -367,6 +418,17 @@ export function describeAgentToolResult(name: string, result: unknown): AgentToo
     if (draft !== null) {
       return { kind: "draft", draft, duplicate: toLink(payload.duplicate) };
     }
+  }
+
+  if (name === "propose_sites") {
+    if (status === "rejected") {
+      return { kind: "rejected", reason: asTrimmed(payload.reason) ?? "没有可收录的网址" };
+    }
+    if (status === "noop") {
+      return { kind: "noop", message: asTrimmed(payload.message) ?? "没有需要新增的网址。" };
+    }
+    const draft = toSiteBatchDraft(payload.draft);
+    if (draft !== null) return { kind: "site-batch", draft };
   }
 
   if (name === "propose_site_update" || name === "propose_space_membership") {

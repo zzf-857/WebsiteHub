@@ -35,6 +35,7 @@ from webhub.config import Settings
 from webhub.db.database import Database
 from webhub.db.models import BookmarkImportJob
 from webhub.library import service as library_service
+from webhub.library.batch import extract_urls, preview_batch
 from webhub.library.service import LibraryError
 from webhub.spaces import service as spaces_service
 from webhub.spaces.service import SpaceError
@@ -560,6 +561,58 @@ async def _propose_bookmark_import(
     }
 
 
+class ProposeSitesArgs(BaseModel):
+    text: str = Field(
+        min_length=1,
+        max_length=20_000,
+        description="包含一个或多个网址的原文，原样传入即可——服务端会自己把 URL 全部解析出来",
+    )
+
+
+async def _propose_sites(context: AgentToolContext, args: ProposeSitesArgs) -> dict[str, Any]:
+    """Batch draft.  Extraction happens in code, not by the model looping.
+
+    The model passes the user's text through unchanged; ``extract_urls`` finds
+    every address.  That is the point: a loop the model can forget to run is
+    not a loop, and "did it handle all ten?" stops being a question.
+    """
+
+    urls = extract_urls(args.text)
+    if not urls:
+        return {"status": "rejected", "reason": "这段文字里没有找到 http(s) 网址"}
+
+    async with context.database.sessions() as session:
+        items = await preview_batch(session, context.user_id, urls)
+
+    ready = [item for item in items if item.status == "ready"]
+    if not ready:
+        return {
+            "status": "noop",
+            "message": "这些网址要么资料库里已经有了，要么无法识别，没有需要新增的。",
+            "items": [
+                {"url": item.url, "status": item.status, "reason": item.reason}
+                for item in items
+            ],
+        }
+
+    return {
+        "status": "awaiting_confirmation",
+        "message": "批量收录草稿已生成，等待用户在界面上确认后才会写入资料库。",
+        "draft": {
+            "kind": "site_batch",
+            "urls": [item.url for item in ready],
+            "total": len(items),
+            "ready": len(ready),
+            "duplicate": sum(1 for item in items if item.status == "duplicate"),
+            "invalid": sum(1 for item in items if item.status == "invalid"),
+            "items": [
+                {"url": item.url, "status": item.status, "reason": item.reason}
+                for item in items
+            ],
+        },
+    }
+
+
 def build_tools(context: AgentToolContext) -> Sequence[Any]:
     """Build the LangChain tool list for one account-scoped turn."""
 
@@ -620,6 +673,14 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
             _propose_site,
         ),
         structured(
+            "propose_sites",
+            "一次收录**多个**网址。把用户原文原样传进来即可，服务端会自己解析出所有 URL——"
+            "**不要自己逐个调用 propose_site**，那样无法保证每个网址都被处理。"
+            "它不会写库，调用后必须说「请确认后保存」。",
+            ProposeSitesArgs,
+            _propose_sites,
+        ),
+        structured(
             "propose_site_update",
             "修改一个**已经收藏**的网站：改名、改说明、换分类、换标签、置顶或取消置顶。"
             "需要先用 search_library 拿到 site_id。只传要改的字段，不改的字段一律省略。"
@@ -676,6 +737,7 @@ __all__ = [
     "SOURCE_WEB",
     "AgentToolContext",
     "ProposeSiteArgs",
+    "ProposeSitesArgs",
     "ProposeSiteUpdateArgs",
     "ProposeSpaceMembershipArgs",
     "SearchLibraryArgs",

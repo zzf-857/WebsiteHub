@@ -550,3 +550,63 @@ test("两个新工具都有中文标签，不会在界面上露出裸函数名",
   assert.equal(agentToolLabel("propose_site_update"), "生成修改草稿");
   assert.equal(agentToolLabel("propose_space_membership"), "生成 Space 变更草稿");
 });
+
+test("批量草稿被投影成 site-batch 视图，逐项状态原样保留", () => {
+  const view = describeAgentToolResult("propose_sites", {
+    status: "awaiting_confirmation",
+    draft: {
+      kind: "site_batch",
+      urls: ["https://a.example.com/1", "https://b.example.com/2"],
+      total: 4,
+      ready: 2,
+      duplicate: 1,
+      invalid: 1,
+      items: [
+        { url: "https://a.example.com/1", status: "ready", reason: null },
+        { url: "https://b.example.com/2", status: "ready", reason: null },
+        { url: "https://dup.example.com", status: "duplicate", reason: "资料库里已经有这个网址" },
+        { url: "ftp://bad.example.com", status: "invalid", reason: "网址无效或不受支持" },
+      ],
+    },
+  });
+  assert.equal(view.kind, "site-batch");
+  if (view.kind !== "site-batch") return;
+  assert.equal(view.draft.ready, 2);
+  assert.equal(view.draft.duplicate, 1);
+  assert.equal(view.draft.invalid, 1);
+  assert.deepEqual(view.draft.urls, ["https://a.example.com/1", "https://b.example.com/2"]);
+  assert.equal(view.draft.items.length, 4);
+});
+
+test("一条都不会写入的批量草稿降级，不渲染点了等于没点的确认卡", () => {
+  const view = describeAgentToolResult("propose_sites", {
+    status: "awaiting_confirmation",
+    draft: { kind: "site_batch", urls: [], total: 2, ready: 0, duplicate: 2, invalid: 0, items: [] },
+  });
+  assert.equal(view.kind, "raw");
+});
+
+test("批量草稿里状态不合法的条目被丢弃，而不是原样渲染", () => {
+  const view = describeAgentToolResult("propose_sites", {
+    status: "awaiting_confirmation",
+    draft: {
+      kind: "site_batch",
+      urls: ["https://a.example.com/1"],
+      total: 2,
+      ready: 1,
+      duplicate: 0,
+      invalid: 0,
+      items: [
+        { url: "https://a.example.com/1", status: "ready", reason: null },
+        { url: "https://b.example.com/2", status: "已经写进去了", reason: null },
+      ],
+    },
+  });
+  assert.equal(view.kind, "site-batch");
+  if (view.kind !== "site-batch") return;
+  assert.deepEqual(view.draft.items.map((item) => item.status), ["ready"]);
+});
+
+test("propose_sites 有中文标签", () => {
+  assert.equal(agentToolLabel("propose_sites"), "生成批量收录草稿");
+});
