@@ -83,7 +83,11 @@ def test_cross_account_ids_are_hidden_and_relationship_tampering_is_rejected(
             f"/api/library/sites/{alice_site['id']}",
             {"json": {"expected_version": 1, "pinned": True}, "headers": ORIGIN},
         ),
-        ("delete", f"/api/library/sites/{alice_site['id']}", {"headers": ORIGIN}),
+        (
+            "delete",
+            f"/api/library/sites/{alice_site['id']}",
+            {"params": {"expected_version": 1}, "headers": ORIGIN},
+        ),
         (
             "patch",
             f"/api/library/categories/{alice_category['id']}",
@@ -100,7 +104,9 @@ def test_cross_account_ids_are_hidden_and_relationship_tampering_is_rejected(
             {"headers": ORIGIN},
         ),
     ):
-        assert getattr(client, method)(path, **kwargs).status_code == 404
+        hidden = getattr(client, method)(path, **kwargs)
+        assert hidden.status_code == 404
+        assert hidden.json()["detail"]["code"] == "not_found"
 
     wrong_category = client.post(
         "/api/library/sites",
@@ -279,3 +285,86 @@ def test_site_version_claim_is_atomic_across_concurrent_sessions(
     assert stored.status_code == 200
     assert stored.json()["name"] == winner[1]
     assert stored.json()["version"] == 2
+
+
+def test_site_delete_version_check_is_atomic_across_concurrent_sessions(
+    isolated_library: tuple[TestClient, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, database_path = isolated_library
+    user_id, _ = _register(client, "alice")
+    created = client.post(
+        "/api/library/sites",
+        json={"name": "Delete once", "url": "https://delete-once.example.com"},
+        headers=ORIGIN,
+    ).json()
+    database = Database(f"sqlite+aiosqlite:///{database_path.as_posix()}")
+
+    async def race_deletes() -> list[tuple[str, str | None]]:
+        original_owned_site = library_service._owned_site
+        ready_count = 0
+        ready_lock = asyncio.Lock()
+        release = asyncio.Event()
+
+        async def synchronized_owned_site(session, owner_id: str, site_id: str):
+            nonlocal ready_count
+            site = await original_owned_site(session, owner_id, site_id)
+            async with ready_lock:
+                ready_count += 1
+                if ready_count == 2:
+                    release.set()
+            await asyncio.wait_for(release.wait(), timeout=5)
+            return site
+
+        monkeypatch.setattr(library_service, "_owned_site", synchronized_owned_site)
+
+        async def delete_once() -> tuple[str, str | None]:
+            async with database.sessions() as session:
+                try:
+                    await library_service.delete_site(
+                        session,
+                        user_id,
+                        str(created["id"]),
+                        expected_version=1,
+                    )
+                except library_service.LibraryConflictError as error:
+                    return "conflict", error.code
+                return "deleted", None
+
+        try:
+            return list(await asyncio.gather(delete_once(), delete_once()))
+        finally:
+            await database.dispose()
+
+    outcomes = asyncio.run(race_deletes())
+    assert sorted(outcome[0] for outcome in outcomes) == ["conflict", "deleted"]
+    conflict = next(outcome for outcome in outcomes if outcome[0] == "conflict")
+    assert conflict[1] == "version_conflict"
+    assert client.get(f"/api/library/sites/{created['id']}").status_code == 404
+
+
+def test_legacy_invalid_favicon_is_not_exposed_in_site_response(
+    isolated_library: tuple[TestClient, Path],
+) -> None:
+    client, database_path = isolated_library
+    user_id, _ = _register(client, "alice")
+    created = client.post(
+        "/api/library/sites",
+        json={
+            "name": "Legacy favicon",
+            "url": "https://legacy-favicon.example.com",
+            "favicon_url": "https://icons.example.com/safe.svg",
+        },
+        headers=ORIGIN,
+    ).json()
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE sites SET favicon_url = ? WHERE user_id = ? AND id = ?",
+            ("javascript:alert(1)", user_id, created["id"]),
+        )
+        connection.commit()
+
+    response = client.get(f"/api/library/sites/{created['id']}")
+    assert response.status_code == 200, response.text
+    assert response.json()["favicon_url"] is None

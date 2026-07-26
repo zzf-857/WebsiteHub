@@ -318,7 +318,11 @@ def test_members_support_multi_space_paging_reorder_and_non_destructive_delete(
         assert client.get(f"/api/library/sites/{site['id']}").status_code == 200
     assert client.get(f"/api/spaces/{secondary['id']}").json()["member_count"] == 1
 
-    removed_site = client.delete(f"/api/library/sites/{alpha['id']}", headers=ORIGIN)
+    removed_site = client.delete(
+        f"/api/library/sites/{alpha['id']}",
+        params={"expected_version": alpha["version"]},
+        headers=ORIGIN,
+    )
     assert removed_site.status_code == 200
     secondary_after_site_delete = client.get(f"/api/spaces/{secondary['id']}").json()
     assert secondary_after_site_delete["version"] == 3

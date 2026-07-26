@@ -3,9 +3,12 @@ import test from "node:test";
 
 import {
   assertLibraryCategoryName,
+  assertLibraryExpectedVersion,
   assertLibrarySiteCreateInput,
   assertLibrarySiteUpdateInput,
   assertLibraryTagName,
+  libraryErrorDetails,
+  libraryErrorMessage,
   LibraryContractError,
   normalizeCategoryDeletePreview,
   normalizeLibraryCategories,
@@ -139,4 +142,27 @@ test("enforces backend name length limits", () => {
   );
   assert.throws(() => assertLibraryCategoryName("c".repeat(81)), /80/);
   assert.throws(() => assertLibraryTagName("t".repeat(41)), /40/);
+});
+
+test("parses structured library error codes without losing readable messages", () => {
+  for (const code of ["version_conflict", "duplicate_url", "not_found"]) {
+    assert.deepEqual(
+      libraryErrorDetails(409, {
+        detail: { code: `  ${code}  `, message: `  ${code} message  ` },
+      }),
+      { code, message: `${code} message` },
+    );
+  }
+
+  assert.deepEqual(libraryErrorDetails(404, { detail: { code: "not_found" } }), {
+    code: "not_found",
+    message: "请求的资料库内容不存在",
+  });
+  assert.equal(libraryErrorMessage(422, { detail: [{ msg: "Invalid field" }] }), "Invalid field");
+});
+
+test("validates optimistic concurrency versions independently of update payloads", () => {
+  assert.equal(assertLibraryExpectedVersion(4), 4);
+  assert.throws(() => assertLibraryExpectedVersion(0), /正整数/);
+  assert.throws(() => assertLibraryExpectedVersion(true), /正整数/);
 });

@@ -88,6 +88,11 @@ export type LibrarySiteUpdateInput = Omit<Partial<LibrarySiteCreateInput>, "cate
   expectedVersion: number;
 };
 
+export type LibraryErrorDetails = {
+  code?: string;
+  message: string;
+};
+
 type JsonRecord = Record<string, unknown>;
 
 export class LibraryContractError extends Error {
@@ -284,25 +289,52 @@ export function normalizeCategoryDeletePreview(value: unknown): LibraryCategoryD
   };
 }
 
-export function libraryErrorMessage(status: number, payload: unknown): string {
-  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
-    const candidate = payload as JsonRecord;
-    if (typeof candidate.detail === "string" && candidate.detail.trim()) return candidate.detail.trim();
-    if (typeof candidate.message === "string" && candidate.message.trim()) return candidate.message.trim();
-    if (Array.isArray(candidate.detail)) {
-      const first = candidate.detail.find(
-        (entry) => typeof entry === "object" && entry !== null && !Array.isArray(entry),
-      ) as JsonRecord | undefined;
-      if (first && typeof first.msg === "string" && first.msg.trim()) return first.msg.trim();
-    }
-  }
+function optionalErrorText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
 
+function fallbackLibraryErrorMessage(status: number): string {
   if (status === 401) return "登录状态已失效，请重新登录";
   if (status === 404) return "请求的资料库内容不存在";
   if (status === 409) return "内容已被更新，请刷新后重试";
   if (status === 422) return "提交的信息不符合要求";
   if (status === 429) return "操作过于频繁，请稍后重试";
   return "资料库服务暂时不可用，请稍后重试";
+}
+
+export function libraryErrorDetails(status: number, payload: unknown): LibraryErrorDetails {
+  let code: string | undefined;
+  let message: string | undefined;
+
+  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+    const candidate = payload as JsonRecord;
+    code = optionalErrorText(candidate.code);
+    message = optionalErrorText(candidate.message);
+
+    if (typeof candidate.detail === "object" && candidate.detail !== null && !Array.isArray(candidate.detail)) {
+      const detail = candidate.detail as JsonRecord;
+      code = optionalErrorText(detail.code) ?? code;
+      message = optionalErrorText(detail.message) ?? message;
+    } else if (typeof candidate.detail === "string") {
+      message = optionalErrorText(candidate.detail) ?? message;
+    }
+
+    if (Array.isArray(candidate.detail)) {
+      const first = candidate.detail.find(
+        (entry) => typeof entry === "object" && entry !== null && !Array.isArray(entry),
+      ) as JsonRecord | undefined;
+      message = optionalErrorText(first?.msg) ?? message;
+    }
+  }
+
+  return {
+    ...(code ? { code } : {}),
+    message: message ?? fallbackLibraryErrorMessage(status),
+  };
+}
+
+export function libraryErrorMessage(status: number, payload: unknown): string {
+  return libraryErrorDetails(status, payload).message;
 }
 
 export function assertLibrarySiteCreateInput(input: LibrarySiteCreateInput): LibrarySiteCreateInput {
@@ -349,6 +381,10 @@ export function assertLibrarySiteUpdateInput(input: LibrarySiteUpdateInput): Lib
       : {}),
     ...(input.pinned !== undefined ? { pinned: boolean(input.pinned, "site.pinned") } : {}),
   };
+}
+
+export function assertLibraryExpectedVersion(value: unknown): number {
+  return version(value, "site.expected_version");
 }
 
 export function assertLibraryCategoryName(name: string): string {

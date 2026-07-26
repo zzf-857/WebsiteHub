@@ -38,7 +38,10 @@ async def _call[T](operation: Awaitable[T]) -> T:
     try:
         return await operation
     except service.LibraryError as error:
-        raise HTTPException(error.status_code, error.message) from error
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "message": error.message},
+        ) from error
 
 
 @router.get("/categories", response_model=CategoryListResponse)
@@ -206,5 +209,13 @@ async def remove_site(
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
+    expected_version: Annotated[int, Query(ge=1)],
 ) -> SiteDeleteResponse:
-    return await _call(service.delete_site(session, identity.user.id, site_id))
+    return await _call(
+        service.delete_site(
+            session,
+            identity.user.id,
+            site_id,
+            expected_version=expected_version,
+        )
+    )

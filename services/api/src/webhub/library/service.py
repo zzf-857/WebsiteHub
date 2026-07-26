@@ -42,6 +42,7 @@ from webhub.library.schemas import (
     TagListResponse,
     TagReference,
     TagResponse,
+    normalize_favicon_url,
 )
 
 SortKey = Literal["created", "updated", "name"]
@@ -52,22 +53,27 @@ _CJK_CHARACTER = re.compile(r"[\u3400-\u9fff]")
 
 class LibraryError(Exception):
     status_code = 400
+    code = "library_error"
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, code: str | None = None) -> None:
         self.message = message
+        self.code = code or type(self).code
         super().__init__(message)
 
 
 class LibraryNotFoundError(LibraryError):
     status_code = 404
+    code = "not_found"
 
 
 class LibraryConflictError(LibraryError):
     status_code = 409
+    code = "conflict"
 
 
 class LibraryValidationError(LibraryError):
     status_code = 422
+    code = "validation_error"
 
 
 def _display_name(value: str, *, maximum: int, field: str) -> tuple[str, str]:
@@ -86,6 +92,14 @@ def _site_url(value: str) -> tuple[str, str]:
         reason = normalized.reason or "invalid_url"
         raise LibraryValidationError(f"网址无效或不受支持：{reason}")
     return original_url, normalized.normalized_url
+
+
+def _safe_favicon_url(value: str | None) -> str | None:
+    try:
+        normalized = normalize_favicon_url(value)
+    except ValueError:
+        return None
+    return normalized if isinstance(normalized, str) else None
 
 
 async def _default_category(session: AsyncSession, user_id: str) -> Category:
@@ -444,7 +458,7 @@ async def _site_response(
         original_url=site.original_url,
         identity_url=site.identity_url,
         description=site.description,
-        favicon_url=site.favicon_url,
+        favicon_url=_safe_favicon_url(site.favicon_url),
         category=CategoryReference(
             id=selected_category.id,
             name=selected_category.name,
@@ -486,7 +500,7 @@ async def create_site(
         original_url=original_url,
         identity_url=identity_url,
         description=payload.description.strip(),
-        favicon_url=payload.favicon_url.strip() if payload.favicon_url else None,
+        favicon_url=payload.favicon_url,
         pinned=payload.pinned,
     )
     session.add(site)
@@ -498,7 +512,10 @@ async def create_site(
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
-        raise LibraryConflictError("该网址已存在于当前账号的资料库") from error
+        raise LibraryConflictError(
+            "该网址已存在于当前账号的资料库",
+            code="duplicate_url",
+        ) from error
     return await _site_response(session, user_id, site, category, tags)
 
 
@@ -510,7 +527,10 @@ async def update_site(
 ) -> SiteResponse:
     site = await _owned_site(session, user_id, site_id)
     if site.version != payload.expected_version:
-        raise LibraryConflictError("网站已被修改，请刷新后重试")
+        raise LibraryConflictError(
+            "网站已被修改，请刷新后重试",
+            code="version_conflict",
+        )
 
     fields = payload.model_fields_set - {"expected_version"}
     if not fields:
@@ -561,7 +581,10 @@ async def update_site(
         )
         if claim.rowcount != 1:  # type: ignore[attr-defined]
             await session.rollback()
-            raise LibraryConflictError("网站已被修改，请刷新后重试")
+            raise LibraryConflictError(
+                "网站已被修改，请刷新后重试",
+                code="version_conflict",
+            )
 
         await session.refresh(site)
         if name_update is not None:
@@ -571,7 +594,7 @@ async def update_site(
         if "description" in fields:
             site.description = (payload.description or "").strip()
         if "favicon_url" in fields:
-            site.favicon_url = payload.favicon_url.strip() if payload.favicon_url else None
+            site.favicon_url = payload.favicon_url
         if "pinned" in fields:
             site.pinned = bool(payload.pinned)
         if category is not None:
@@ -590,7 +613,10 @@ async def update_site(
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
-        raise LibraryConflictError("该网址已存在于当前账号的资料库") from error
+        raise LibraryConflictError(
+            "该网址已存在于当前账号的资料库",
+            code="duplicate_url",
+        ) from error
     return await _site_response(session, user_id, site)
 
 
@@ -598,19 +624,47 @@ async def delete_site(
     session: AsyncSession,
     user_id: str,
     site_id: str,
+    *,
+    expected_version: int,
 ) -> SiteDeleteResponse:
     site = await _owned_site(session, user_id, site_id)
+    if site.version != expected_version:
+        raise LibraryConflictError(
+            "网站已被修改，请刷新后重试",
+            code="version_conflict",
+        )
     now = utc_now()
-    related_space_ids = select(SpaceMember.space_id).where(
-        SpaceMember.user_id == user_id,
-        SpaceMember.site_id == site_id,
+    related_space_ids = list(
+        (
+            await session.scalars(
+                select(SpaceMember.space_id).where(
+                    SpaceMember.user_id == user_id,
+                    SpaceMember.site_id == site_id,
+                )
+            )
+        ).all()
     )
-    await session.execute(
-        update(Space)
-        .where(Space.user_id == user_id, Space.id.in_(related_space_ids))
-        .values(version=Space.version + 1, updated_at=now)
+    deleted = await session.execute(
+        delete(Site)
+        .where(
+            Site.user_id == user_id,
+            Site.id == site_id,
+            Site.version == expected_version,
+        )
+        .execution_options(synchronize_session=False)
     )
-    await session.delete(site)
+    if deleted.rowcount != 1:  # type: ignore[attr-defined]
+        await session.rollback()
+        raise LibraryConflictError(
+            "网站已被修改，请刷新后重试",
+            code="version_conflict",
+        )
+    if related_space_ids:
+        await session.execute(
+            update(Space)
+            .where(Space.user_id == user_id, Space.id.in_(related_space_ids))
+            .values(version=Space.version + 1, updated_at=now)
+        )
     await session.commit()
     return SiteDeleteResponse(message="网站已删除", site_id=site_id)
 

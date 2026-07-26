@@ -1,7 +1,25 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic.functional_validators import BeforeValidator
+
+_HTTP_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
+
+
+def normalize_favicon_url(value: object) -> object:
+    if value is None or not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        return str(_HTTP_URL_ADAPTER.validate_python(stripped))
+    except ValidationError as error:
+        raise ValueError("favicon_url 必须是绝对 HTTP(S) URL") from error
+
+
+FaviconUrl = Annotated[str | None, BeforeValidator(normalize_favicon_url)]
 
 
 class StrictRequest(BaseModel):
@@ -75,7 +93,7 @@ class SiteCreateRequest(StrictRequest):
     name: str = Field(min_length=1, max_length=160)
     url: str = Field(min_length=1, max_length=16_384)
     description: str = Field(default="", max_length=4_000)
-    favicon_url: str | None = Field(default=None, max_length=4_096)
+    favicon_url: FaviconUrl = Field(default=None, max_length=4_096)
     category_id: str | None = None
     tag_ids: list[str] = Field(default_factory=list, max_length=50)
     pinned: bool = False
@@ -86,7 +104,7 @@ class SiteUpdateRequest(StrictRequest):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     url: str | None = Field(default=None, min_length=1, max_length=16_384)
     description: str | None = Field(default=None, max_length=4_000)
-    favicon_url: str | None = Field(default=None, max_length=4_096)
+    favicon_url: FaviconUrl = Field(default=None, max_length=4_096)
     category_id: str | None = None
     tag_ids: list[str] | None = Field(default=None, max_length=50)
     pinned: bool | None = None
@@ -98,7 +116,7 @@ class SiteResponse(BaseModel):
     original_url: str
     identity_url: str
     description: str
-    favicon_url: str | None
+    favicon_url: FaviconUrl
     category: CategoryReference
     tags: list[TagReference]
     pinned: bool

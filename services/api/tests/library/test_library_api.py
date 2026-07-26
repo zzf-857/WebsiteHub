@@ -165,11 +165,22 @@ def test_site_crud_search_and_stale_version(library_client: TestClient) -> None:
         headers=ORIGIN,
     )
     assert stale.status_code == 409
-    assert stale.json()["detail"] == "网站已被修改，请刷新后重试"
+    assert stale.json()["detail"] == {
+        "code": "version_conflict",
+        "message": "网站已被修改，请刷新后重试",
+    }
 
-    deleted = client.delete(f"/api/library/sites/{created['id']}", headers=ORIGIN)
+    missing_version = client.delete(f"/api/library/sites/{created['id']}", headers=ORIGIN)
+    assert missing_version.status_code == 422
+    deleted = client.delete(
+        f"/api/library/sites/{created['id']}",
+        params={"expected_version": updated.json()["version"]},
+        headers=ORIGIN,
+    )
     assert deleted.status_code == 200
-    assert client.get(f"/api/library/sites/{created['id']}").status_code == 404
+    missing = client.get(f"/api/library/sites/{created['id']}")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == {"code": "not_found", "message": "网站不存在"}
 
 
 def test_url_identity_is_strict_per_account(library_client: TestClient) -> None:
@@ -198,6 +209,10 @@ def test_url_identity_is_strict_per_account(library_client: TestClient) -> None:
         headers=ORIGIN,
     )
     assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == {
+        "code": "duplicate_url",
+        "message": "该网址已存在于当前账号的资料库",
+    }
 
     client.cookies.clear()
     _register(client, "bob")
@@ -371,7 +386,8 @@ def test_normalized_names_and_invalid_urls_return_clear_errors(
         headers=ORIGIN,
     )
     assert invalid.status_code == 422
-    assert invalid.json()["detail"].startswith("网址无效或不受支持")
+    assert invalid.json()["detail"]["code"] == "validation_error"
+    assert invalid.json()["detail"]["message"].startswith("网址无效或不受支持")
 
 
 def test_site_update_conflicts_remain_mapped_when_relationships_are_replaced(
@@ -393,7 +409,10 @@ def test_site_update_conflicts_remain_mapped_when_relationships_are_replaced(
         headers=ORIGIN,
     )
     assert duplicate.status_code == 409
-    assert duplicate.json()["detail"] == "该网址已存在于当前账号的资料库"
+    assert duplicate.json()["detail"] == {
+        "code": "duplicate_url",
+        "message": "该网址已存在于当前账号的资料库",
+    }
 
     unchanged = client.get(f"/api/library/sites/{second['id']}")
     assert unchanged.status_code == 200
@@ -406,3 +425,95 @@ def test_site_update_conflicts_remain_mapped_when_relationships_are_replaced(
         headers=ORIGIN,
     )
     assert empty_patch.status_code == 422
+
+
+def test_favicon_url_is_normalized_and_limited_to_absolute_http_urls(
+    library_client: TestClient,
+) -> None:
+    client = library_client
+    _register(client, "alice")
+
+    blank = client.post(
+        "/api/library/sites",
+        json={
+            "name": "Blank favicon",
+            "url": "https://blank-favicon.example.com",
+            "favicon_url": "   ",
+        },
+        headers=ORIGIN,
+    )
+    assert blank.status_code == 201, blank.text
+    assert blank.json()["favicon_url"] is None
+
+    created = client.post(
+        "/api/library/sites",
+        json={
+            "name": "HTTP favicon",
+            "url": "https://http-favicon.example.com",
+            "favicon_url": "  HTTPS://ICONS.EXAMPLE.COM/favicon.svg  ",
+        },
+        headers=ORIGIN,
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["favicon_url"] == "https://icons.example.com/favicon.svg"
+
+    for favicon_url in (
+        "/favicon.ico",
+        "//icons.example.com/favicon.ico",
+        "data:image/png;base64,AAAA",
+        "ftp://icons.example.com/favicon.ico",
+    ):
+        rejected = client.patch(
+            f"/api/library/sites/{created.json()['id']}",
+            json={
+                "expected_version": created.json()["version"],
+                "favicon_url": favicon_url,
+            },
+            headers=ORIGIN,
+        )
+        assert rejected.status_code == 422
+
+    cleared = client.patch(
+        f"/api/library/sites/{created.json()['id']}",
+        json={
+            "expected_version": created.json()["version"],
+            "favicon_url": "\t\r\n",
+        },
+        headers=ORIGIN,
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["favicon_url"] is None
+
+
+def test_delete_site_rejects_a_stale_version_without_deleting(
+    library_client: TestClient,
+) -> None:
+    client = library_client
+    _register(client, "alice")
+    created = _site(client, name="Versioned", url="https://versioned.example.com")
+    updated = client.patch(
+        f"/api/library/sites/{created['id']}",
+        json={"expected_version": created["version"], "pinned": True},
+        headers=ORIGIN,
+    ).json()
+
+    stale = client.delete(
+        f"/api/library/sites/{created['id']}",
+        params={"expected_version": created["version"]},
+        headers=ORIGIN,
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == {
+        "code": "version_conflict",
+        "message": "网站已被修改，请刷新后重试",
+    }
+    assert client.get(f"/api/library/sites/{created['id']}").json()["version"] == updated[
+        "version"
+    ]
+
+    deleted = client.delete(
+        f"/api/library/sites/{created['id']}",
+        params={"expected_version": updated["version"]},
+        headers=ORIGIN,
+    )
+    assert deleted.status_code == 200, deleted.text

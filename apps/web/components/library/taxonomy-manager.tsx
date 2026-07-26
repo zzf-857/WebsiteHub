@@ -1,7 +1,13 @@
 "use client";
 
 import { Check, Edit3, FolderTree, LoaderCircle, Plus, Tags, Trash2, X } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 
 import { MAX_LIBRARY_CATEGORY_NAME_LENGTH, MAX_LIBRARY_TAG_NAME_LENGTH } from "@/lib/library-contract";
 import {
@@ -38,11 +44,17 @@ export function TaxonomyManager({ categories, tags, onChanged }: Readonly<Taxono
   const [deleteCandidate, setDeleteCandidate] = useState<DeleteCandidate | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const categoryTabRef = useRef<HTMLButtonElement>(null);
+  const tagTabRef = useRef<HTMLButtonElement>(null);
+  const tabIdPrefix = useId();
 
   const items = kind === "categories" ? categories : tags;
   const maxNameLength = kind === "categories" ? MAX_LIBRARY_CATEGORY_NAME_LENGTH : MAX_LIBRARY_TAG_NAME_LENGTH;
+  const categoryTabId = `${tabIdPrefix}-categories-tab`;
+  const tagTabId = `${tabIdPrefix}-tags-tab`;
+  const panelId = `${tabIdPrefix}-panel`;
 
-  const run = async (operation: () => Promise<void>) => {
+  const runRead = async (operation: () => Promise<void>) => {
     setBusy(true);
     setError(null);
     try {
@@ -54,31 +66,78 @@ export function TaxonomyManager({ categories, tags, onChanged }: Readonly<Taxono
     }
   };
 
+  const runMutation = async (
+    operation: () => Promise<void>,
+    onSaved: () => void,
+  ) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await operation();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "操作失败，请重试");
+      setBusy(false);
+      return;
+    }
+
+    onSaved();
+    try {
+      await onChanged();
+    } catch {
+      setError("已保存但刷新失败，请勿重复提交；关闭窗口后使用页面上的重试按钮。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectKind = (nextKind: TaxonomyKind) => {
+    setKind(nextKind);
+    setNewName("");
+    setEditing(null);
+    setDeleteCandidate(null);
+    setError(null);
+  };
+
+  const handleTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    currentKind: TaxonomyKind,
+  ) => {
+    let nextKind: TaxonomyKind | null = null;
+    if (event.key === "ArrowRight") nextKind = currentKind === "categories" ? "tags" : "categories";
+    if (event.key === "ArrowLeft") nextKind = currentKind === "categories" ? "tags" : "categories";
+    if (event.key === "Home") nextKind = "categories";
+    if (event.key === "End") nextKind = "tags";
+    if (!nextKind) return;
+
+    event.preventDefault();
+    selectKind(nextKind);
+    (nextKind === "categories" ? categoryTabRef : tagTabRef).current?.focus();
+  };
+
   const handleCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const name = newName.trim();
     if (!name) return;
-    void run(async () => {
-      if (kind === "categories") await createLibraryCategory(name);
+    const targetKind = kind;
+    void runMutation(async () => {
+      if (targetKind === "categories") await createLibraryCategory(name);
       else await createLibraryTag(name);
-      setNewName("");
-      await onChanged();
-    });
+    }, () => setNewName(""));
   };
 
   const handleRename = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!editing?.name.trim()) return;
-    void run(async () => {
-      if (kind === "categories") await updateLibraryCategory(editing.id, editing.name);
-      else await updateLibraryTag(editing.id, editing.name);
-      setEditing(null);
-      await onChanged();
-    });
+    const targetKind = kind;
+    const target = editing;
+    void runMutation(async () => {
+      if (targetKind === "categories") await updateLibraryCategory(target.id, target.name);
+      else await updateLibraryTag(target.id, target.name);
+    }, () => setEditing(null));
   };
 
   const prepareDeleteCategory = (category: LibraryCategory) => {
-    void run(async () => {
+    void runRead(async () => {
       const preview = await previewLibraryCategoryDelete(category.id);
       setDeleteCandidate({ kind: "category", preview });
     });
@@ -86,35 +145,46 @@ export function TaxonomyManager({ categories, tags, onChanged }: Readonly<Taxono
 
   const confirmDelete = () => {
     if (!deleteCandidate) return;
-    void run(async () => {
-      if (deleteCandidate.kind === "category") {
-        await deleteLibraryCategory(deleteCandidate.preview.category.id);
+    const target = deleteCandidate;
+    void runMutation(async () => {
+      if (target.kind === "category") {
+        await deleteLibraryCategory(target.preview.category.id);
       } else {
-        await deleteLibraryTag(deleteCandidate.tag.id);
+        await deleteLibraryTag(target.tag.id);
       }
-      setDeleteCandidate(null);
-      await onChanged();
-    });
+    }, () => setDeleteCandidate(null));
   };
 
   return (
     <div className="taxonomy-manager">
-      <div className="taxonomy-tabs" role="tablist" aria-label="管理内容">
+      <div className="taxonomy-tabs" role="tablist" aria-label="管理内容" aria-orientation="horizontal">
         <button
+          ref={categoryTabRef}
+          id={categoryTabId}
           type="button"
           role="tab"
           aria-selected={kind === "categories"}
+          aria-controls={panelId}
+          tabIndex={kind === "categories" ? 0 : -1}
           data-active={kind === "categories" || undefined}
-          onClick={() => { setKind("categories"); setEditing(null); setDeleteCandidate(null); }}
+          disabled={busy}
+          onClick={() => selectKind("categories")}
+          onKeyDown={(event) => handleTabKeyDown(event, "categories")}
         >
           <FolderTree aria-hidden="true" /> 分类
         </button>
         <button
+          ref={tagTabRef}
+          id={tagTabId}
           type="button"
           role="tab"
           aria-selected={kind === "tags"}
+          aria-controls={panelId}
+          tabIndex={kind === "tags" ? 0 : -1}
           data-active={kind === "tags" || undefined}
-          onClick={() => { setKind("tags"); setEditing(null); setDeleteCandidate(null); }}
+          disabled={busy}
+          onClick={() => selectKind("tags")}
+          onKeyDown={(event) => handleTabKeyDown(event, "tags")}
         >
           <Tags aria-hidden="true" /> 标签
         </button>
@@ -166,7 +236,13 @@ export function TaxonomyManager({ categories, tags, onChanged }: Readonly<Taxono
         </section>
       )}
 
-      <div className="taxonomy-list" role="tabpanel">
+      <div
+        className="taxonomy-list"
+        id={panelId}
+        role="tabpanel"
+        aria-labelledby={kind === "categories" ? categoryTabId : tagTabId}
+        tabIndex={0}
+      >
         {items.map((item) => {
           const isDefault = "isDefault" in item && item.isDefault === true;
           const isEditing = editing?.id === item.id;

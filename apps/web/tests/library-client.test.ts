@@ -5,6 +5,8 @@ import {
   buildLibrarySiteSearchParams,
   createLibraryCategory,
   createLibrarySite,
+  deleteLibrarySite,
+  LibraryApiError,
   listLibrarySites,
   MAX_LIBRARY_PAGE_SIZE,
   updateLibraryTag,
@@ -70,7 +72,7 @@ test("list requests keep cookies and normalize the response", async (context) =>
   assert.equal(result.items[0]?.name, "MDN");
 });
 
-test("create and update serialize the documented request bodies", async (context) => {
+test("site writes serialize bodies and delete optimistic concurrency", async (context) => {
   const originalFetch = globalThis.fetch;
   context.after(() => { globalThis.fetch = originalFetch; });
   const requests: Array<{ input: string; init?: RequestInit }> = [];
@@ -92,6 +94,7 @@ test("create and update serialize the documented request bodies", async (context
   });
   await updateLibrarySite("site/one", { expectedVersion: 3, pinned: false });
   await updateLibrarySite("site/one", { expectedVersion: 4, categoryId: null });
+  await deleteLibrarySite("site/one", 5);
 
   assert.equal(requests[0]?.input, "/api/backend/library/sites");
   assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
@@ -110,6 +113,30 @@ test("create and update serialize the documented request bodies", async (context
     expected_version: 4,
     category_id: null,
   });
+  assert.equal(requests[3]?.input, "/api/backend/library/sites/site%2Fone?expected_version=5");
+  assert.equal(requests[3]?.init?.method, "DELETE");
+});
+
+test("surfaces structured backend error codes to interaction logic", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    detail: {
+      code: "duplicate_url",
+      message: "该网址已存在于当前账号的资料库",
+    },
+  }), { status: 409, headers: { "Content-Type": "application/json" } });
+
+  await assert.rejects(
+    createLibrarySite({ name: "Duplicate", url: "https://developer.mozilla.org" }),
+    (error: unknown) => {
+      assert.ok(error instanceof LibraryApiError);
+      assert.equal(error.status, 409);
+      assert.equal(error.code, "duplicate_url");
+      assert.equal(error.message, "该网址已存在于当前账号的资料库");
+      return true;
+    },
+  );
 });
 
 test("category and tag writes reject names beyond backend limits before fetching", async (context) => {
@@ -126,5 +153,6 @@ test("category and tag writes reject names beyond backend limits before fetching
 
   await assert.rejects(createLibraryCategory("c".repeat(81)), /80/);
   await assert.rejects(updateLibraryTag("tag-1", "t".repeat(41)), /40/);
+  await assert.rejects(deleteLibrarySite("site-1", 0), /正整数/);
   assert.equal(fetchCount, 0);
 });

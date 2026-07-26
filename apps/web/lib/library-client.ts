@@ -1,9 +1,10 @@
 import {
   assertLibraryCategoryName,
+  assertLibraryExpectedVersion,
   assertLibrarySiteCreateInput,
   assertLibrarySiteUpdateInput,
   assertLibraryTagName,
-  libraryErrorMessage,
+  libraryErrorDetails,
   normalizeCategoryDeletePreview,
   normalizeLibraryCategories,
   normalizeLibraryCategory,
@@ -27,11 +28,13 @@ export const MAX_LIBRARY_PAGE_SIZE = 100;
 
 export class LibraryApiError extends Error {
   status: number;
+  code?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = "LibraryApiError";
     this.status = status;
+    if (code) this.code = code;
   }
 }
 
@@ -56,7 +59,10 @@ async function request(path: string, init: RequestInit = {}): Promise<unknown> {
       : init.headers,
   });
   const payload = await readJson(response);
-  if (!response.ok) throw new LibraryApiError(response.status, libraryErrorMessage(response.status, payload));
+  if (!response.ok) {
+    const error = libraryErrorDetails(response.status, payload);
+    throw new LibraryApiError(response.status, error.message, error.code);
+  }
   return payload;
 }
 
@@ -187,6 +193,9 @@ export async function updateLibrarySite(id: string, input: LibrarySiteUpdateInpu
   }));
 }
 
-export async function deleteLibrarySite(id: string): Promise<void> {
-  await request(`/sites/${encodeId(id)}`, { method: "DELETE" });
+export async function deleteLibrarySite(id: string, expectedVersion: number): Promise<void> {
+  const params = new URLSearchParams({
+    expected_version: String(assertLibraryExpectedVersion(expectedVersion)),
+  });
+  await request(`/sites/${encodeId(id)}?${params.toString()}`, { method: "DELETE" });
 }
