@@ -1,11 +1,26 @@
 import base64
 import binascii
-from dataclasses import dataclass, field
+import secrets
+from contextlib import suppress
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from os import getenv
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+
+# ``.env.example`` documents a dozen WEBHUB_* variables and ``.gitignore``
+# excludes ``.env``, so the file is clearly meant to be read — but nothing was
+# reading it, which made every documented setting silently inert.  Load it once
+# at import, without overriding anything the real environment already set.
+load_dotenv(REPOSITORY_ROOT / ".env", override=False)
+
+# Where a development-only Provider master key is persisted after being
+# generated on first use.  Kept beside the database because losing one without
+# the other is useless anyway: the key decrypts secrets that only live there.
+DEVELOPMENT_MASTER_KEY_FILENAME = "provider-master.key"
 
 
 def _environment_flag(name: str, default: bool) -> bool:
@@ -28,10 +43,7 @@ def _positive_environment_integer(name: str, default: int) -> int:
     return parsed
 
 
-def _provider_master_key() -> bytes | None:
-    value = getenv("WEBHUB_PROVIDER_MASTER_KEY")
-    if value is None or not value.strip():
-        return None
+def _decoded_master_key(value: str) -> bytes:
     try:
         decoded = base64.b64decode(
             value.strip().encode("ascii"),
@@ -47,6 +59,57 @@ def _provider_master_key() -> bytes | None:
             "WEBHUB_PROVIDER_MASTER_KEY must be a base64-encoded 32-byte key"
         )
     return decoded
+
+
+def development_master_key(data_directory: Path) -> bytes:
+    """Read — or on first use create — the local development master key.
+
+    Without a key the whole Provider feature is dead on arrival: saving an API
+    key fails with a 503 that reads "contact your service administrator", which
+    is meaningless advice for a single-user app the user is hosting themselves.
+    Generating one on first run trades a little secrecy for a feature that
+    actually works.
+
+    The trade is explicit, and bounded to development:
+
+    * the key sits next to ``main.sqlite3``, so whoever can read the database
+      can also read the key.  That is already true of a local desktop install,
+      and it is strictly better than storing the API keys in plaintext or not
+      storing them at all;
+    * production still refuses to start without ``WEBHUB_PROVIDER_MASTER_KEY``
+      (see ``Settings.__post_init__``), so this path can never be reached by a
+      deployment that has real users;
+    * the file is created with owner-only permissions where the platform
+      supports it, and it must be backed up — losing it makes every stored API
+      key permanently undecryptable.
+    """
+
+    key_path = data_directory / DEVELOPMENT_MASTER_KEY_FILENAME
+    if key_path.exists():
+        return _decoded_master_key(key_path.read_text(encoding="ascii"))
+
+    data_directory.mkdir(parents=True, exist_ok=True)
+    generated = secrets.token_bytes(32)
+    encoded = base64.b64encode(generated).decode("ascii")
+    # Exclusive create: two workers starting at once must not race to write
+    # different keys and leave half the secrets undecryptable.
+    try:
+        with open(key_path, "x", encoding="ascii") as handle:
+            handle.write(encoded)
+    except FileExistsError:
+        return _decoded_master_key(key_path.read_text(encoding="ascii"))
+    # Windows ACLs do not map onto POSIX modes; the file still inherits the
+    # directory's protection, so a failure here is not worth blocking startup.
+    with suppress(OSError):
+        key_path.chmod(0o600)
+    return generated
+
+
+def _provider_master_key() -> bytes | None:
+    value = getenv("WEBHUB_PROVIDER_MASTER_KEY")
+    if value is None or not value.strip():
+        return None
+    return _decoded_master_key(value)
 
 
 def _default_data_directory() -> Path:
@@ -226,7 +289,14 @@ class Settings:
 @lru_cache
 def get_settings() -> Settings:
     environment = getenv("WEBHUB_ENVIRONMENT", "development")
-    return Settings(
+    settings = Settings(
         environment=environment,
         session_cookie_secure=_environment_flag("WEBHUB_SESSION_COOKIE_SECURE", False),
+    )
+    if settings.provider_master_key is not None:
+        return settings
+    # Development only: production already refused to construct above.
+    return replace(
+        settings,
+        provider_master_key=development_master_key(settings.data_directory),
     )

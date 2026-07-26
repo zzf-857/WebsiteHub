@@ -126,6 +126,7 @@ test("归一化把 snake_case 转成 camelCase", () => {
         allows_private_base_url: false,
         application_url: "https://app.tavily.com",
         connection_test_supported: false,
+        default_base_url: "https://api.tavily.com",
       },
     ],
   });
@@ -139,6 +140,8 @@ test("归一化把 snake_case 转成 camelCase", () => {
     allowsPrivateBaseUrl: false,
     applicationUrl: "https://app.tavily.com",
     connectionTestSupported: false,
+    // 官方地址由后端注册表下发，前端据此预填，用户不必自己抄。
+    defaultBaseUrl: "https://api.tavily.com",
   });
 });
 

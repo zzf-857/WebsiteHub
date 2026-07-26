@@ -13,6 +13,9 @@ export type ProviderRegistryItem = {
   allowsPrivateBaseUrl: boolean;
   applicationUrl: string | null;
   connectionTestSupported: boolean;
+  // 厂商官方地址，用来预填 Base URL；null 表示该厂商没有固定地址（Ollama、
+  // OpenAI-compatible），必须用户自己填。
+  defaultBaseUrl: string | null;
 };
 
 export type ProviderConfig = {
@@ -225,6 +228,7 @@ function normalizeRegistryItemAt(value: unknown, path: string): ProviderRegistry
     allowsPrivateBaseUrl: boolean(candidate.allows_private_base_url, `${path}.allows_private_base_url`),
     applicationUrl: nullableWebUrl(candidate.application_url, `${path}.application_url`),
     connectionTestSupported: boolean(candidate.connection_test_supported, `${path}.connection_test_supported`),
+    defaultBaseUrl: nullableWebUrl(candidate.default_base_url, `${path}.default_base_url`),
   };
 }
 

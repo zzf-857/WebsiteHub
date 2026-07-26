@@ -4,7 +4,12 @@ from pathlib import Path
 import pytest
 
 from webhub.bookmarks.admission import BookmarkUploadAdmissionManager
-from webhub.config import REPOSITORY_ROOT, Settings, get_settings
+from webhub.config import (
+    DEVELOPMENT_MASTER_KEY_FILENAME,
+    REPOSITORY_ROOT,
+    Settings,
+    get_settings,
+)
 from webhub.main import create_app
 
 _UPLOAD_ENVIRONMENT_VARIABLES = (
@@ -199,20 +204,81 @@ def test_provider_master_key_is_decoded_and_hidden_from_settings_repr(
         get_settings.cache_clear()
 
 
-@pytest.mark.parametrize("value", ["not-base64!", "c2hvcnQ=", ""])
-def test_invalid_provider_master_key_fails_closed_when_configured(
+@pytest.mark.parametrize("value", ["not-base64!", "c2hvcnQ="])
+def test_malformed_provider_master_key_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     value: str,
 ) -> None:
+    """A key that is present but wrong must never be silently replaced.
+
+    Quietly generating a fresh key here would make every previously stored API
+    key undecryptable while the app looked healthy.
+    """
+
     _clear_provider_environment(monkeypatch)
     monkeypatch.setenv("WEBHUB_PROVIDER_MASTER_KEY", value)
     get_settings.cache_clear()
     try:
-        if value:
-            with pytest.raises(ValueError, match="base64-encoded 32-byte"):
-                get_settings()
-        else:
-            assert get_settings().provider_master_key is None
+        with pytest.raises(ValueError, match="base64-encoded 32-byte"):
+            get_settings()
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_development_generates_and_reuses_a_master_key_on_disk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    value: str | None,
+) -> None:
+    """Without a key the Provider feature is dead on arrival, so dev makes one.
+
+    The generated key must persist: regenerating on every boot would silently
+    orphan every API key saved before the restart.
+    """
+
+    _clear_provider_environment(monkeypatch)
+    monkeypatch.setenv("WEBHUB_DATA_DIR", str(tmp_path))
+    if value is None:
+        monkeypatch.delenv("WEBHUB_PROVIDER_MASTER_KEY", raising=False)
+    else:
+        monkeypatch.setenv("WEBHUB_PROVIDER_MASTER_KEY", value)
+    get_settings.cache_clear()
+    try:
+        first = get_settings().provider_master_key
+        assert isinstance(first, bytes)
+        assert len(first) == 32
+        key_file = tmp_path / DEVELOPMENT_MASTER_KEY_FILENAME
+        assert key_file.exists()
+
+        get_settings.cache_clear()
+        assert get_settings().provider_master_key == first
+
+        # The key never leaks through repr, exactly like a configured one.
+        assert base64.b64encode(first).decode() not in repr(get_settings())
+    finally:
+        get_settings.cache_clear()
+
+
+def test_an_explicit_master_key_always_wins_over_the_generated_one(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_provider_environment(monkeypatch)
+    monkeypatch.setenv("WEBHUB_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    try:
+        generated = get_settings().provider_master_key
+        get_settings.cache_clear()
+
+        raw_key = b"an-explicitly-configured-32bytes"
+        assert len(raw_key) == 32
+        monkeypatch.setenv(
+            "WEBHUB_PROVIDER_MASTER_KEY",
+            base64.urlsafe_b64encode(raw_key).decode(),
+        )
+        assert get_settings().provider_master_key == raw_key
+        assert get_settings().provider_master_key != generated
     finally:
         get_settings.cache_clear()
 

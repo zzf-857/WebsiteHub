@@ -28,6 +28,7 @@ function registryItem(overrides: Partial<ProviderRegistryItem> = {}): ProviderRe
     allowsPrivateBaseUrl: false,
     applicationUrl: null,
     connectionTestSupported: false,
+    defaultBaseUrl: null,
     ...overrides,
   };
 }
@@ -351,14 +352,30 @@ test("effectiveHasSecret 三态语义", () => {
   assert.equal(effectiveHasSecret("clear", true), false);
 });
 
-test("新建草稿默认勾选启用，编辑草稿完整回填", () => {
-  assert.deepEqual(createProviderDraft("openai"), {
-    provider: "openai",
+test("新建草稿默认勾选启用，并按注册表预填厂商官方地址", () => {
+  // 没选厂商：全空。
+  assert.deepEqual(createProviderDraft(), {
+    provider: "",
     displayName: "",
     baseUrl: "",
     modelName: "",
     enabled: true,
   });
+  // 选了有官方地址的厂商：Base URL 和配置名都不用用户自己敲。
+  assert.deepEqual(
+    createProviderDraft(
+      registryItem({ provider: "openai", label: "OpenAI", defaultBaseUrl: "https://api.openai.com/v1" }),
+    ),
+    {
+      provider: "openai",
+      displayName: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      modelName: "",
+      enabled: true,
+    },
+  );
+  // 没有官方地址的厂商（Ollama / OpenAI-compatible）仍然要用户自己填。
+  assert.equal(createProviderDraft(OLLAMA).baseUrl, "");
   assert.deepEqual(editProviderDraft(storedConfig({ baseUrl: null, modelName: null })), {
     provider: "deepseek",
     displayName: "日常对话",

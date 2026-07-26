@@ -124,10 +124,19 @@ function baseUrlError(value: string, allowsPrivate: boolean): string | undefined
   return undefined;
 }
 
-export function createProviderDraft(provider = ""): ProviderDraft {
+// 选中厂商时用注册表里的官方地址预填 Base URL：这个值用户没有选择余地，
+// 让他去翻文档抄一遍没有任何意义。没有默认地址的厂商（Ollama、
+// OpenAI-compatible）才需要自己填。
+export function createProviderDraft(definition: ProviderRegistryItem | null = null): ProviderDraft {
   // 新建默认勾选「保存后立即启用」：绝大多数人配完就是要用，
   // 少数只想先存不启用的场景可以自己取消勾选。
-  return { provider, displayName: "", baseUrl: "", modelName: "", enabled: true };
+  return {
+    provider: definition?.provider ?? "",
+    displayName: definition?.label ?? "",
+    baseUrl: definition?.defaultBaseUrl ?? "",
+    modelName: "",
+    enabled: true,
+  };
 }
 
 export function editProviderDraft(config: ProviderConfig): ProviderDraft {

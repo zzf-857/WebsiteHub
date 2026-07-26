@@ -14,6 +14,9 @@ dependencies = [
   "langchain-core>=0.3,<2.0",
   "langchain-openai>=0.3,<2.0",
   "langgraph>=0.6,<2.0",
+  # 直接依赖：config.py 在导入时读 .env。此前它只是 uvicorn[standard] 的传递依赖，
+  # 换个 uvicorn extra 就会静默消失。
+  "python-dotenv>=1.0,<2.0",
   "sqlalchemy[asyncio]>=2.0,<3.0",
   "uvicorn[standard]==0.51.0",
 ]

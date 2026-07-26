@@ -78,10 +78,15 @@ class _PreparedConfig:
 
 def _raise_secret_error(error: Exception) -> Never:
     if isinstance(error, ProviderSecretUnavailableError):
+        # WebHub is self-hosted and usually single-user: "contact your service
+        # administrator" tells the person reading it to go ask themselves.  Say
+        # what is actually wrong and what fixes it.
         raise ProviderError(
             503,
             "provider_key_unavailable",
-            "Provider 凭据主密钥不可用，请联系服务管理员",
+            "服务端缺少用于加密 API Key 的主密钥，无法保存。"
+            "开发环境重启一次服务即可自动生成；"
+            "生产环境需要设置 WEBHUB_PROVIDER_MASTER_KEY（base64 编码的 32 字节）。",
         ) from error
     raise ProviderError(
         503,
@@ -215,6 +220,7 @@ def registry() -> ProviderRegistryResponse:
                 allows_private_base_url=item.allows_private_base_url,
                 application_url=item.application_url,
                 connection_test_supported=item.connection_test_supported,
+                default_base_url=item.default_base_url,
             )
             for item in PROVIDER_REGISTRY
         ]

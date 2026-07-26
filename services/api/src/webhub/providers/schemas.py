@@ -131,6 +131,9 @@ class ProviderRegistryItem(BaseModel):
     allows_private_base_url: bool
     application_url: str | None
     connection_test_supported: bool
+    # 厂商官方地址。前端据此预填 Base URL，用户不必自己去翻文档抄。
+    # 为 null 表示该厂商没有固定地址（Ollama、OpenAI-compatible），必须自己填。
+    default_base_url: str | None
 
 
 class ProviderRegistryResponse(BaseModel):
