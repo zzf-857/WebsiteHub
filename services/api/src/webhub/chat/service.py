@@ -569,6 +569,42 @@ async def list_messages(
     )
 
 
+async def list_recent_messages(
+    session: AsyncSession,
+    user_id: str,
+    conversation_id: str,
+    *,
+    limit: int = 20,
+) -> list[ConversationMessageResponse]:
+    """Return the newest ``limit`` messages, oldest first.
+
+    ``list_messages`` paginates forward from the start of a conversation, which
+    is right for reading a transcript but wrong for building a prompt: taking
+    its first page would feed the model the *oldest* turns and silently drop
+    everything recent once a conversation outgrows the window.  This query
+    walks backwards instead and then restores chronological order.
+    """
+
+    await _owned_conversation(session, user_id, conversation_id)
+    if limit < 1 or limit > MAX_MESSAGE_LIMIT:
+        raise ChatValidationError(f"每页消息数必须在 1 到 {MAX_MESSAGE_LIMIT} 之间")
+    statement = (
+        select(ConversationMessage)
+        .where(
+            ConversationMessage.user_id == user_id,
+            ConversationMessage.conversation_id == conversation_id,
+        )
+        .order_by(
+            ConversationMessage.sequence.desc(),
+            ConversationMessage.id.desc(),
+        )
+        .limit(limit)
+    )
+    rows = list((await session.scalars(statement)).all())
+    rows.reverse()
+    return [_message_response(message) for message in rows]
+
+
 async def get_conversation_detail(
     session: AsyncSession,
     user_id: str,

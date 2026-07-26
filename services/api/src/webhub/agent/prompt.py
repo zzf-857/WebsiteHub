@@ -54,13 +54,24 @@ def build_system_prompt(
     *,
     slash_command: SlashCommandInvocation | None = None,
     web_search_available: bool = False,
+    web_search_declined: bool = False,
 ) -> str:
-    """Compose the turn's system prompt from stable, server-owned text."""
+    """Compose the turn's system prompt from stable, server-owned text.
+
+    ``web_search_declined`` separates "the user switched browsing off for this
+    turn" from "the account has no search Provider".  Collapsing the two would
+    make the model tell an already-configured user to go configure a Provider.
+    """
 
     sections = [SYSTEM_PROMPT]
     if not web_search_available:
+        reason = (
+            "用户本轮把搜索范围设为“仅收藏库”，因此没有 web_search 工具。"
+            if web_search_declined
+            else "当前账号未配置联网搜索 Provider，本轮没有 web_search 工具。"
+        )
         sections.append(
-            "## 本轮能力\n当前账号未配置联网搜索 Provider，本轮没有 web_search 工具。"
+            f"## 本轮能力\n{reason}"
             f"站内查不到时只能凭自身知识推荐，并标注【来源：{SOURCE_MODEL}】。"
         )
     if slash_command is not None and slash_command.name is not None:

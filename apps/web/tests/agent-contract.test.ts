@@ -1,0 +1,419 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  AgentContractError,
+  agentErrorDetails,
+  agentSourceLabels,
+  describeAgentToolResult,
+  latestAgentUserText,
+  MAX_AGENT_MESSAGE_LENGTH,
+  normalizeAgentConversationHistory,
+  normalizeAgentMessageMetadata,
+  normalizeAgentStreamError,
+  normalizeAgentToolCall,
+  normalizeAgentToolResult,
+  prepareAgentChatRequest,
+  toAgentUIMessages,
+} from "../lib/agent-contract.ts";
+
+test("builds snake-case chat request bodies without leaking optional keys", () => {
+  assert.deepEqual(
+    prepareAgentChatRequest({ message: "  帮我找前端文档  ", conversationId: "conv-1" }),
+    { message: "帮我找前端文档", conversation_id: "conv-1" },
+  );
+
+  const withoutConversation = prepareAgentChatRequest({ message: "你好" });
+  assert.deepEqual(withoutConversation, { message: "你好" });
+  assert.equal("conversation_id" in withoutConversation, false);
+  assert.equal("conversation_id" in prepareAgentChatRequest({ message: "你好", conversationId: null }), false);
+  assert.equal("conversation_id" in prepareAgentChatRequest({ message: "你好", conversationId: "   " }), false);
+
+  assert.equal("metadata" in prepareAgentChatRequest({ message: "你好", metadata: {} }), false);
+  assert.deepEqual(
+    prepareAgentChatRequest({ message: "你好", metadata: { web_search: true } }),
+    { message: "你好", metadata: { web_search: true } },
+  );
+});
+
+test("rejects blank messages and enforces the length limit in code points", () => {
+  assert.throws(
+    () => prepareAgentChatRequest({ message: "   " }),
+    (error: unknown) => error instanceof AgentContractError && /不能为空/.test(error.message),
+  );
+
+  const atLimit = "😀".repeat(MAX_AGENT_MESSAGE_LENGTH);
+  assert.ok(atLimit.length > MAX_AGENT_MESSAGE_LENGTH);
+  assert.equal(prepareAgentChatRequest({ message: atLimit }).message, atLimit);
+
+  assert.throws(
+    () => prepareAgentChatRequest({ message: "😀".repeat(MAX_AGENT_MESSAGE_LENGTH + 1) }),
+    (error: unknown) =>
+      error instanceof AgentContractError &&
+      new RegExp(String(MAX_AGENT_MESSAGE_LENGTH)).test(error.message),
+  );
+});
+
+test("extracts the latest user text from text parts only", () => {
+  assert.equal(
+    latestAgentUserText([
+      { role: "user", parts: [{ type: "text", text: "第一个问题" }] },
+      { role: "assistant", parts: [{ type: "text", text: "助手的回答" }] },
+      {
+        role: "user",
+        parts: [
+          { type: "text", text: "帮我找 " },
+          { type: "reasoning", text: "不应出现在结果里" },
+          { type: "text", text: "React 文档" },
+        ],
+      },
+      { role: "assistant", parts: [{ type: "text", text: "稍等" }] },
+    ]),
+    "帮我找 React 文档",
+  );
+
+  assert.equal(
+    latestAgentUserText([
+      { role: "user", parts: [{ type: "text", text: "早一点的问题" }] },
+      { role: "user", parts: [{ type: "text", text: "   " }] },
+    ]),
+    "早一点的问题",
+  );
+
+  assert.equal(latestAgentUserText([]), "");
+  assert.equal(latestAgentUserText([{ role: "assistant", parts: [{ type: "text", text: "只有助手" }] }]), "");
+  assert.equal(latestAgentUserText([{ role: "user" }, { role: "user", parts: [{ type: "file", url: "x" }] }]), "");
+});
+
+test("projects tool results into links, facets, draft, rejected, error, and raw views", () => {
+  assert.deepEqual(
+    describeAgentToolResult("search_library", {
+      source: "站内存储数据",
+      matched_count: 2,
+      items: [
+        {
+          site_id: "site-1",
+          name: "MDN",
+          url: "https://developer.mozilla.org/",
+          description: "Web 文档",
+          category: "开发",
+          tags: ["文档", 3, "  前端  "],
+          pinned: true,
+        },
+        { title: "仅有标题", snippet: "来自搜索摘要", url: "https://example.com/" },
+      ],
+    }),
+    {
+      kind: "links",
+      source: "站内存储数据",
+      matchedCount: 2,
+      items: [
+        {
+          siteId: "site-1",
+          name: "MDN",
+          url: "https://developer.mozilla.org/",
+          description: "Web 文档",
+          category: "开发",
+          tags: ["文档", "前端"],
+          pinned: true,
+        },
+        {
+          siteId: null,
+          name: "仅有标题",
+          url: "https://example.com/",
+          description: "来自搜索摘要",
+          category: null,
+          tags: [],
+          pinned: false,
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    describeAgentToolResult("list_tags", {
+      source: "站内存储数据",
+      items: [{ id: "tag-1", name: "文档", site_count: 3 }, { name: "无编号" }],
+    }),
+    {
+      kind: "facets",
+      source: "站内存储数据",
+      items: [
+        { id: "tag-1", name: "文档", count: 3 },
+        { id: "无编号", name: "无编号", count: null },
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    describeAgentToolResult("propose_site", {
+      status: "awaiting_confirmation",
+      draft: {
+        url: "https://example.com/docs",
+        name: "示例文档站",
+        description: "  一个示例  ",
+        category: "开发",
+        tags: ["工具", "  文档  "],
+      },
+      duplicate: { site_id: "site-1", name: "已收录的站点", url: "https://example.com/docs", pinned: true },
+    }),
+    {
+      kind: "draft",
+      draft: {
+        url: "https://example.com/docs",
+        name: "示例文档站",
+        description: "一个示例",
+        category: "开发",
+        tags: ["工具", "文档"],
+      },
+      duplicate: {
+        siteId: "site-1",
+        name: "已收录的站点",
+        url: "https://example.com/docs",
+        description: null,
+        category: null,
+        tags: [],
+        pinned: true,
+      },
+    },
+  );
+
+  assert.deepEqual(
+    describeAgentToolResult("propose_site", { status: "rejected", reason: "该网址无法访问" }),
+    { kind: "rejected", reason: "该网址无法访问" },
+  );
+
+  assert.deepEqual(
+    describeAgentToolResult("web_search", { source: "联网搜索", error: "  没有可用的搜索结果  " }),
+    { kind: "error", source: "联网搜索", message: "没有可用的搜索结果" },
+  );
+
+  assert.deepEqual(describeAgentToolResult("unknown_tool", { unexpected: true }), {
+    kind: "raw",
+    text: '{"unexpected":true}',
+  });
+  assert.deepEqual(describeAgentToolResult("unknown_tool", null), { kind: "raw", text: "null" });
+  assert.deepEqual(describeAgentToolResult("unknown_tool", "  纯文本结果  "), {
+    kind: "raw",
+    text: "纯文本结果",
+  });
+});
+
+test("drops non-http urls to null while keeping named entries", () => {
+  assert.deepEqual(
+    describeAgentToolResult("search_library", {
+      source: "站内存储数据",
+      matched_count: 3,
+      items: [
+        { name: "脚本协议站点", url: "javascript:alert(1)" },
+        { url: "data:text/html,hi" },
+        { name: "正常站点", url: "https://example.com/safe" },
+      ],
+    }),
+    {
+      kind: "links",
+      source: "站内存储数据",
+      matchedCount: 3,
+      items: [
+        {
+          siteId: null,
+          name: "脚本协议站点",
+          url: null,
+          description: null,
+          category: null,
+          tags: [],
+          pinned: false,
+        },
+        {
+          siteId: null,
+          name: "正常站点",
+          url: "https://example.com/safe",
+          description: null,
+          category: null,
+          tags: [],
+          pinned: false,
+        },
+      ],
+    },
+  );
+});
+
+test("labels answer provenance from tool results and falls back to the model label", () => {
+  const libraryResult = {
+    toolCallId: "call-1",
+    name: "search_library",
+    result: { source: "站内存储数据", matched_count: 1, items: [] },
+  };
+  const webResult = {
+    toolCallId: "call-2",
+    name: "web_search",
+    result: { source: "联网搜索", items: [] },
+  };
+
+  assert.deepEqual(agentSourceLabels([libraryResult]), ["站内存储数据"]);
+  assert.deepEqual(agentSourceLabels([libraryResult, webResult, libraryResult]), [
+    "站内存储数据",
+    "联网搜索",
+  ]);
+  assert.deepEqual(agentSourceLabels([]), ["llm推荐"]);
+});
+
+test("returns null for malformed stream chunks and falls back to the tool name as call id", () => {
+  assert.equal(normalizeAgentToolCall(null), null);
+  assert.equal(normalizeAgentToolCall(["search_library"]), null);
+  assert.equal(normalizeAgentToolCall({ arguments: {} }), null);
+  assert.deepEqual(normalizeAgentToolCall({ name: "search_library", arguments: { q: "文档" } }), {
+    toolCallId: "search_library",
+    name: "search_library",
+    arguments: { q: "文档" },
+  });
+  assert.deepEqual(normalizeAgentToolCall({ toolCallId: "call-1", name: "search_library", arguments: "oops" }), {
+    toolCallId: "call-1",
+    name: "search_library",
+    arguments: {},
+  });
+
+  assert.equal(normalizeAgentToolResult(null), null);
+  assert.equal(normalizeAgentToolResult([]), null);
+  assert.equal(normalizeAgentToolResult({ result: {} }), null);
+  assert.deepEqual(normalizeAgentToolResult({ name: "web_search", result: { items: [] } }), {
+    toolCallId: "web_search",
+    name: "web_search",
+    result: { items: [] },
+  });
+
+  assert.equal(normalizeAgentStreamError(null), null);
+  assert.equal(normalizeAgentStreamError([]), null);
+  assert.equal(normalizeAgentStreamError({ code: "rate_limited" }), null);
+  assert.deepEqual(normalizeAgentStreamError({ message: "  服务暂时不可用  " }), {
+    code: "agent_error",
+    message: "服务暂时不可用",
+  });
+});
+
+test("keeps only the known metadata keys and requires webSearch to be boolean", () => {
+  assert.deepEqual(
+    normalizeAgentMessageMetadata({
+      conversationId: "  conv-1  ",
+      provider: "account-provider",
+      model: "chat-model",
+      webSearch: false,
+      errorCode: "rate_limited",
+      injected: "应被忽略",
+    }),
+    {
+      conversationId: "conv-1",
+      provider: "account-provider",
+      model: "chat-model",
+      webSearch: false,
+      errorCode: "rate_limited",
+    },
+  );
+
+  assert.deepEqual(normalizeAgentMessageMetadata({ webSearch: "true" }), {});
+  assert.deepEqual(normalizeAgentMessageMetadata({ webSearch: 1 }), {});
+  assert.deepEqual(normalizeAgentMessageMetadata(null), {});
+});
+
+test("parses grouped conversation history and rejects non-array groups", () => {
+  assert.deepEqual(
+    normalizeAgentConversationHistory({
+      groups: [
+        {
+          key: "today",
+          label: "今天",
+          items: [
+            {
+              id: "conv-1",
+              title: "前端资料整理",
+              title_is_custom: false,
+              version: 2,
+              message_count: 6,
+              last_message_at: "2026-07-26T09:00:00Z",
+            },
+          ],
+        },
+      ],
+      next_cursor: "cursor-2",
+      total_count: 18,
+    }),
+    {
+      groups: [
+        {
+          key: "today",
+          label: "今天",
+          items: [
+            {
+              id: "conv-1",
+              title: "前端资料整理",
+              titleIsCustom: false,
+              version: 2,
+              messageCount: 6,
+              lastMessageAt: "2026-07-26T09:00:00Z",
+            },
+          ],
+        },
+      ],
+      nextCursor: "cursor-2",
+      totalCount: 18,
+    },
+  );
+
+  assert.deepEqual(normalizeAgentConversationHistory({ groups: [], next_cursor: null, total_count: 0 }), {
+    groups: [],
+    nextCursor: null,
+    totalCount: 0,
+  });
+
+  assert.throws(
+    () => normalizeAgentConversationHistory({ groups: "not-an-array", next_cursor: null, total_count: 0 }),
+    (error: unknown) => error instanceof AgentContractError && /groups/.test(error.message),
+  );
+});
+
+test("restores archived messages with tool provenance before answer text", () => {
+  assert.deepEqual(
+    toAgentUIMessages([
+      { id: "m-1", role: "system", content: "系统提示", sources: [], status: "complete" },
+      { id: "m-2", role: "user", content: "帮我找文档", sources: [], status: "complete" },
+      { id: "m-3", role: "tool", content: "工具输出", sources: [], status: "complete" },
+      {
+        id: "m-4",
+        role: "assistant",
+        content: "给你两个链接",
+        sources: [{ toolCallId: "call-1", name: "search_library", result: { items: [] } }],
+        status: "complete",
+      },
+      { id: "m-5", role: "assistant", content: "", sources: [], status: "aborted" },
+    ]),
+    [
+      { id: "m-2", role: "user", parts: [{ type: "text", text: "帮我找文档" }] },
+      {
+        id: "m-4",
+        role: "assistant",
+        parts: [
+          {
+            type: "data-agent-tool-result",
+            data: { toolCallId: "call-1", name: "search_library", result: { items: [] } },
+          },
+          { type: "text", text: "给你两个链接" },
+        ],
+      },
+    ],
+  );
+});
+
+test("extracts structured error details and falls back to readable messages", () => {
+  assert.deepEqual(
+    agentErrorDetails(409, { detail: { code: "  version_conflict  ", message: "  会话已被更新  " } }),
+    { code: "version_conflict", message: "会话已被更新" },
+  );
+  assert.deepEqual(agentErrorDetails(404, { detail: { code: "not_found" } }), {
+    code: "not_found",
+    message: "会话不存在或已被删除",
+  });
+  assert.equal(agentErrorDetails(422, { detail: [{ msg: "Invalid field" }] }).message, "Invalid field");
+  assert.equal(agentErrorDetails(401, "not-json").message, "登录状态已失效，请重新登录");
+  assert.deepEqual(agentErrorDetails(503, {}), { message: "Agent 服务暂时不可用，请稍后重试" });
+  assert.deepEqual(agentErrorDetails(500, null), { message: "Agent 服务暂时不可用，请稍后重试" });
+});

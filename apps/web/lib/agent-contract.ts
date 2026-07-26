@@ -1,0 +1,543 @@
+import type { UIMessage } from "ai";
+
+/**
+ * Wire contract for the Agent chat stream.
+ *
+ * Two different trust levels live in this file and are handled differently.
+ *
+ * Stream payloads (`data-agent-*` parts) are shaped by tool output that the
+ * model can influence, so every normalizer here is *defensive*: unusable input
+ * degrades to a raw view instead of throwing, because a render pass must never
+ * crash the conversation.
+ *
+ * REST payloads (conversation history) come from our own endpoints, so those
+ * normalizers throw like the library contract does — a shape mismatch there is
+ * a bug worth surfacing.
+ */
+
+export const AGENT_SOURCE_LIBRARY = "站内存储数据";
+export const AGENT_SOURCE_WEB = "联网搜索";
+export const AGENT_SOURCE_MODEL = "llm推荐";
+
+export const MAX_AGENT_MESSAGE_LENGTH = 64_000;
+
+export type AgentToolName =
+  | "search_library"
+  | "get_site_detail"
+  | "list_categories"
+  | "list_tags"
+  | "list_spaces"
+  | "web_search"
+  | "propose_site";
+
+const AGENT_TOOL_LABELS: Record<string, string> = {
+  search_library: "检索资料库",
+  get_site_detail: "读取网站详情",
+  list_categories: "读取分类",
+  list_tags: "读取标签",
+  list_spaces: "读取 Space",
+  web_search: "联网搜索",
+  propose_site: "生成收录草稿",
+};
+
+export function agentToolLabel(name: string): string {
+  return AGENT_TOOL_LABELS[name] ?? name;
+}
+
+export type AgentToolCall = {
+  toolCallId: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+export type AgentToolResult = {
+  toolCallId: string;
+  name: string;
+  result: unknown;
+};
+
+export type AgentStreamError = {
+  code: string;
+  message: string;
+};
+
+export type AgentMessageMetadata = {
+  conversationId?: string;
+  provider?: string;
+  model?: string;
+  webSearch?: boolean;
+  errorCode?: string;
+};
+
+export type AgentDataParts = {
+  "agent-tool-call": AgentToolCall;
+  "agent-tool-result": AgentToolResult;
+  "agent-error": AgentStreamError;
+};
+
+export type AgentUIMessage = UIMessage<AgentMessageMetadata, AgentDataParts>;
+
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return value as JsonRecord;
+}
+
+function asTrimmed(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function asCount(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : null;
+}
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(asTrimmed).filter((entry): entry is string => entry !== null);
+}
+
+/** Only http(s) survives: tool output ends up in an `href`. */
+function asWebUrl(value: unknown): string | null {
+  const candidate = asTrimmed(value);
+  if (candidate === null) return null;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeAgentToolCall(value: unknown): AgentToolCall | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const name = asTrimmed(candidate.name);
+  if (name === null) return null;
+  return {
+    toolCallId: asTrimmed(candidate.toolCallId) ?? name,
+    name,
+    arguments: asRecord(candidate.arguments) ?? {},
+  };
+}
+
+export function normalizeAgentToolResult(value: unknown): AgentToolResult | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const name = asTrimmed(candidate.name);
+  if (name === null) return null;
+  return {
+    toolCallId: asTrimmed(candidate.toolCallId) ?? name,
+    name,
+    result: candidate.result,
+  };
+}
+
+export function normalizeAgentStreamError(value: unknown): AgentStreamError | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const message = asTrimmed(candidate.message);
+  if (message === null) return null;
+  return { code: asTrimmed(candidate.code) ?? "agent_error", message };
+}
+
+export function normalizeAgentMessageMetadata(value: unknown): AgentMessageMetadata {
+  const candidate = asRecord(value);
+  if (candidate === null) return {};
+  const conversationId = asTrimmed(candidate.conversationId);
+  const provider = asTrimmed(candidate.provider);
+  const model = asTrimmed(candidate.model);
+  const errorCode = asTrimmed(candidate.errorCode);
+  return {
+    ...(conversationId ? { conversationId } : {}),
+    ...(provider ? { provider } : {}),
+    ...(model ? { model } : {}),
+    ...(typeof candidate.webSearch === "boolean" ? { webSearch: candidate.webSearch } : {}),
+    ...(errorCode ? { errorCode } : {}),
+  };
+}
+
+export type AgentToolLink = {
+  siteId: string | null;
+  name: string;
+  url: string | null;
+  description: string | null;
+  category: string | null;
+  tags: string[];
+  pinned: boolean;
+};
+
+export type AgentSiteDraft = {
+  url: string;
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+};
+
+export type AgentToolFacet = {
+  id: string;
+  name: string;
+  count: number | null;
+};
+
+/** A render-ready projection of one tool result. */
+export type AgentToolView =
+  | { kind: "links"; source: string | null; items: AgentToolLink[]; matchedCount: number | null }
+  | { kind: "facets"; source: string | null; items: AgentToolFacet[] }
+  | { kind: "draft"; draft: AgentSiteDraft; duplicate: AgentToolLink | null }
+  | { kind: "rejected"; reason: string }
+  | { kind: "error"; source: string | null; message: string }
+  | { kind: "raw"; text: string };
+
+function toLink(value: unknown): AgentToolLink | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const url = asWebUrl(candidate.url);
+  const name = asTrimmed(candidate.name) ?? asTrimmed(candidate.title) ?? url;
+  if (name === null) return null;
+  return {
+    siteId: asTrimmed(candidate.site_id),
+    name,
+    url,
+    description: asTrimmed(candidate.description) ?? asTrimmed(candidate.snippet),
+    category: asTrimmed(candidate.category),
+    tags: asStringList(candidate.tags),
+    pinned: candidate.pinned === true,
+  };
+}
+
+function toFacet(value: unknown): AgentToolFacet | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const name = asTrimmed(candidate.name);
+  if (name === null) return null;
+  return {
+    id: asTrimmed(candidate.id) ?? name,
+    name,
+    count: asCount(candidate.site_count) ?? asCount(candidate.member_count),
+  };
+}
+
+function toDraft(value: unknown): AgentSiteDraft | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const url = asWebUrl(candidate.url);
+  const name = asTrimmed(candidate.name);
+  if (url === null || name === null) return null;
+  return {
+    url,
+    name,
+    description: asTrimmed(candidate.description) ?? "",
+    category: asTrimmed(candidate.category) ?? "",
+    tags: asStringList(candidate.tags),
+  };
+}
+
+const FACET_TOOLS = new Set(["list_categories", "list_tags", "list_spaces"]);
+
+/**
+ * Project one tool result into something the thread can render.
+ *
+ * The fallback is deliberate: an unrecognised payload becomes truncated raw
+ * text rather than disappearing, so a backend change is visible instead of
+ * silently dropping provenance.
+ */
+export function describeAgentToolResult(name: string, result: unknown): AgentToolView {
+  const payload = asRecord(result);
+  if (payload === null) {
+    const text = typeof result === "string" ? result.trim() : JSON.stringify(result ?? null);
+    return { kind: "raw", text: (text ?? "").slice(0, 600) };
+  }
+
+  const source = asTrimmed(payload.source);
+  const error = asTrimmed(payload.error);
+  if (error !== null) return { kind: "error", source, message: error };
+
+  if (name === "propose_site") {
+    if (asTrimmed(payload.status) === "rejected") {
+      return { kind: "rejected", reason: asTrimmed(payload.reason) ?? "该网址无法收录" };
+    }
+    const draft = toDraft(payload.draft);
+    if (draft !== null) {
+      return { kind: "draft", draft, duplicate: toLink(payload.duplicate) };
+    }
+  }
+
+  if (FACET_TOOLS.has(name) && Array.isArray(payload.items)) {
+    return {
+      kind: "facets",
+      source,
+      items: payload.items.map(toFacet).filter((item): item is AgentToolFacet => item !== null),
+    };
+  }
+
+  if (Array.isArray(payload.items)) {
+    return {
+      kind: "links",
+      source,
+      items: payload.items.map(toLink).filter((item): item is AgentToolLink => item !== null),
+      matchedCount: asCount(payload.matched_count),
+    };
+  }
+
+  const single = toLink(payload);
+  if (single !== null) {
+    return { kind: "links", source, items: [single], matchedCount: null };
+  }
+
+  return { kind: "raw", text: JSON.stringify(payload).slice(0, 600) };
+}
+
+/**
+ * The provenance labels the todolist requires on every answer.
+ *
+ * With no tool results at all the answer came from the model, which must be
+ * said out loud rather than left ambiguous.
+ */
+export function agentSourceLabels(results: readonly AgentToolResult[]): string[] {
+  const labels: string[] = [];
+  for (const entry of results) {
+    const view = describeAgentToolResult(entry.name, entry.result);
+    const source = "source" in view ? view.source : null;
+    if (source && !labels.includes(source)) labels.push(source);
+  }
+  if (labels.length === 0) labels.push(AGENT_SOURCE_MODEL);
+  return labels;
+}
+
+export type AgentChatRequestInput = {
+  message: string;
+  conversationId?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+type TextualMessage = { role: string; parts?: readonly unknown[] };
+
+/**
+ * The text of the newest user turn.
+ *
+ * `useChat` hands the transport the whole client-side transcript, but the
+ * backend only wants the new question — it replays history from its own tables.
+ */
+export function latestAgentUserText(messages: readonly TextualMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "user") continue;
+    const text = (message.parts ?? [])
+      .map((part) => {
+        const candidate = asRecord(part);
+        return candidate?.type === "text" && typeof candidate.text === "string" ? candidate.text : "";
+      })
+      .join("");
+    if (text.trim()) return text.trim();
+  }
+  return "";
+}
+
+export class AgentContractError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentContractError";
+  }
+}
+
+/**
+ * Build the POST body for `/agent/chat`.
+ *
+ * The backend takes a single message plus an optional conversation id and
+ * replays history from its own tables, so the client never uploads a
+ * transcript — that keeps one account's history out of another's request.
+ */
+export function prepareAgentChatRequest(input: AgentChatRequestInput): JsonRecord {
+  const message = typeof input.message === "string" ? input.message.trim() : "";
+  if (!message) throw new AgentContractError("消息内容不能为空");
+  if (Array.from(message).length > MAX_AGENT_MESSAGE_LENGTH) {
+    throw new AgentContractError(`消息不能超过 ${MAX_AGENT_MESSAGE_LENGTH} 个字符`);
+  }
+  const conversationId = asTrimmed(input.conversationId);
+  return {
+    message,
+    ...(conversationId ? { conversation_id: conversationId } : {}),
+    ...(input.metadata && Object.keys(input.metadata).length > 0
+      ? { metadata: input.metadata }
+      : {}),
+  };
+}
+
+export type AgentConversation = {
+  id: string;
+  title: string;
+  titleIsCustom: boolean;
+  version: number;
+  messageCount: number;
+  lastMessageAt: string;
+};
+
+export type AgentConversationGroup = {
+  key: string;
+  label: string;
+  items: AgentConversation[];
+};
+
+export type AgentConversationHistory = {
+  groups: AgentConversationGroup[];
+  nextCursor: string | null;
+  totalCount: number;
+};
+
+export type AgentStoredMessage = {
+  id: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  sources: AgentToolResult[];
+  status: "streaming" | "complete" | "error" | "aborted";
+};
+
+function requiredRecord(value: unknown, path: string): JsonRecord {
+  const candidate = asRecord(value);
+  if (candidate === null) throw new AgentContractError(`${path} 必须是对象`);
+  return candidate;
+}
+
+function requiredText(value: unknown, path: string): string {
+  const candidate = asTrimmed(value);
+  if (candidate === null) throw new AgentContractError(`${path} 必须是非空字符串`);
+  return candidate;
+}
+
+function requiredCount(value: unknown, path: string): number {
+  const candidate = asCount(value);
+  if (candidate === null) throw new AgentContractError(`${path} 必须是非负整数`);
+  return candidate;
+}
+
+export function normalizeAgentConversation(value: unknown): AgentConversation {
+  const candidate = requiredRecord(value, "conversation");
+  return {
+    id: requiredText(candidate.id, "conversation.id"),
+    title: requiredText(candidate.title, "conversation.title"),
+    titleIsCustom: candidate.title_is_custom === true,
+    version: requiredCount(candidate.version, "conversation.version"),
+    messageCount: requiredCount(candidate.message_count, "conversation.message_count"),
+    lastMessageAt: requiredText(candidate.last_message_at, "conversation.last_message_at"),
+  };
+}
+
+export function normalizeAgentConversationHistory(value: unknown): AgentConversationHistory {
+  const candidate = requiredRecord(value, "history");
+  if (!Array.isArray(candidate.groups)) {
+    throw new AgentContractError("history.groups 必须是数组");
+  }
+  const nextCursor = asTrimmed(candidate.next_cursor);
+  return {
+    groups: candidate.groups.map((group, index) => {
+      const entry = requiredRecord(group, `history.groups[${index}]`);
+      if (!Array.isArray(entry.items)) {
+        throw new AgentContractError(`history.groups[${index}].items 必须是数组`);
+      }
+      return {
+        key: requiredText(entry.key, `history.groups[${index}].key`),
+        label: requiredText(entry.label, `history.groups[${index}].label`),
+        items: entry.items.map(normalizeAgentConversation),
+      };
+    }),
+    nextCursor,
+    totalCount: requiredCount(candidate.total_count, "history.total_count"),
+  };
+}
+
+const MESSAGE_ROLES = new Set(["system", "user", "assistant", "tool"]);
+const MESSAGE_STATUSES = new Set(["streaming", "complete", "error", "aborted"]);
+
+export function normalizeAgentStoredMessage(value: unknown): AgentStoredMessage {
+  const candidate = requiredRecord(value, "message");
+  const role = requiredText(candidate.role, "message.role");
+  if (!MESSAGE_ROLES.has(role)) throw new AgentContractError("message.role 不是受支持的值");
+  const status = requiredText(candidate.status, "message.status");
+  if (!MESSAGE_STATUSES.has(status)) throw new AgentContractError("message.status 不是受支持的值");
+  const sources = Array.isArray(candidate.sources)
+    ? candidate.sources
+        .map(normalizeAgentToolResult)
+        .filter((entry): entry is AgentToolResult => entry !== null)
+    : [];
+  return {
+    id: requiredText(candidate.id, "message.id"),
+    role: role as AgentStoredMessage["role"],
+    content: typeof candidate.content === "string" ? candidate.content : "",
+    sources,
+    status: status as AgentStoredMessage["status"],
+  };
+}
+
+export type AgentConversationDetail = {
+  conversation: AgentConversation;
+  messages: AgentStoredMessage[];
+};
+
+export function normalizeAgentConversationDetail(value: unknown): AgentConversationDetail {
+  const candidate = requiredRecord(value, "detail");
+  if (!Array.isArray(candidate.messages)) {
+    throw new AgentContractError("detail.messages 必须是数组");
+  }
+  return {
+    conversation: normalizeAgentConversation(candidate.conversation),
+    messages: candidate.messages.map(normalizeAgentStoredMessage),
+  };
+}
+
+/**
+ * Rebuild UI messages from the archive so a reopened conversation looks like
+ * the live stream did: tool provenance first, then the answer text.
+ */
+export function toAgentUIMessages(messages: readonly AgentStoredMessage[]): AgentUIMessage[] {
+  const restored: AgentUIMessage[] = [];
+  for (const message of messages) {
+    if (message.role !== "user" && message.role !== "assistant") continue;
+    if (!message.content && message.sources.length === 0) continue;
+    const parts: AgentUIMessage["parts"] = message.sources.map((source) => ({
+      type: "data-agent-tool-result",
+      data: source,
+    }));
+    if (message.content) parts.push({ type: "text", text: message.content });
+    restored.push({ id: message.id, role: message.role, parts });
+  }
+  return restored;
+}
+
+export type AgentErrorDetails = {
+  code?: string;
+  message: string;
+};
+
+function fallbackAgentErrorMessage(status: number): string {
+  if (status === 401) return "登录状态已失效，请重新登录";
+  if (status === 404) return "会话不存在或已被删除";
+  if (status === 409) return "会话已被更新，请刷新后重试";
+  if (status === 422) return "提交的信息不符合要求";
+  if (status === 429) return "操作过于频繁，请稍后重试";
+  return "Agent 服务暂时不可用，请稍后重试";
+}
+
+export function agentErrorDetails(status: number, payload: unknown): AgentErrorDetails {
+  const candidate = asRecord(payload);
+  let code: string | undefined;
+  let message: string | undefined;
+
+  if (candidate !== null) {
+    code = asTrimmed(candidate.code) ?? undefined;
+    message = asTrimmed(candidate.message) ?? undefined;
+    const detail = asRecord(candidate.detail);
+    if (detail !== null) {
+      code = asTrimmed(detail.code) ?? code;
+      message = asTrimmed(detail.message) ?? message;
+    } else if (typeof candidate.detail === "string") {
+      message = asTrimmed(candidate.detail) ?? message;
+    } else if (Array.isArray(candidate.detail)) {
+      const first = candidate.detail.map(asRecord).find((entry) => entry !== null);
+      message = asTrimmed(first?.msg) ?? message;
+    }
+  }
+
+  return { ...(code ? { code } : {}), message: message ?? fallbackAgentErrorMessage(status) };
+}

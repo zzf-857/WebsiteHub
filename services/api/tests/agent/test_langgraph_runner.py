@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from webhub.agent import langgraph_runner as runner_module
+from webhub.agent import provider_binding as binding_module
 from webhub.agent.langgraph_runner import LangGraphAgentRunner
 from webhub.agent.runner import AgentProviderNotConfiguredError, AgentRunRequest
 from webhub.chat import service as chat_service
@@ -28,7 +29,12 @@ OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 
 
 @contextmanager
-def _account(tmp_path: Path, *, with_provider: bool = True) -> Iterator[Settings]:
+def _account(
+    tmp_path: Path,
+    *,
+    with_provider: bool = True,
+    with_search: bool = False,
+) -> Iterator[Settings]:
     database_path = tmp_path / "main.sqlite3"
     settings = Settings(
         environment="test",
@@ -58,6 +64,19 @@ def _account(tmp_path: Path, *, with_provider: bool = True) -> Iterator[Settings
                 headers=ORIGIN,
             )
             assert created.status_code == 201, created.text
+        if with_search:
+            search_created = client.post(
+                "/api/providers",
+                json={
+                    "kind": "search",
+                    "provider": "tavily",
+                    "display_name": "Tavily 搜索",
+                    "secret": {"action": "write", "value": "tvly-test-secret"},
+                    "enabled": True,
+                },
+                headers=ORIGIN,
+            )
+            assert search_created.status_code == 201, search_created.text
     yield settings
 
 
@@ -105,7 +124,21 @@ def _text_events(chunks: Sequence[str]) -> list[tuple[str, Any]]:
     return [("messages", (AIMessageChunk(content=chunk), {})) for chunk in chunks]
 
 
-def _run(settings: Settings, request_message: str, conversation_id: str | None = None):
+def _allow_all_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the DNS-level SSRF re-check: tests must never touch the network."""
+
+    async def allow_target(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    monkeypatch.setattr(binding_module, "validate_connection_target", allow_target)
+
+
+def _run(
+    settings: Settings,
+    request_message: str,
+    conversation_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+):
     async def scenario():
         database = Database(settings.database_url)
         try:
@@ -117,6 +150,7 @@ def _run(settings: Settings, request_message: str, conversation_id: str | None =
                 account_id=user_id,
                 conversation_id=conversation_id,
                 message=request_message,
+                metadata=dict(metadata) if metadata is not None else {},
             )
             chunks = [chunk async for chunk in runner.run(request)]
             async with database.sessions() as session:
@@ -291,3 +325,97 @@ def test_account_without_a_model_provider_cannot_start_a_turn(tmp_path: Path) ->
 
     with pytest.raises(AgentProviderNotConfiguredError):
         asyncio.run(scenario())
+
+
+def test_client_can_switch_off_a_configured_search_provider_for_one_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with _account(tmp_path, with_search=True) as settings:
+        _allow_all_targets(monkeypatch)
+        graph = _install_fake_graph(monkeypatch, _text_events(["好的。"]))
+        chunks, _ = _run(settings, "只看我的收藏", metadata={"webSearch": False})
+
+    # The stream advertises the effective capability, and the graph never even
+    # receives the web_search tool for this turn.
+    assert chunks[0]["messageMetadata"]["webSearch"] is False
+    tool_names = [tool.name for tool in graph.captured["tools"]]  # type: ignore[attr-defined]
+    assert "web_search" not in tool_names
+
+
+def test_client_cannot_enable_web_search_the_account_never_configured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with _account(tmp_path) as settings:
+        graph = _install_fake_graph(monkeypatch, _text_events(["好的。"]))
+        chunks, _ = _run(settings, "帮我联网查", metadata={"webSearch": True})
+
+    # metadata can only narrow: without an account-level search Provider the
+    # hint grants nothing.
+    assert chunks[0]["messageMetadata"]["webSearch"] is False
+    tool_names = [tool.name for tool in graph.captured["tools"]]  # type: ignore[attr-defined]
+    assert "web_search" not in tool_names
+
+
+def test_non_boolean_web_search_hint_is_treated_as_no_preference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with _account(tmp_path, with_search=True) as settings:
+        _allow_all_targets(monkeypatch)
+        graph = _install_fake_graph(monkeypatch, _text_events(["好的。"]))
+        chunks, _ = _run(settings, "查一下", metadata={"webSearch": "false"})
+
+    # The string "false" is not a strict boolean, so the account default wins.
+    assert chunks[0]["messageMetadata"]["webSearch"] is True
+    tool_names = [tool.name for tool in graph.captured["tools"]]  # type: ignore[attr-defined]
+    assert "web_search" in tool_names
+
+
+def test_history_replay_keeps_the_newest_turns_not_the_oldest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A long conversation must not silently lose its recent context."""
+
+    with _account(tmp_path) as settings:
+        window = settings.agent_history_messages
+
+        async def seed() -> str:
+            database = Database(settings.database_url)
+            try:
+                async with database.sessions() as session:
+                    user_id = await session.scalar(select(User.id))
+                    assert user_id is not None
+                    conversation = await chat_service.create_conversation(
+                        session, user_id, title=None
+                    )
+                    # Comfortably more than one window, so a forward-paginating
+                    # read would return only "第 1 轮"-era messages.
+                    for index in range(window * 2):
+                        await chat_service.append_message(
+                            session,
+                            user_id,
+                            conversation.id,
+                            role="user" if index % 2 == 0 else "assistant",
+                            content=f"第 {index} 条",
+                            status="complete",
+                        )
+                return conversation.id
+            finally:
+                await database.dispose()
+
+        conversation_id = asyncio.run(seed())
+        graph = _install_fake_graph(monkeypatch, _text_events(["好的。"]))
+        _run(settings, "接着上面说", conversation_id=conversation_id)
+
+    replayed = [
+        message.content
+        for message in graph.calls[0]["state"]["messages"]
+        if getattr(message, "type", None) in {"human", "ai"}
+    ]
+    assert f"第 {window * 2 - 1} 条" in replayed
+    assert "第 0 条" not in replayed
+    # The window is honoured: history plus the new user turn.
+    assert len(replayed) == window + 1

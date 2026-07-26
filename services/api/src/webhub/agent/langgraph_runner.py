@@ -109,6 +109,19 @@ def _tool_payload(content: Any) -> Any:
     return _json_safe(content)
 
 
+def _web_search_declined(metadata: Mapping[str, Any]) -> bool:
+    """Return True only when the client explicitly switched web search off.
+
+    Client hints may narrow a turn's capabilities but never widen them: the
+    account's own Provider config decides whether browsing exists at all, so
+    ``webSearch: true`` from the browser grants nothing.  ``metadata`` is
+    untrusted input — anything but a strict boolean ``False`` (the string
+    "false", 0, None, ...) counts as "no preference", not as a vote.
+    """
+
+    return metadata.get("webSearch") is False
+
+
 @dataclass(frozen=True, slots=True)
 class _TurnContext:
     conversation_id: str
@@ -125,7 +138,7 @@ class LangGraphAgentRunner:
     settings: Settings
 
     async def _resolve_bindings(
-        self, user_id: str
+        self, user_id: str, *, allow_web_search: bool
     ) -> tuple[ProviderBinding, ProviderBinding | None]:
         async with self.database.sessions() as session:
             model_binding = await resolve_binding(
@@ -134,16 +147,27 @@ class LangGraphAgentRunner:
                 user_id=user_id,
                 kind="model",
             )
-            search_binding = await resolve_optional_binding(
-                session,
-                self.settings,
-                user_id=user_id,
-                kind="search",
+            # Skipped when the user opted out, so a turn that will never browse
+            # does not decrypt a search key or re-resolve its hostname.
+            search_binding = (
+                await resolve_optional_binding(
+                    session,
+                    self.settings,
+                    user_id=user_id,
+                    kind="search",
+                )
+                if allow_web_search
+                else None
             )
         return model_binding, search_binding
 
     async def _prepare_turn(self, request: AgentRunRequest) -> _TurnContext:
-        model_binding, search_binding = await self._resolve_bindings(request.account_id)
+        # Narrow-only: the hint can turn browsing off for this turn, never on.
+        declined = _web_search_declined(request.metadata)
+        model_binding, search_binding = await self._resolve_bindings(
+            request.account_id,
+            allow_web_search=not declined,
+        )
 
         history: list[Any] = []
         async with self.database.sessions() as session:
@@ -156,13 +180,13 @@ class LangGraphAgentRunner:
                 )
                 conversation_id = conversation.id
             else:
-                listing = await chat_service.list_messages(
+                recent = await chat_service.list_recent_messages(
                     session,
                     request.account_id,
                     conversation_id,
                     limit=self.settings.agent_history_messages,
                 )
-                history = _history_messages(listing.items)
+                history = _history_messages(recent)
 
             # Persist the user's turn before calling out, so an aborted or
             # failed model call still leaves a faithful transcript.
@@ -219,6 +243,7 @@ class LangGraphAgentRunner:
                 "conversationId": context.conversation_id,
                 "provider": context.model_binding.provider,
                 "model": context.model_binding.model_name,
+                # The effective capability after narrowing, not the request hint.
                 "webSearch": context.search_binding is not None,
             },
         )
@@ -235,6 +260,7 @@ class LangGraphAgentRunner:
             system_prompt=build_system_prompt(
                 slash_command=request.slash_command,
                 web_search_available=context.search_binding is not None,
+                web_search_declined=_web_search_declined(request.metadata),
             ),
         )
 
