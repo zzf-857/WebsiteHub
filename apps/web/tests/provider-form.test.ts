@@ -386,3 +386,63 @@ test("连接测试状态映射到 CSS 的 data-status 取值", () => {
   // 后端当前恒返回 unsupported：走中性样式，不能被渲染成成功。
   assert.equal(providerTestTone("unsupported"), "neutral");
 });
+
+test("测试连接不要求模型名与配置名——那正是这份列表要帮用户找到的东西", () => {
+  const definition = registryItem();
+  const blank = draft({ displayName: "", modelName: "" });
+
+  // 保存路径仍然要求配齐。
+  const saving = validateProviderDraft({
+    kind: "model",
+    definition,
+    draft: blank,
+    secretIntent: "write",
+    hasStoredSecret: false,
+  });
+  assert.equal(saving.displayName, "请填写配置名称");
+  assert.equal(saving.modelName, "启用前必须填写模型名称");
+
+  // 测试路径只要求「够得着厂商」的字段。
+  const testing = validateProviderDraft({
+    kind: "model",
+    definition,
+    draft: blank,
+    secretIntent: "write",
+    hasStoredSecret: false,
+    mode: "test",
+  });
+  assert.equal(hasProviderDraftError(testing), false);
+});
+
+test("测试连接仍然要求 Key 与合法 Base URL", () => {
+  const noKey = validateProviderDraft({
+    kind: "model",
+    definition: registryItem(),
+    draft: draft({ displayName: "", modelName: "" }),
+    secretIntent: "keep",
+    hasStoredSecret: false,
+    mode: "test",
+  });
+  assert.equal(noKey.secret, "测试连接前必须填写 API Key");
+
+  // 编辑一个已存密钥的配置时，不重填也能测。
+  const stored = validateProviderDraft({
+    kind: "model",
+    definition: registryItem(),
+    draft: draft({ displayName: "", modelName: "" }),
+    secretIntent: "keep",
+    hasStoredSecret: true,
+    mode: "test",
+  });
+  assert.equal(hasProviderDraftError(stored), false);
+
+  const unsafe = validateProviderDraft({
+    kind: "model",
+    definition: registryItem({ provider: "openai_compatible", baseUrlRequired: true }),
+    draft: draft({ provider: "openai_compatible", baseUrl: "https://127.0.0.1/v1" }),
+    secretIntent: "write",
+    hasStoredSecret: false,
+    mode: "test",
+  });
+  assert.equal(unsafe.baseUrl, "该服务商不允许指向本机或局域网地址");
+});

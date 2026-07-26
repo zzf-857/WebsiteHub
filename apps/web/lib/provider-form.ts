@@ -149,12 +149,18 @@ export function effectiveHasSecret(
   return hasStoredSecret;
 }
 
+// "save" = 提交配置；"test" = 只跑一次连接测试。
+// 两者要求的字段不同：测试是「列出该厂商有哪些模型」，要求先填模型名会让
+// 最需要这份列表的人根本拉不到它——后端 test_connection 也同步放宽了这一条。
+export type ProviderValidationMode = "save" | "test";
+
 export type ProviderValidationInput = {
   kind: ProviderKind;
   definition: ProviderRegistryItem | null;
   draft: ProviderDraft;
   secretIntent: ProviderSecretIntent;
   hasStoredSecret: boolean;
+  mode?: ProviderValidationMode;
 };
 
 // 完整性规则严格镜像后端 service._validate_complete：只有「启用」时才要求配齐，
@@ -166,16 +172,20 @@ export function validateProviderDraft({
   draft,
   secretIntent,
   hasStoredSecret,
+  mode = "save",
 }: ProviderValidationInput): ProviderDraftErrors {
   if (definition === null) return { provider: "请先选择服务商" };
 
   const errors: ProviderDraftErrors = {};
+  const testing = mode === "test";
 
-  const displayName = collapseDisplayName(draft.displayName);
-  if (!displayName) {
-    errors.displayName = "请填写配置名称";
-  } else if (Array.from(displayName).length > MAX_DISPLAY_NAME_LENGTH) {
-    errors.displayName = `配置名称不能超过 ${MAX_DISPLAY_NAME_LENGTH} 个字符`;
+  if (!testing) {
+    const displayName = collapseDisplayName(draft.displayName);
+    if (!displayName) {
+      errors.displayName = "请填写配置名称";
+    } else if (Array.from(displayName).length > MAX_DISPLAY_NAME_LENGTH) {
+      errors.displayName = `配置名称不能超过 ${MAX_DISPLAY_NAME_LENGTH} 个字符`;
+    }
   }
 
   const baseUrl = draft.baseUrl.trim();
@@ -188,15 +198,20 @@ export function validateProviderDraft({
 
   const modelName = draft.modelName.trim();
   if (kind === "search") {
-    if (modelName) errors.modelName = "搜索服务不需要填写模型名称";
+    if (modelName && !testing) errors.modelName = "搜索服务不需要填写模型名称";
   } else if (Array.from(modelName).length > MAX_MODEL_NAME_LENGTH) {
     errors.modelName = `模型名称不能超过 ${MAX_MODEL_NAME_LENGTH} 个字符`;
-  } else if (!modelName && draft.enabled) {
+  } else if (!modelName && draft.enabled && !testing) {
     errors.modelName = "启用前必须填写模型名称";
   }
 
   if (definition.secretRequired) {
-    if (secretIntent === "clear" && draft.enabled) {
+    if (testing) {
+      // 测试要真的把 Key 发给厂商，没有 Key 就无从测起。
+      if (!effectiveHasSecret(secretIntent, hasStoredSecret)) {
+        errors.secret = "测试连接前必须填写 API Key";
+      }
+    } else if (secretIntent === "clear" && draft.enabled) {
       // 后端在这种组合下直接 422，提前说清楚比让它报错更友好。
       errors.secret = "清除 API Key 时不能同时启用该配置";
     } else if (draft.enabled && !effectiveHasSecret(secretIntent, hasStoredSecret)) {

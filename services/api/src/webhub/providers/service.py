@@ -9,6 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.config import Settings
 from webhub.db.models import ProviderConfig, new_id, utc_now
+from webhub.providers.connectivity import (
+    ProviderProbeError,
+    probe_base_url,
+    probe_models,
+)
 from webhub.providers.registry import (
     PROVIDER_REGISTRY,
     ProviderDefinition,
@@ -38,7 +43,6 @@ from webhub.providers.security import (
 from webhub.providers.targets import (
     ProviderTargetError,
     normalize_base_url,
-    validate_connection_target,
 )
 
 
@@ -136,13 +140,16 @@ def _validate_complete(
     kind: ProviderKind,
     prepared: _PreparedConfig,
     has_secret: bool,
+    require_model_name: bool = True,
 ) -> None:
     missing: list[str] = []
     if prepared.definition.secret_required and not has_secret:
         missing.append("API Key")
     if prepared.definition.base_url_required and prepared.base_url is None:
         missing.append("Base URL")
-    if kind in {"model", "embedding"} and prepared.model_name is None:
+    # A connection test lists the vendor's models; demanding a model name up
+    # front would make the list unreachable for the very user who needs it.
+    if require_model_name and kind in {"model", "embedding"} and prepared.model_name is None:
         missing.append("模型名称")
     if missing:
         raise ProviderValidationError(
@@ -207,7 +214,7 @@ def registry() -> ProviderRegistryResponse:
                 base_url_required=item.base_url_required,
                 allows_private_base_url=item.allows_private_base_url,
                 application_url=item.application_url,
-                connection_test_supported=False,
+                connection_test_supported=item.connection_test_supported,
             )
             for item in PROVIDER_REGISTRY
         ]
@@ -560,23 +567,58 @@ async def test_connection(
             kind=kind,
             prepared=prepared,
             has_secret=secret_value is not None,
+            # The probe reads the catalogue; it never calls a specific model.
+            require_model_name=False,
         )
-        if prepared.base_url is not None:
-            try:
-                await validate_connection_target(
-                    prepared.base_url,
-                    allow_private=prepared.definition.allows_private_base_url,
-                    timeout_seconds=settings.provider_test_timeout_seconds,
-                )
-            except ProviderTargetError as error:
-                raise ProviderValidationError(error.message, code=error.code) from error
+
+        # Search-only vendors have no read-only catalogue endpoint, and probing
+        # them would mean spending the user's search quota on a health check.
+        # Say so plainly instead of pretending the test ran.
+        if not prepared.definition.connection_test_supported:
+            return ProviderConnectionTestResponse(
+                status="unsupported",
+                code="connection_test_unsupported",
+                message="该类服务商没有可用于连接测试的只读接口，未发送任何外部请求",
+                kind=kind,
+                provider=provider,
+            )
+
+        try:
+            probe_base = probe_base_url(prepared.definition, prepared.base_url)
+        except ProviderProbeError as error:
+            raise ProviderValidationError(error.message, code=error.code) from error
+
+        try:
+            result = await probe_models(
+                prepared.definition,
+                base_url=probe_base,
+                api_key=secret_value,
+                timeout_seconds=settings.provider_test_timeout_seconds,
+            )
+        except ProviderProbeError as error:
+            # A failed probe is a normal outcome, not a server fault: answer 200
+            # with status="failed" so the client can render it inline. Nothing
+            # was written, so the stored config and the enabled config are
+            # untouched by construction — this whole function is read-only.
+            return ProviderConnectionTestResponse(
+                status="failed",
+                code=error.code,
+                message=error.message,
+                kind=kind,
+                provider=provider,
+            )
 
         return ProviderConnectionTestResponse(
-            status="unsupported",
-            code="connection_test_unsupported",
-            message="该 Provider 的真实连接适配器尚未接入，未发送任何外部请求",
+            status="ok",
+            code="connection_test_ok",
+            message=(
+                f"连接成功，读取到 {len(result.models)} 个模型"
+                if result.models
+                else "连接成功，但该服务商没有返回任何模型"
+            ),
             kind=kind,
             provider=provider,
+            models=result.models,
         )
     finally:
         secret_value = None

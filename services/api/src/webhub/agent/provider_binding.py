@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from webhub.config import Settings
 from webhub.db.models import ProviderConfig
 from webhub.providers.registry import (
+    PROVIDER_REGISTRY,
     ProviderDefinition,
     ProviderKind,
     provider_definition,
@@ -38,17 +39,14 @@ from webhub.providers.targets import ProviderTargetError, validate_connection_ta
 
 from .runner import AgentProviderNotConfiguredError
 
-# Vendors that expose an OpenAI-compatible surface at a well-known origin.  A
-# stored ``base_url`` always wins; these only spare the user from typing a URL
-# they cannot meaningfully choose.
+# Vendors that expose their API at a well-known origin.  A stored ``base_url``
+# always wins; these only spare the user from typing a URL they cannot
+# meaningfully choose.  Derived from the registry so the connection probe and
+# the Agent runtime can never disagree about where a vendor lives.
 DEFAULT_BASE_URLS: dict[str, str] = {
-    "openai": "https://api.openai.com/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "kimi": "https://api.moonshot.cn/v1",
-    "tavily": "https://api.tavily.com",
-    "jina": "https://s.jina.ai",
-    "exa": "https://api.exa.ai",
+    definition.provider: definition.default_base_url
+    for definition in PROVIDER_REGISTRY
+    if definition.default_base_url is not None
 }
 
 # Ollama speaks its own protocol at the root and an OpenAI-compatible one under

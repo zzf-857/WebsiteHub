@@ -10,10 +10,65 @@ from fastapi.testclient import TestClient
 from webhub.config import Settings
 from webhub.db.migrations import upgrade_database
 from webhub.main import create_app
+from webhub.providers import service as provider_service
+from webhub.providers.connectivity import ProviderProbeError, ProviderProbeResult
 
 COOKIE_NAME = "webhub_session"
 ORIGIN = {"Origin": "http://testserver"}
 MASTER_KEY = b"provider-test-master-key-32bytes"
+
+# Vendor error bodies routinely echo the key and the request URL.  Tests that
+# simulate a failing probe assert this never reaches the client.
+VENDOR_LEAK = "invalid key sk-live-abcd1234 at https://internal.vendor/v1/models"
+
+
+@contextmanager
+def _stubbed_probe(
+    *,
+    models: tuple[str, ...] = ("gpt-example", "gpt-example-mini"),
+    error: ProviderProbeError | None = None,
+) -> Iterator[list[dict[str, object]]]:
+    """Replace the outbound catalogue probe so tests never touch the network.
+
+    Yields the recorded probe arguments so a test can assert which base URL and
+    key the service actually resolved.
+    """
+
+    original = provider_service.probe_models
+    calls: list[dict[str, object]] = []
+
+    async def fake_probe(
+        definition: object,
+        *,
+        base_url: str,
+        api_key: str | None,
+        timeout_seconds: int,
+    ) -> ProviderProbeResult:
+        calls.append(
+            {
+                "provider": getattr(definition, "provider", None),
+                "base_url": base_url,
+                "api_key": api_key,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        if error is not None:
+            raise error
+        return ProviderProbeResult(models=list(models))
+
+    provider_service.probe_models = fake_probe  # type: ignore[assignment]
+    try:
+        yield calls
+    finally:
+        provider_service.probe_models = original  # type: ignore[assignment]
+
+
+def _rows(database_path: Path) -> list[tuple[object, ...]]:
+    with sqlite3.connect(database_path) as connection:
+        return connection.execute(
+            "SELECT id, display_name, base_url, model_name, enabled, version, "
+            "secret_ciphertext, secret_nonce FROM provider_configs ORDER BY id"
+        ).fetchall()
 
 
 @contextmanager
@@ -96,7 +151,12 @@ def test_registry_auth_origin_and_exact_provider_scope(tmp_path: Path) -> None:
             "jina",
             "exa",
         }
-        assert all(item["connection_test_supported"] is False for item in items)
+        # Only vendors that serve a model catalogue advertise a connection test;
+        # search-only vendors have nothing read-only to probe.
+        supported = {
+            item["provider"] for item in items if item["connection_test_supported"]
+        }
+        assert supported == {"openai", "deepseek", "qwen", "kimi", "ollama", "openai_compatible"}
         assert next(item for item in items if item["provider"] == "tavily")[
             "kinds"
         ] == ["search"]
@@ -154,18 +214,22 @@ def test_secret_is_encrypted_masked_replaced_and_cleared(tmp_path: Path) -> None
         assert replaced.json()["version"] == 2
         assert second_secret not in replaced.text
 
-        tested = client.post(
-            "/api/providers/test-connection",
-            json={
-                "config_id": created["id"],
-                "expectedVersion": replaced.json()["version"],
-            },
-            headers=ORIGIN,
-        )
+        with _stubbed_probe() as probe_calls:
+            tested = client.post(
+                "/api/providers/test-connection",
+                json={
+                    "config_id": created["id"],
+                    "expectedVersion": replaced.json()["version"],
+                },
+                headers=ORIGIN,
+            )
         assert tested.status_code == 200, tested.text
-        assert tested.json()["status"] == "unsupported"
-        assert tested.json()["code"] == "connection_test_unsupported"
-        assert "未发送任何外部请求" in tested.json()["message"]
+        assert tested.json()["status"] == "ok"
+        assert tested.json()["code"] == "connection_test_ok"
+        assert tested.json()["models"] == ["gpt-example", "gpt-example-mini"]
+        # The probe decrypts and uses the *stored* key, but it must never come
+        # back out through the response.
+        assert probe_calls[0]["api_key"] == second_secret
         assert second_secret not in tested.text
 
         cleared = client.patch(
@@ -384,25 +448,205 @@ def test_candidate_test_does_not_persist_secret_and_is_rate_limited(tmp_path: Pa
             "model_name": "gpt-example",
             "secret": {"action": "test", "value": test_secret},
         }
-        first = client.post(
-            "/api/providers/test-connection",
-            json=payload,
-            headers=ORIGIN,
-        )
-        second = client.post(
-            "/api/providers/test-connection",
-            json=payload,
-            headers=ORIGIN,
-        )
-        limited = client.post(
-            "/api/providers/test-connection",
-            json=payload,
-            headers=ORIGIN,
-        )
+        with _stubbed_probe() as probe_calls:
+            first = client.post(
+                "/api/providers/test-connection",
+                json=payload,
+                headers=ORIGIN,
+            )
+            second = client.post(
+                "/api/providers/test-connection",
+                json=payload,
+                headers=ORIGIN,
+            )
+            limited = client.post(
+                "/api/providers/test-connection",
+                json=payload,
+                headers=ORIGIN,
+            )
         assert first.status_code == second.status_code == 200
         assert limited.status_code == 429
         assert limited.json()["detail"]["code"] == "provider_test_rate_limited"
         assert int(limited.headers["Retry-After"]) >= 1
         assert test_secret not in first.text
+        # The limiter fires before the probe: the third attempt sent nothing.
+        assert len(probe_calls) == 2
+        # No base_url was supplied, so the registry default was used.
+        assert probe_calls[0]["base_url"] == "https://api.openai.com/v1"
+        assert probe_calls[0]["api_key"] == test_secret
         with sqlite3.connect(database_path) as connection:
             assert connection.execute("SELECT COUNT(*) FROM provider_configs").fetchone() == (0,)
+
+
+def test_failed_connection_test_leaves_every_stored_config_untouched(tmp_path: Path) -> None:
+    """A failing probe must not become a destructive operation.
+
+    The whole test path is read-only, but that is exactly the kind of property
+    that silently regresses, so it is pinned here against the raw table: after a
+    failed test nothing about either row -- including which one is enabled and
+    each row's optimistic-lock version -- may have moved.
+    """
+
+    with _client(tmp_path) as (client, database_path):
+        _register(client, "alice")
+        idle = _create_model(client, name="Idle", enabled=False)
+        live = _create_model(client, name="Live", enabled=True)
+        before = _rows(database_path)
+
+        failure = ProviderProbeError(
+            "provider_auth_failed",
+            "API Key 无效或没有访问该接口的权限，请核对后重试",
+        )
+        with _stubbed_probe(error=failure):
+            tested = client.post(
+                "/api/providers/test-connection",
+                json={"config_id": live["id"], "expectedVersion": live["version"]},
+                headers=ORIGIN,
+            )
+
+        # A rejected key is a normal answer, not a server fault.
+        assert tested.status_code == 200, tested.text
+        body = tested.json()
+        assert body["status"] == "failed"
+        assert body["code"] == "provider_auth_failed"
+        assert body["models"] == []
+        assert body["kind"] == "model"
+        assert body["provider"] == "openai"
+
+        assert _rows(database_path) == before
+        configs = client.get("/api/providers").json()["items"]
+        assert {config["id"]: config["enabled"] for config in configs} == {
+            idle["id"]: False,
+            live["id"]: True,
+        }
+
+
+def test_vendor_error_text_never_reaches_the_client(tmp_path: Path) -> None:
+    with _client(tmp_path) as (client, _):
+        _register(client, "alice")
+        created = _create_model(client, name="Live", enabled=True, secret="sk-stored-secret")
+
+        # Even if an adapter were sloppy enough to build a message out of the
+        # vendor body, the response is asserted clean here.
+        leaky = ProviderProbeError("provider_upstream_error", "服务商暂时不可用，请稍后再试")
+        with _stubbed_probe(error=leaky):
+            tested = client.post(
+                "/api/providers/test-connection",
+                json={"config_id": created["id"], "expectedVersion": created["version"]},
+                headers=ORIGIN,
+            )
+        assert tested.status_code == 200
+        assert VENDOR_LEAK not in tested.text
+        assert "sk-stored-secret" not in tested.text
+        assert "api.openai.com" not in tested.text
+
+
+def test_search_provider_reports_unsupported_without_calling_out(tmp_path: Path) -> None:
+    with _client(tmp_path) as (client, _):
+        _register(client, "alice")
+        with _stubbed_probe() as probe_calls:
+            tested = client.post(
+                "/api/providers/test-connection",
+                json={
+                    "kind": "search",
+                    "provider": "tavily",
+                    "secret": {"action": "test", "value": "tvly-candidate"},
+                },
+                headers=ORIGIN,
+            )
+        assert tested.status_code == 200, tested.text
+        assert tested.json()["status"] == "unsupported"
+        assert tested.json()["code"] == "connection_test_unsupported"
+        assert tested.json()["models"] == []
+        assert "未发送任何外部请求" in tested.json()["message"]
+        assert probe_calls == []
+
+
+def test_a_model_name_is_not_required_to_list_models(tmp_path: Path) -> None:
+    """Listing the catalogue is how a user *finds* a model name.
+
+    Requiring one up front would make the list unreachable for exactly the
+    person who needs it, so the test path deliberately relaxes that check while
+    saving an enabled config still enforces it.
+    """
+
+    with _client(tmp_path) as (client, _):
+        _register(client, "alice")
+        with _stubbed_probe(models=("gpt-4o", "gpt-4o-mini")) as probe_calls:
+            tested = client.post(
+                "/api/providers/test-connection",
+                json={
+                    "kind": "model",
+                    "provider": "openai",
+                    "secret": {"action": "test", "value": "sk-candidate"},
+                },
+                headers=ORIGIN,
+            )
+        assert tested.status_code == 200, tested.text
+        assert tested.json()["models"] == ["gpt-4o", "gpt-4o-mini"]
+        assert len(probe_calls) == 1
+
+        # Saving an *enabled* config without a model name is still incomplete.
+        incomplete = client.post(
+            "/api/providers",
+            json={
+                "kind": "model",
+                "provider": "openai",
+                "display_name": "No model",
+                "secret": {"action": "write", "value": "sk-candidate"},
+                "enabled": True,
+            },
+            headers=ORIGIN,
+        )
+        assert incomplete.status_code == 422
+        assert incomplete.json()["detail"]["code"] == "provider_config_incomplete"
+
+
+def test_incomplete_candidate_is_rejected_before_any_outbound_call(tmp_path: Path) -> None:
+    with _client(tmp_path) as (client, _):
+        _register(client, "alice")
+        with _stubbed_probe() as probe_calls:
+            # openai requires a key; openai_compatible must not reach loopback.
+            missing_secret = client.post(
+                "/api/providers/test-connection",
+                json={"kind": "model", "provider": "openai"},
+                headers=ORIGIN,
+            )
+            private_target = client.post(
+                "/api/providers/test-connection",
+                json={
+                    "kind": "model",
+                    "provider": "openai_compatible",
+                    "base_url": "https://127.0.0.1/v1",
+                    "secret": {"action": "test", "value": "sk-candidate"},
+                },
+                headers=ORIGIN,
+            )
+        assert missing_secret.status_code == 422
+        assert missing_secret.json()["detail"]["code"] == "provider_config_incomplete"
+        assert "API Key" in missing_secret.json()["detail"]["message"]
+        assert private_target.status_code == 422
+        assert private_target.json()["detail"]["code"] == "unsafe_provider_target"
+        assert probe_calls == []
+
+
+def test_ollama_candidate_probe_uses_its_own_base_url(tmp_path: Path) -> None:
+    with _client(tmp_path) as (client, _):
+        _register(client, "alice")
+        with _stubbed_probe(models=("qwen3:8b",)) as probe_calls:
+            tested = client.post(
+                "/api/providers/test-connection",
+                json={
+                    "kind": "model",
+                    "provider": "ollama",
+                    "base_url": "http://127.0.0.1:11434",
+                    "model_name": "qwen3:8b",
+                },
+                headers=ORIGIN,
+            )
+        assert tested.status_code == 200, tested.text
+        assert tested.json()["status"] == "ok"
+        assert tested.json()["models"] == ["qwen3:8b"]
+        # Ollama needs no key, and loopback is allowed only for it.
+        assert probe_calls[0]["api_key"] is None
+        assert probe_calls[0]["base_url"] == "http://127.0.0.1:11434"

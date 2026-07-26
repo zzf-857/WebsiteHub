@@ -32,6 +32,7 @@ import {
   type ProviderDraftErrors,
   type ProviderDraftField,
   type ProviderSecretIntent,
+  type ProviderValidationMode,
 } from "@/lib/provider-form";
 
 export type ProviderSubmitResult =
@@ -41,6 +42,8 @@ export type ProviderSubmitResult =
 export type ProviderTestOutcome = {
   tone: ReturnType<typeof providerTestTone>;
   message: string;
+  /** 测试成功时从厂商目录读到的模型名，用于模型名输入框的下拉候选 */
+  models: string[];
 };
 
 type ProviderFormProps = {
@@ -73,6 +76,9 @@ export function ProviderForm({
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ProviderTestOutcome | null>(null);
+  // 拉取到的模型列表独立于 testResult 保存：改动别的字段会清掉结果条，
+  // 但已经拉到的候选没必要跟着一起消失。
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
 
   // 明文密钥只存在于这个 DOM 节点里：不进 React state、不进 props、不进任何日志。
   // 组件只保留「填没填」这个布尔量来驱动提示与校验。
@@ -81,6 +87,7 @@ export function ProviderForm({
   const [clearSecret, setClearSecret] = useState(false);
 
   const vendorGroupId = useId();
+  const modelListId = useId();
   const displayNameId = useId();
   const baseUrlId = useId();
   const modelNameId = useId();
@@ -146,13 +153,14 @@ export function ProviderForm({
     group?.querySelectorAll<HTMLButtonElement>("button")[next]?.focus();
   };
 
-  const validate = (): ProviderDraftErrors => {
+  const validate = (mode: ProviderValidationMode = "save"): ProviderDraftErrors => {
     const nextErrors = validateProviderDraft({
       kind,
       definition,
       draft,
       secretIntent,
       hasStoredSecret: config?.hasSecret ?? false,
+      mode,
     });
     setErrors(nextErrors);
     return nextErrors;
@@ -199,7 +207,8 @@ export function ProviderForm({
   const handleTest = async () => {
     if (testing || busy) return;
     setFormError(null);
-    if (hasProviderDraftError(validate())) return;
+    // 测试只需要「够得着厂商」的字段：配置名、模型名都还没定也能先拉列表。
+    if (hasProviderDraftError(validate("test"))) return;
 
     setTesting(true);
     try {
@@ -218,7 +227,9 @@ export function ProviderForm({
             modelName,
             ...(secret ? { secret } : {}),
           };
-      setTestResult(await onTest(input));
+      const outcome = await onTest(input);
+      setTestResult(outcome);
+      if (outcome.models.length > 0) setFetchedModels(outcome.models);
     } finally {
       setTesting(false);
     }
@@ -302,6 +313,8 @@ export function ProviderForm({
             模型名称
             {!draft.enabled && <span className="provider-form-optional"> · 启用前必填</span>}
           </label>
+          {/* 双模式：datalist 让同一个控件既能下拉选已拉取的模型，也能直接手填
+              服务商刚上线、还没出现在目录里的模型名。 */}
           <input
             id={modelNameId}
             className="provider-input"
@@ -309,10 +322,25 @@ export function ProviderForm({
             maxLength={160}
             value={draft.modelName}
             disabled={submitting}
-            placeholder="填写服务商文档里的模型标识"
+            list={fetchedModels.length > 0 ? modelListId : undefined}
+            placeholder={
+              fetchedModels.length > 0 ? "下拉选择，或直接手填" : "填写服务商文档里的模型标识"
+            }
             aria-invalid={errors.modelName ? true : undefined}
             onChange={(event) => patchDraft({ modelName: event.target.value }, "modelName")}
           />
+          {fetchedModels.length > 0 && (
+            <>
+              <datalist id={modelListId}>
+                {fetchedModels.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+              <p className="provider-form-hint">
+                已从服务商读取 {fetchedModels.length} 个模型，点开输入框可下拉选择，也可以继续手填。
+              </p>
+            </>
+          )}
           {errors.modelName && <p className="provider-form-error" role="alert">{errors.modelName}</p>}
         </div>
       )}

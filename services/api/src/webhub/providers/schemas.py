@@ -138,8 +138,13 @@ class ProviderRegistryResponse(BaseModel):
 
 
 class ProviderConnectionTestResponse(BaseModel):
-    status: Literal["unsupported"]
+    # "unsupported" stays in the union for vendors with no probeable endpoint
+    # (search-only providers), so the client keeps one response shape.
+    status: Literal["ok", "failed", "unsupported"]
     code: str
     message: str
     kind: ProviderKind
     provider: str
+    # Model names read off the vendor catalogue.  Always present so the client
+    # never has to distinguish "absent" from "empty".
+    models: list[str] = Field(default_factory=list)

@@ -236,6 +236,7 @@ export function ProviderSettingsWorkspace() {
       return {
         tone: providerTestTone(result.status),
         message: result.message ?? "连接测试已完成",
+        models: result.models,
       };
     } catch (error) {
       if (error instanceof ProviderApiError) {
@@ -245,9 +246,10 @@ export function ProviderSettingsWorkspace() {
           message: retryAfter === undefined
             ? error.message
             : `${error.message}（约 ${retryAfter} 秒后可再试）`,
+          models: [],
         };
       }
-      return { tone: "error", message: errorText(error, "连接测试失败，请稍后重试") };
+      return { tone: "error", message: errorText(error, "连接测试失败，请稍后重试"), models: [] };
     }
   };
 

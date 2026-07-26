@@ -5,6 +5,7 @@ import {
   ProviderContractError,
   SECRET_MASK,
   normalizeProviderConfig,
+  normalizeProviderConnectionTest,
   normalizeProviderRegistry,
   providerCreatePayload,
   providerErrorDetails,
@@ -175,4 +176,44 @@ test("错误详情能解析 detail.code 与 detail.message", () => {
   });
   assert.equal(details.code, "provider_base_url_invalid");
   assert.equal(details.message, "base_url 不允许指向私网地址");
+});
+
+test("连接测试结果的模型列表来自厂商，按不可信输入处理", () => {
+  const result = normalizeProviderConnectionTest({
+    status: "ok",
+    code: "connection_test_ok",
+    message: "连接成功，读取到 3 个模型",
+    kind: "model",
+    provider: "deepseek",
+    models: ["  deepseek-chat  ", "deepseek-chat", "", 42, null, "deepseek-reasoner", "x".repeat(200)],
+  });
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.models, ["deepseek-chat", "deepseek-reasoner", "x".repeat(160)]);
+});
+
+test("models 缺失或不是数组时退化为空数组而不是抛错", () => {
+  const base = {
+    status: "unsupported",
+    code: "connection_test_unsupported",
+    message: "该类服务商没有可用于连接测试的只读接口",
+    kind: "search",
+    provider: "tavily",
+  };
+  assert.deepEqual(normalizeProviderConnectionTest(base).models, []);
+  assert.deepEqual(normalizeProviderConnectionTest({ ...base, models: null }).models, []);
+  assert.deepEqual(normalizeProviderConnectionTest({ ...base, models: "gpt-4o" }).models, []);
+});
+
+test("失败的连接测试仍是一个合法响应，status 为 failed", () => {
+  const result = normalizeProviderConnectionTest({
+    status: "failed",
+    code: "provider_auth_failed",
+    message: "API Key 无效或没有访问该接口的权限，请核对后重试",
+    kind: "model",
+    provider: "openai",
+    models: [],
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.code, "provider_auth_failed");
+  assert.deepEqual(result.models, []);
 });

@@ -75,6 +75,9 @@ export type ProviderConnectionTest = {
   message: string | null;
   kind: ProviderKind | null;
   provider: string | null;
+  // 从厂商目录读到的模型名。后端保证这个键总是存在，前端仍做兜底，
+  // 免得旧版本后端让整个响应解析失败。
+  models: string[];
 };
 
 export type ProviderErrorDetails = {
@@ -260,6 +263,19 @@ export function normalizeProviderConfigs(value: unknown): ProviderConfig[] {
   return listPayload(value, "provider_configs").map(normalizeProviderConfig);
 }
 
+// 模型名来自厂商响应，属于不可信输入：只保留非空字符串、去重、按长度截断，
+// 不因为其中混进一个非字符串就让整次测试失败。
+function modelNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const name = entry.trim().slice(0, 160);
+    if (name) seen.add(name);
+  }
+  return [...seen];
+}
+
 export function normalizeProviderConnectionTest(value: unknown): ProviderConnectionTest {
   const candidate = record(value, "connection_test");
   return {
@@ -271,6 +287,7 @@ export function normalizeProviderConnectionTest(value: unknown): ProviderConnect
         ? null
         : literal(candidate.kind, "connection_test.kind", PROVIDER_KINDS),
     provider: nullableText(candidate.provider, "connection_test.provider"),
+    models: modelNames(candidate.models),
   };
 }
 
