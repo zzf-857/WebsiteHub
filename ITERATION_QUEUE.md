@@ -309,7 +309,7 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 
 ## Q8 · 检索与 RAG
 
-状态: 已完成 · ae960d7 + 待补
+状态: 已完成 · ae960d7 + f9267e3
 对应: Phase 6 · todolist「Agent 需要维护一个 RAG 来检索内置数据库」
 
 现状：LlamaIndex 完全未引入（依赖都没装）。站内检索是 SQLite FTS5 + 中文 LIKE 兜底的关键词匹配，
