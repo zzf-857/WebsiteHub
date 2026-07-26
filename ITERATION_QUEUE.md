@@ -66,25 +66,35 @@
 
 ## Q2 · Provider 连接测试与自动获取模型列表
 
-状态: 待做
+状态: 已完成 · b23e712
 对应: Phase 4（后端适配器）· todolist 基本功能第 3 条(c)
 
-现状：`providers/service.py` 的 `test_connection` 硬编码返回 `status="unsupported"`、
-`code="connection_test_unsupported"`，`registry()` 里 `connection_test_supported=False`。
-模型名靠用户手填，只做长度校验。todolist 原文允许延后，但它同时是「连接是否可用」的唯一反馈渠道。
+交付：`providers/connectivity.py`（OpenAI 兼容打 `GET /models`，Ollama 打 `GET /api/tags`）、
+registry 新增 `default_base_url`（`agent/provider_binding.py` 的 `DEFAULT_BASE_URLS` 改为从
+注册表派生，探针与 Agent 运行时不会对同一厂商的地址产生分歧）、
+`connection_test_supported` 由 `kinds` 派生并翻真、前端模型名接 `datalist` 双模式。
+后端 277 → 308，前端 105 → 110。
 
-交付：
-- 真实厂商适配器：打 OpenAI 兼容端点的 `GET /models`（Ollama 用 `/api/tags`），
-  既验证 Key 又拿到模型列表
-- 复用 `providers/targets.py` 的 SSRF 校验（调用前重新解析 DNS）
-- 把 `connection_test_supported` 翻真；失败时**不覆盖旧配置、不切换启用项、不泄露 Key**
-- 前端：配置页的模型名改为「拉取列表后下拉选择 + 允许手填」双模式
+四条安全性质按「构造上成立」写的，不靠记得处理：
+- 非 2xx 响应**一个字节都不读**就中止 —— 厂商错误体常回显请求 URL / 请求体 / Key 前缀，
+  不读就不可能泄露；所有失败塌缩成固定中文文案，无任何厂商内容被插值
+- 全程只发一个 GET、不写任何东西，所以失败时原配置与启用项不可能变
+  （另有测试直接比对 `provider_configs` 整表前后快照）
+- 调用前重新跑 `validate_connection_target`（DNS 可能保存后被重指）+ `follow_redirects=False`
+  （否则一个 302 到 169.254.169.254 就绕开了 SSRF 校验）
+- 响应体上限 512KB，流式读取超限即中止
 
-完成标准：
-- 填对 Key 能列出真实模型；填错 Key 返回明确但不含厂商原文的中文错误
-- 厂商异常文本（可能含 URL / 请求体 / Key 片段）绝不出现在响应里
-- 测试连接失败后，原有配置与启用状态完全不变（要有测试断言）
-- 私网/环回地址除 Ollama 外一律拒绝
+顺带修掉一个自相矛盾的规则：`test_connection` 原本无条件要求先填模型名，而连接测试的
+目的恰恰是「列出有哪些模型」——最需要这份列表的人反而拉不到。`_validate_complete` 增加
+`require_model_name` 参数，测试路径传 False，保存启用配置时仍强制。前端
+`validateProviderDraft` 同步加 `mode: "save" | "test"`。
+
+**搜索类厂商（tavily / jina / exa）如实返回 `unsupported`**：它们没有只读目录接口，
+拿用户的 Key 做健康检查等于花他的搜索额度。若以后要做，应作为独立条目排期，
+并明确告知用户「这次测试会消耗一次搜索配额」。
+
+同样**未做浏览器端到端验证**（需要真实 API Key，只能由用户本人操作）；
+静态门禁全绿。
 
 ---
 
@@ -244,7 +254,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 70 测试 / 后端 277 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 110 测试 / 后端 308 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 
