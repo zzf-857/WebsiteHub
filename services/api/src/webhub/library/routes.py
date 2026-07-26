@@ -26,6 +26,7 @@ from webhub.library.schemas import (
     SiteCreateRequest,
     SiteDeleteResponse,
     SiteListResponse,
+    SiteReorderRequest,
     SiteResponse,
     SiteUpdateRequest,
     TagCreateRequest,
@@ -171,7 +172,7 @@ async def sites(
     tag_id: str | None = None,
     space_id: str | None = None,
     pinned: bool | None = None,
-    sort: Literal["created", "updated", "name"] = "updated",
+    sort: Literal["created", "updated", "name", "custom"] = "updated",
     direction: Literal["asc", "desc"] = "desc",
     cursor: Annotated[str | None, Query(max_length=2_048)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -316,4 +317,30 @@ async def batch_sites(
             )
             for item in items
         ],
+    )
+
+
+@router.post("/categories/{category_id}/reorder", status_code=status.HTTP_204_NO_CONTENT)
+async def reorder_category_sites(
+    category_id: str,
+    payload: SiteReorderRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> None:
+    """Move sites within one category.
+
+    Takes a list rather than a single id so a multi-select drag is one request:
+    the backend has always been able to move a block, the earlier Space UI just
+    never sent more than one.
+    """
+
+    await _call(
+        service.reorder_sites(
+            session,
+            identity.user.id,
+            category_id,
+            ordered_site_ids=list(payload.ordered_site_ids),
+            before_site_id=payload.before_site_id,
+        )
     )

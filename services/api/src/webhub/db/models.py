@@ -211,6 +211,15 @@ class Site(Base):
         Index("ix_sites_user_name_id", "user_id", "normalized_name", "id"),
         Index("ix_sites_user_category", "user_id", "category_id"),
         Index("ix_sites_user_pinned", "user_id", "pinned"),
+        # 唯一索引而不是表约束：SQLite 上加表约束要重建整表，
+        # 而 FTS 触发器引用了 sites，重建时会炸。见 20260727_0007 迁移。
+        Index(
+            "ix_sites_user_category_position",
+            "user_id",
+            "category_id",
+            "position",
+            unique=True,
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -222,6 +231,10 @@ class Site(Base):
     normalized_name: Mapped[str] = mapped_column(String(160), nullable=False)
     original_url: Mapped[str] = mapped_column(Text, nullable=False)
     identity_url: Mapped[str] = mapped_column(Text, nullable=False)
+    # 分类内的自定义顺序；同一 (user_id, category_id) 下唯一。
+    position: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     favicon_url: Mapped[str | None] = mapped_column(Text)
     pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

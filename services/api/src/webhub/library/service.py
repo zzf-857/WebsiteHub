@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import and_, delete, exists, func, or_, select, text, update
+from sqlalchemy import and_, case, delete, exists, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,7 +45,7 @@ from webhub.library.schemas import (
     normalize_favicon_url,
 )
 
-SortKey = Literal["created", "updated", "name"]
+SortKey = Literal["created", "updated", "name", "custom"]
 SortDirection = Literal["asc", "desc"]
 _SEARCH_TOKEN = re.compile(r"\w+", re.UNICODE)
 _CJK_CHARACTER = re.compile(r"[\u3400-\u9fff]")
@@ -492,9 +492,20 @@ async def create_site(
         else await _default_category(session, user_id)
     )
     tags = await _owned_tags(session, user_id, payload.tag_ids)
+    # 新站排在该分类末尾：唯一索引要求位置不重复，所以取当前最大值 +1。
+    next_position = int(
+        await session.scalar(
+            select(func.coalesce(func.max(Site.position), -1) + 1).where(
+                Site.user_id == user_id,
+                Site.category_id == category.id,
+            )
+        )
+        or 0
+    )
     site = Site(
         user_id=user_id,
         category_id=category.id,
+        position=next_position,
         name=name,
         normalized_name=normalized_name,
         original_url=original_url,
@@ -912,6 +923,7 @@ async def list_sites(
         "created": Site.created_at,
         "updated": Site.updated_at,
         "name": Site.normalized_name,
+        "custom": Site.position,
     }[sort]
     scope = _cursor_scope(
         user_id=user_id,
@@ -936,8 +948,12 @@ async def list_sites(
             scope=scope,
         )
         try:
-            cursor_value: str | datetime = (
-                raw_value if sort == "name" else datetime.fromisoformat(raw_value)
+            cursor_value: str | int | datetime = (
+                raw_value
+                if sort == "name"
+                else int(raw_value)
+                if sort == "custom"
+                else datetime.fromisoformat(raw_value)
             )
         except ValueError as error:
             raise LibraryValidationError("分页游标包含无效排序值") from error
@@ -983,11 +999,14 @@ async def list_sites(
     next_cursor = None
     if has_more and selected_rows:
         last_site = selected_rows[-1][0]
-        raw_sort_value = (
-            last_site.normalized_name
-            if sort == "name"
-            else (last_site.created_at if sort == "created" else last_site.updated_at).isoformat()
-        )
+        if sort == "name":
+            raw_sort_value = last_site.normalized_name
+        elif sort == "custom":
+            raw_sort_value = str(last_site.position)
+        else:
+            raw_sort_value = (
+                last_site.created_at if sort == "created" else last_site.updated_at
+            ).isoformat()
         next_cursor = _encode_cursor(
             sort=sort,
             direction=direction,
@@ -1004,3 +1023,75 @@ async def list_sites(
             pinned_count=pinned_count,
         ),
     )
+
+
+async def reorder_sites(
+    session: AsyncSession,
+    user_id: str,
+    category_id: str,
+    *,
+    ordered_site_ids: list[str],
+    before_site_id: str | None,
+) -> None:
+    """Move one or more sites within a category, preserving relative order.
+
+    ``before_site_id`` is the anchor the moved block lands in front of; ``None``
+    means "send them to the end".  Anchoring beats an absolute index because an
+    index computed from a list the user was looking at is stale the moment
+    anything else changes, while "put these before that one" stays true.
+
+    The two-pass write (shift everything out of range, then assign final
+    positions) exists because SQLite has no deferred constraints: assigning
+    final positions directly would collide with the unique index halfway
+    through. Same shape as ``spaces.service.reorder_members``.
+    """
+
+    await _owned_category(session, user_id, category_id)
+    if not ordered_site_ids:
+        raise LibraryValidationError("重排至少需要一个网站")
+    if len(set(ordered_site_ids)) != len(ordered_site_ids):
+        raise LibraryValidationError("重排列表中存在重复网站")
+    if before_site_id is not None and before_site_id in ordered_site_ids:
+        raise LibraryValidationError("定位网站不能同时出现在移动列表中")
+
+    rows = list(
+        (
+            await session.execute(
+                select(Site.id, Site.position)
+                .where(Site.user_id == user_id, Site.category_id == category_id)
+                .order_by(Site.position, Site.id)
+            )
+        ).all()
+    )
+    current = [site_id for site_id, _ in rows]
+    known = set(current)
+    missing = [site_id for site_id in ordered_site_ids if site_id not in known]
+    if missing or (before_site_id is not None and before_site_id not in known):
+        raise LibraryNotFoundError("网站不在该分类中")
+
+    moving = set(ordered_site_ids)
+    remaining = [site_id for site_id in current if site_id not in moving]
+    if before_site_id is None:
+        final = [*remaining, *ordered_site_ids]
+    else:
+        anchor = remaining.index(before_site_id)
+        final = [*remaining[:anchor], *ordered_site_ids, *remaining[anchor:]]
+
+    if final == current:
+        return
+
+    offset = max((position for _, position in rows), default=-1) + 1 + len(final)
+    await session.execute(
+        update(Site)
+        .where(Site.user_id == user_id, Site.category_id == category_id)
+        .values(position=Site.position + offset)
+        .execution_options(synchronize_session=False)
+    )
+    positions = {site_id: index for index, site_id in enumerate(final)}
+    await session.execute(
+        update(Site)
+        .where(Site.user_id == user_id, Site.id.in_(final))
+        .values(position=case(positions, value=Site.id))
+        .execution_options(synchronize_session=False)
+    )
+    await session.commit()

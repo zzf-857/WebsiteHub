@@ -171,3 +171,12 @@ class SiteBatchResponse(BaseModel):
     created: int
     failed: int
     items: list[SiteBatchItemResponse]
+
+
+class SiteReorderRequest(StrictRequest):
+    """一次可以移动多个网站，保持它们之间的相对顺序。"""
+
+    ordered_site_ids: list[str] = Field(min_length=1, max_length=200)
+    # 移动块落在这个网站之前；None 表示放到末尾。用锚点而不是绝对下标：
+    # 下标在用户看着的那份列表之外一变就失效，「放在它前面」不会。
+    before_site_id: str | None = None
