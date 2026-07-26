@@ -815,3 +815,36 @@
     transition: none !important;
   }
 }
+
+/* ============ 书签导入的统计栅格 ============ */
+
+.bookmark-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.bookmark-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.bookmark-stat dt {
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.bookmark-stat dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 21px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
