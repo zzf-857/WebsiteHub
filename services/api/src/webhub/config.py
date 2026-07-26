@@ -1,3 +1,5 @@
+import base64
+import binascii
 from dataclasses import dataclass, field
 from functools import lru_cache
 from os import getenv
@@ -24,6 +26,27 @@ def _positive_environment_integer(name: str, default: int) -> int:
     if parsed < 1:
         raise ValueError(f"{name} must be a positive integer")
     return parsed
+
+
+def _provider_master_key() -> bytes | None:
+    value = getenv("WEBHUB_PROVIDER_MASTER_KEY")
+    if value is None or not value.strip():
+        return None
+    try:
+        decoded = base64.b64decode(
+            value.strip().encode("ascii"),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (UnicodeEncodeError, binascii.Error, ValueError) as error:
+        raise ValueError(
+            "WEBHUB_PROVIDER_MASTER_KEY must be a base64-encoded 32-byte key"
+        ) from error
+    if len(decoded) != 32:
+        raise ValueError(
+            "WEBHUB_PROVIDER_MASTER_KEY must be a base64-encoded 32-byte key"
+        )
+    return decoded
 
 
 def _default_data_directory() -> Path:
@@ -60,6 +83,35 @@ class Settings:
     session_ttl_seconds: int = 60 * 60 * 24 * 30
     session_cookie_secure: bool = False
     allowed_origins: tuple[str, ...] = field(default_factory=_allowed_origins)
+    provider_master_key: bytes | None = field(
+        default_factory=_provider_master_key,
+        repr=False,
+    )
+    provider_master_key_version: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_PROVIDER_MASTER_KEY_VERSION", 1
+        )
+    )
+    provider_test_rate_limit_attempts: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_PROVIDER_TEST_RATE_LIMIT_ATTEMPTS", 10
+        )
+    )
+    provider_test_rate_limit_window_seconds: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_PROVIDER_TEST_RATE_LIMIT_WINDOW_SECONDS", 60
+        )
+    )
+    provider_test_max_tracked_accounts: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_PROVIDER_TEST_MAX_TRACKED_ACCOUNTS", 10_000
+        )
+    )
+    provider_test_timeout_seconds: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_PROVIDER_TEST_TIMEOUT_SECONDS", 3
+        )
+    )
     bookmark_upload_global_concurrency: int = field(
         default_factory=lambda: _positive_environment_integer(
             "WEBHUB_BOOKMARK_UPLOAD_GLOBAL_CONCURRENCY", 4
@@ -98,6 +150,15 @@ class Settings:
 
     def __post_init__(self) -> None:
         limits = {
+            "provider_master_key_version": self.provider_master_key_version,
+            "provider_test_rate_limit_attempts": self.provider_test_rate_limit_attempts,
+            "provider_test_rate_limit_window_seconds": (
+                self.provider_test_rate_limit_window_seconds
+            ),
+            "provider_test_max_tracked_accounts": (
+                self.provider_test_max_tracked_accounts
+            ),
+            "provider_test_timeout_seconds": self.provider_test_timeout_seconds,
             "bookmark_upload_global_concurrency": self.bookmark_upload_global_concurrency,
             "bookmark_upload_rate_limit_attempts": self.bookmark_upload_rate_limit_attempts,
             "bookmark_upload_rate_limit_window_seconds": (
@@ -113,6 +174,18 @@ class Settings:
         for name, value in limits.items():
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        if self.provider_master_key is not None and (
+            not isinstance(self.provider_master_key, bytes)
+            or len(self.provider_master_key) != 32
+        ):
+            raise ValueError("provider_master_key must contain exactly 32 bytes")
+        if (
+            self.environment.strip().casefold() in {"prod", "production"}
+            and self.provider_master_key is None
+        ):
+            raise ValueError(
+                "WEBHUB_PROVIDER_MASTER_KEY is required in production"
+            )
         if self.bookmark_upload_global_concurrency > self.bookmark_upload_max_tracked_accounts:
             raise ValueError(
                 "bookmark_upload_global_concurrency cannot exceed "

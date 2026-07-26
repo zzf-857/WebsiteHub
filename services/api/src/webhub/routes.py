@@ -4,6 +4,7 @@ from webhub.auth.routes import router as auth_router
 from webhub.bookmarks.routes import router as bookmarks_router
 from webhub.config import Settings
 from webhub.library.routes import router as library_router
+from webhub.providers.routes import router as providers_router
 from webhub.schemas import HealthResponse, ReadinessResponse
 from webhub.spaces.routes import router as spaces_router
 
@@ -11,6 +12,7 @@ router = APIRouter(prefix="/api")
 router.include_router(auth_router, prefix="")
 router.include_router(bookmarks_router, prefix="")
 router.include_router(library_router, prefix="")
+router.include_router(providers_router, prefix="")
 router.include_router(spaces_router, prefix="")
 
 

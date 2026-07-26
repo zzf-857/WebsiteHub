@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,18 @@ _UPLOAD_ENVIRONMENT_VARIABLES = (
     "WEBHUB_BOOKMARK_UPLOAD_MINIMUM_FREE_BYTES",
     "WEBHUB_BOOKMARK_UPLOAD_DISK_CHECK_INTERVAL_BYTES",
 )
+
+
+def _clear_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "WEBHUB_PROVIDER_MASTER_KEY",
+        "WEBHUB_PROVIDER_MASTER_KEY_VERSION",
+        "WEBHUB_PROVIDER_TEST_RATE_LIMIT_ATTEMPTS",
+        "WEBHUB_PROVIDER_TEST_RATE_LIMIT_WINDOW_SECONDS",
+        "WEBHUB_PROVIDER_TEST_MAX_TRACKED_ACCOUNTS",
+        "WEBHUB_PROVIDER_TEST_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _clear_upload_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -164,3 +177,59 @@ def test_create_app_registers_configured_bookmark_upload_admission(
     assert manager.account_quota_bytes == 4_000
     assert manager.minimum_free_bytes == 500
     assert manager.disk_check_interval_bytes == 50
+
+
+def test_provider_master_key_is_decoded_and_hidden_from_settings_repr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_provider_environment(monkeypatch)
+    raw_key = b"provider-config-test-key-32bytes"
+    assert len(raw_key) == 32
+    encoded = base64.urlsafe_b64encode(raw_key).decode()
+    monkeypatch.setenv("WEBHUB_PROVIDER_MASTER_KEY", encoded)
+    monkeypatch.setenv("WEBHUB_PROVIDER_MASTER_KEY_VERSION", "7")
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        assert settings.provider_master_key == raw_key
+        assert settings.provider_master_key_version == 7
+        assert encoded not in repr(settings)
+        assert raw_key.hex() not in repr(settings)
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("value", ["not-base64!", "c2hvcnQ=", ""])
+def test_invalid_provider_master_key_fails_closed_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    _clear_provider_environment(monkeypatch)
+    monkeypatch.setenv("WEBHUB_PROVIDER_MASTER_KEY", value)
+    get_settings.cache_clear()
+    try:
+        if value:
+            with pytest.raises(ValueError, match="base64-encoded 32-byte"):
+                get_settings()
+        else:
+            assert get_settings().provider_master_key is None
+    finally:
+        get_settings.cache_clear()
+
+
+def test_production_requires_provider_master_key_but_development_degrades_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_provider_environment(monkeypatch)
+    assert Settings(environment="development", provider_master_key=None).provider_master_key is None
+    with pytest.raises(ValueError, match="required in production"):
+        Settings(environment="production", provider_master_key=None)
+
+
+@pytest.mark.parametrize("value", [0, -1, True])
+def test_provider_request_budget_settings_must_be_positive(value: int) -> None:
+    with pytest.raises(ValueError, match="provider_test_rate_limit_attempts"):
+        Settings(
+            environment="test",
+            provider_test_rate_limit_attempts=value,
+        )

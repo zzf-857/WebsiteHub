@@ -8,6 +8,7 @@ dependencies = [
   "aiosqlite>=0.22,<1.0",
   "alembic>=1.17,<2.0",
   "argon2-cffi>=25.1,<26.0",
+  "cryptography>=46,<47",
   "fastapi==0.139.2",
   "sqlalchemy[asyncio]>=2.0,<3.0",
   "uvicorn[standard]==0.51.0",

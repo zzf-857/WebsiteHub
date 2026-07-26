@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -101,6 +102,13 @@ class ProviderConfig(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "kind", "display_name", name="provider_name_per_user_kind"),
         CheckConstraint("kind IN ('model', 'search', 'embedding')", name="valid_kind"),
+        Index(
+            "uq_provider_configs_enabled_per_user_kind",
+            "user_id",
+            "kind",
+            unique=True,
+            sqlite_where=text("enabled = 1"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -112,11 +120,12 @@ class ProviderConfig(Base):
     display_name: Mapped[str] = mapped_column(String(80), nullable=False)
     base_url: Mapped[str | None] = mapped_column(Text)
     model_name: Mapped[str | None] = mapped_column(String(160))
-    secret_ciphertext: Mapped[bytes | None]
-    secret_nonce: Mapped[bytes | None]
+    secret_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
+    secret_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)
     key_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     config_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
