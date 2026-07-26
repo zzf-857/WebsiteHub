@@ -6,7 +6,8 @@ Agent 主导的个人网址导航站。任何新会话（换账号、换机器�
 ## 接手三步
 
 1. 读 `ITERATION_QUEUE.md` —— **唯一调度依据**。从上往下找第一个「状态: 待做」的条目，只做那一个。
-2. 读 `IMPLEMENTATION_PLAN.md` 第 10 节 —— 当前状态快照（哪些 Phase 完成、断层在哪）。
+2. 读 `PROGRESS.md` —— **当前状态快照**（能跑什么、不能跑什么、刻意没做什么）。
+   这份必须每轮更新；架构决策看 `IMPLEMENTATION_PLAN.md`，那份不随迭代变化。
 3. `git log --oneline -15` —— 每个 commit 都有详细中文说明，是最可靠的历史。
 
 **动手前先读 `LOCAL_DEV.md`**（本机专用，已 gitignore，不进仓库）：本地唯一账号是
