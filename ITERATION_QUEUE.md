@@ -309,13 +309,22 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 
 ## Q8 · 检索与 RAG
 
-状态: 待做
+状态: 已完成 · ae960d7 + 待补
 对应: Phase 6 · todolist「Agent 需要维护一个 RAG 来检索内置数据库」
 
 现状：LlamaIndex 完全未引入（依赖都没装）。站内检索是 SQLite FTS5 + 中文 LIKE 兜底的关键词匹配，
 无语义召回。`embedding` kind 的 Provider 配置槽位是死预留（`resolve_optional_binding` 只被传过 `kind="search"`）。
 
-交付：
+**没有引入 LlamaIndex**，理由见 commit：完成标准是行为性的，没有一条要求这个库；
+几千条规模下暴力点积是个位数毫秒，为此引一整棵依赖树并把语料放到 SQLite 备份
+够不着的地方是更差的交易。改为 `webhub/search/`：fusion（RRF + 精确命中提权）
+＋ vectors（按账号分区的 float32 裸存与暴力最近邻）＋ embeddings（账号自己的
+Provider，失败一律降级）。
+
+顺带修掉一个现存缺陷：FTS 此前是 WHERE 过滤条件而非排序依据，
+「精确命中排第一」在今天根本不成立，与有没有向量无关。
+
+原定交付：
 - LlamaIndex ingestion + 本地向量库，按账号分区
 - FTS 与向量的融合排序：**精确命中必须优先**，语义结果不得掩盖已知名称/URL
 - 增量更新、重建、索引状态展示、向量不可用时降级回 FTS
@@ -387,7 +396,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 135 测试 / 后端 389 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 135 测试 / 后端 417 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 
