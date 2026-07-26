@@ -1,0 +1,18 @@
+data: {"type":"start","messageId":"assistant-fixture-001","messageMetadata":{"createdAt":"2026-07-26T00:00:00Z","model":"webhub-fixture"}}
+
+data: {"type":"text-start","id":"text-001"}
+
+data: {"type":"text-delta","id":"text-001","delta":"Hello, "}
+
+data: {"type":"text-delta","id":"text-001","delta":"WebHub."}
+
+data: {"type":"text-end","id":"text-001"}
+
+data: {"type":"message-metadata","messageMetadata":{"phase":"answering"}}
+
+data: {"type":"data-rag-sources","id":"sources-001","data":{"items":[{"siteId":"site-001","title":"Example","url":"https://example.com"}]}}
+
+data: {"type":"finish","finishReason":"stop","messageMetadata":{"createdAt":"2026-07-26T00:00:00Z","model":"webhub-fixture","totalTokens":4}}
+
+data: [DONE]
+
