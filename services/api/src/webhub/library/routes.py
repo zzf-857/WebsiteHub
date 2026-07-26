@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from webhub.auth.dependencies import (
     CurrentIdentityDependency,
     DatabaseSessionDependency,
     require_trusted_origin,
 )
+from webhub.ingestion import service as ingestion_service
 from webhub.library import service
 from webhub.library.schemas import (
     CategoryCreateRequest,
@@ -31,6 +33,21 @@ from webhub.library.schemas import (
 )
 
 router = APIRouter(prefix="/library", tags=["library"])
+
+# 强引用住脱钩的分析任务：asyncio 只持弱引用，不这么做任务可能在抓取中途被 GC。
+_ANALYSIS_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _schedule_analysis(request: Request, *, user_id: str, site_id: str) -> None:
+    task = asyncio.create_task(
+        ingestion_service.analyze_in_background(
+            request.app.state.database,
+            user_id,
+            site_id,
+        )
+    )
+    _ANALYSIS_TASKS.add(task)
+    task.add_done_callback(_ANALYSIS_TASKS.discard)
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]
 
 
@@ -176,11 +193,15 @@ async def sites(
 @router.post("/sites", response_model=SiteResponse, status_code=status.HTTP_201_CREATED)
 async def add_site(
     payload: SiteCreateRequest,
+    request: Request,
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
 ) -> SiteResponse:
-    return await _call(service.create_site(session, identity.user.id, payload))
+    created = await _call(service.create_site(session, identity.user.id, payload))
+    # 脱钩执行：保存一个网站不该等在别人家的慢服务器上，更不该因为对方宕机而失败。
+    _schedule_analysis(request, user_id=identity.user.id, site_id=created.id)
+    return created
 
 
 @router.get("/sites/{site_id}", response_model=SiteResponse)
@@ -219,3 +240,26 @@ async def remove_site(
             expected_version=expected_version,
         )
     )
+
+
+@router.post("/sites/{site_id}/analyze", response_model=SiteResponse)
+async def analyze_site(
+    site_id: str,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> SiteResponse:
+    """Re-read the page's public metadata and store what it fills in.
+
+    Synchronous on purpose, unlike the analysis scheduled at creation time:
+    this one is a button the user just pressed, so they should get the result
+    rather than a spinner that never resolves on its own.
+    """
+
+    outcome = await ingestion_service.analyze_site(session, identity.user.id, site_id)
+    if outcome is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "网站不存在"},
+        )
+    return await _call(service.get_site(session, identity.user.id, site_id))

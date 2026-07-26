@@ -782,3 +782,26 @@
     transition-duration: 0ms !important;
   }
 }
+
+/* 元信息行里的行内动作（「重新分析」），看着像链接但语义是按钮 */
+.sd-inline-action {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-strong);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sd-inline-action:disabled {
+  color: var(--text-subtle);
+  cursor: default;
+  text-decoration: none;
+}
+
+.sd-inline-action:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

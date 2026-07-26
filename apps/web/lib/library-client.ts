@@ -199,3 +199,16 @@ export async function deleteLibrarySite(id: string, expectedVersion: number): Pr
   });
   await request(`/sites/${encodeId(id)}?${params.toString()}`, { method: "DELETE" });
 }
+
+/**
+ * Re-read the page's public metadata and store what it fills in.
+ *
+ * Only ever fills blanks — a description the user typed is never overwritten
+ * by a page's meta tag (enforced server-side, stated here so callers do not
+ * warn the user about a loss that cannot happen).
+ */
+export async function analyzeLibrarySite(id: string): Promise<LibrarySite> {
+  return normalizeLibrarySite(await request(`/sites/${encodeId(id)}/analyze`, {
+    method: "POST",
+  }));
+}

@@ -21,6 +21,7 @@ import { SiteForm } from "@/components/library/site-form";
 import { Spinner } from "@/components/react-bits/spinner";
 import { SiteFavicon } from "@/components/site-favicon";
 import {
+  analyzeLibrarySite,
   deleteLibrarySite,
   getLibrarySite,
   LibraryApiError,
@@ -121,6 +122,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
   const [busy, setBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
   // 编辑表单需要完整的分类/标签列表；每次打开编辑弹层都重新拉取，保证是最新的
   const [taxonomy, setTaxonomy] = useState<TaxonomyState>({ status: "loading" });
@@ -184,6 +186,28 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
     if (busy) return;
     setDialog(null);
     setMutationError(null);
+  };
+
+  /** 重新读取网页公开元数据。只填空，不覆盖用户自己写过的说明（服务端保证）。 */
+  const handleAnalyze = async (id: string) => {
+    if (analyzing) return;
+    setAnalyzing(true);
+    setNotice(null);
+    try {
+      const latest = await analyzeLibrarySite(id);
+      setState({ status: "ready", site: latest });
+      setNotice(
+        latest.analysisStatus === "complete"
+          ? "已读取网页信息"
+          : latest.analysisStatus === "limited"
+            ? "只读到部分信息：这个页面可能需要执行脚本才能渲染内容"
+            : "没能读取到网页信息，稍后可以再试",
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "分析失败，请稍后重试。");
+    } finally {
+      setAnalyzing(false);
+    }
   };
 
   /** 版本冲突后重新拉最新版本：既刷新页面数据，也让弹层里的表单基于新 version 重试 */
@@ -374,6 +398,16 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
                 </div>
                 <div>
                   来源：{SOURCE_LABELS[site.source]} · 内容分析：{ANALYSIS_STATUS_LABELS[site.analysisStatus]}
+                  {" "}
+                  <button
+                    className="sd-inline-action"
+                    type="button"
+                    disabled={analyzing}
+                    onClick={() => void handleAnalyze(site.id)}
+                    title="重新读取该网页的标题、说明与图标；不会覆盖你自己填过的内容"
+                  >
+                    {analyzing ? "分析中…" : "重新分析"}
+                  </button>
                 </div>
               </div>
             </div>

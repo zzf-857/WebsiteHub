@@ -220,7 +220,7 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 
 ## Q4 · 网站抓取与元数据提取
 
-状态: 待做
+状态: 已完成 · f3ca0b9 / 待补 hash
 对应: Phase 5 · todolist Agent 能力「自动分析网站，提取 title/icon/previewpic/description/关联网站」
 
 现状：整个抓取子系统**不存在**。后端无任何 HTML 解析库；唯一的出站 HTTP 是
