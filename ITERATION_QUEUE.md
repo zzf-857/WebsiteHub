@@ -245,7 +245,7 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 
 ## Q5 · 批量 URL 入库闭环
 
-状态: 已完成 · 51a2032 + 待补
+状态: 已完成 · 51a2032 + 850198d
 对应: Phase 5 · todolist「支持单个或者批量」
 
 现状：`ProposeSiteArgs` 只收单个 url；批量完全依赖模型自觉循环调用，无代码保证每个 URL 都被处理；
