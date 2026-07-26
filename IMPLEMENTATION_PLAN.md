@@ -1,10 +1,10 @@
 # WebHub 实施计划
 
-> 文档版本：v1.4
+> 文档版本：v1.5
 > 更新日期：2026-07-26
 > 需求基线：`PRD.md v0.8 Draft`
 > 产品形态：局域网部署的跨平台 Web 网站系统
-> 当前阶段：Phase 2A/2B 后端 checkpoint 已完成；账号隔离的 Category、Tag、Site、Space、成员排序、保守 URL identity、FTS5、短词回退与版本绑定游标已验证。Phase 2 整体仍在进行：网站前端集成、正式书签入库表与 100,000 Site 性能门禁未完成
+> 当前阶段：Phase 2A/2B/2C 后端 checkpoint 已完成；账号隔离资料库、Space 与大规模书签解析暂存内核已验证。Phase 2 整体仍在进行：网站前端集成、书签分类/两次确认提交闭环与 100,000 Site 性能门禁未完成
 
 ## 1. 计划目的
 
@@ -257,10 +257,23 @@ WebHub/
 - Space 写操作使用原子 `expected_version` CAS；成员游标和按 Space 筛选的资料库游标均绑定 Space 版本
 - 账号限定的有界游标、跨账号 `404`、Origin、关系篡改、并发排序、迁移往返与 schema drift 自动化测试
 
+#### Phase 2C checkpoint（2026-07-26）
+
+后端逻辑已完成：
+
+- 新增账号隔离的 source snapshot、job、parse run、current run、phase checkpoint、staging、永久 source fact 与 Site origin 共 14 张表
+- Folder 与 Bookmark 共享连续 1-based `source_sequence`；occurrence 是唯一来源事实，candidate 与目录关系是可重建投影
+- 上传请求、解析 run 和分片分别使用账号范围幂等键；同账号相同 source hash 只提示重复，不强制复用快照
+- 分片按连续序列和 payload hash 幂等写入；`finalizing` 是可重入的持久封口状态，worker 中断后可从冻结 staging facts 重建 completion；只有完整 run 能原子替换 current run
+- 已完成 parse checkpoint、目录、occurrence 和候选结构冻结；classification/commit checkpoint、候选决策与 Site 匹配可继续演进
+- 已有 Site 只生成 `skip_existing`，不覆盖名称、描述、置顶等业务字段；首次确认前不写 Category、Tag、Site 或 Space
+- 自动化覆盖跨账号复合外键篡改、终态增删改、封口后进程中断恢复、算法版本漂移、零事件导出、Site/job 级联、`0003 -> 0004 -> 0003 -> 0004` 数据/FTS 保留与 schema drift
+- 用户提供的 2,541 occurrence 私有 mock 通过脱敏 golden 合同：368 folders、2,024 candidates、511 duplicate occurrences、6 unsupported，统计与统一源序列无漂移
+
 未完成，不得将 Phase 2 整体标记完成：
 
 - `/library` 与 `/library/[siteId]` 的正式网站集成与浏览器验收
-- `bookmark_imports`、source folder、occurrence、staging 与确认入库闭环
+- 书签上传/任务 API、目录簇分类、两次确认、永久 source/Site 提交与恢复接口闭环
 - 100,000 Site 隔离、分页、聚合与 FTS P95 性能门禁
 
 ### Phase 3 - Conversation & Stream Contract
@@ -324,11 +337,11 @@ WebHub/
 
 | 能力 | 前置阶段 | 状态/说明 |
 |---|---|---|
-| Netscape HTML parser dry-run、目录树/occurrence 解析和预检合同 | 无 | 已完成 2,541 occurrence mock 与 100,000 occurrence 合成基准；仍需提交脱敏 golden fixture，并在 Release 阶段复测硬件/数据集版本 |
-| 账号范围、会话与跨账号拒绝 | Phase 1 | 未完成；所有任务、暂存和结果必须接入统一 `user_id` 边界 |
-| Site identity、业务表、源目录和 occurrence 持久化 | Phase 2 | 未完成；不得用 parser 临时结构替代 Alembic 业务模型 |
+| Netscape HTML parser dry-run、目录树/occurrence 解析和预检合同 | 无 | 已完成 2,541 occurrence 私有 mock 的脱敏 golden 合同与 100,000 occurrence 合成基准；Release 阶段仍需复测硬件/数据集版本 |
+| 账号范围、会话与跨账号拒绝 | Phase 1 | snapshot/job/run/checkpoint/staging/source schema 与持久化核心已完成账号隔离；任务 HTTP API 尚未开放 |
+| Site identity、业务表、源目录和 occurrence 持久化 | Phase 2 | Alembic 模型、解析暂存和永久 source 表已完成；两次确认后的幂等提交服务尚未完成 |
 | 可选 LLM 所需 Provider API、凭据与预算快照 | Phase 4 | 未完成；本阶段只提供受控 API 能力，本地分类不依赖 Provider |
-| 目录簇分类编排、大规模导入任务 API、持久 worker、checkpoint、进度、取消和预览基础设施 | Phase 5 | 未完成；复用任务原语但使用独立队列策略和分页合同，不复用 50 URL 数据流 |
+| 目录簇分类编排、大规模导入任务 API、持久 worker、checkpoint、进度、取消和预览基础设施 | Phase 5 | parse run/current run/chunk checkpoint 内核已完成；worker、分类、取消、分页 HTTP API 仍未完成 |
 | 第二次确认提交、Agent 调用与内置 Skill | Phase 7 | Skill 合同和 dry-run 脚本已完成，运行时注册/账号工具/提交闭环未完成；Phase 7 前不得宣称 Agent Skill 闭环完成 |
 
 Phase 5B 是跨依赖的独立纵向轨道：各里程碑随前置阶段落地，完整阶段门禁在 Phase 7 集成后关闭；它不改变 Phase 5 的 50 URL 验收边界，也不要求阻塞无关的 Phase 6 检索工作。
