@@ -128,7 +128,7 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 
 ## Q3b · 书签导入的落库与前端入口
 
-状态: 待做
+状态: 已完成 · 5894251 / 12877da / 102fcef / 3b6cdc2
 对应: todolist「导入浏览器书签」· 用户 2026-07-26 实测请求
 插入原因: 用户提供 `MockData/bookmarks_2026_7_26.html` 要求「跑通自动导入流程」，
 实测发现流程只建了前一半。按队列规则插在当前条目之后、不打乱后面的优先级。
@@ -140,7 +140,7 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 7 个疑似含敏感参数的 URL 被标记、14 组仅 fragment 不同的疑似重复只标记不自动合并。
 规则分类给出 9 个建议分类（未分类 537、学习与文档 447、效率工具 394…）。
 
-**断层（跑不通的原因）**：
+**实际有三个断层（当初这条记少了一个）**：
 1. **没有落库端点。** 线上 OpenAPI 里 `bookmark-imports` 只有 6 个：`POST` 上传 +
    5 个 `GET` 预览。`bookmarks/persistence.py` 只**读** `Site`（算 `identity_url` 命中），
    全模块没有任何一处创建 `Site`。暂存层已经算好了每个候选的 `proposed_action`
@@ -160,14 +160,19 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 - 前端：设置页下的导入入口（上传 → 预览摘要 → 确认导入 → 结果），
   预览要显示「将新建 N 条 / 跳过 M 条已存在 / 拒绝 K 条」
 
-完成标准：
-- 用 `MockData/bookmarks_2026_7_26.html` 走完整流程，资料库真的多出对应数量的网站
-- 确认前资料库无任何变化（测试断言比对 Site 行数）
-- 同一个 job 重复 apply 不会写入两份
-- 跨账号 job_id 一律 404
-- 已存在的 `identity_url` 走 skip/merge，不产生重复网站
+实测结果（真实文件，2026-07-26）：
+上传 1.6MB → 解析 1.08s → 2909 事件 / 368 文件夹 / 2541 记录 → 2024 去重候选、511 重复；
+落库前 sites=0 → apply 0.47s → created 2024 / failed 0 → sites=2024；
+重复 apply → created 0 / skipped_existing 2024，行数不变。
+浏览器端另用小文件验证 UI 接线（面板无文件选择工具）：新增 4 条、跳过已存在 1 条。
 
----
+**当初漏记的第三个断层**：没有 parse worker。上传后 job 停在 `queued_parse`，
+`finalize_parse_run` 全仓库只有测试和崩溃恢复函数在调。已补 `bookmarks/worker.py`
+（进程内，非 schema 预留的租约式 worker）。
+
+刻意没做：不填 `bookmark_source_occurrences` / `site_import_origins`——
+这两张表全仓库无人写，「哪条书签记录变成哪个网站」的溯源链整体未建，
+半填一份只会造出一张看起来权威、实际只覆盖走过本函数的导入的表。
 
 ## Q3c · 确认结果回写会话历史（Agent 会否认自己刚存过的东西）
 
@@ -343,7 +348,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 118 测试 / 后端 332 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 124 测试 / 后端 332 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 
