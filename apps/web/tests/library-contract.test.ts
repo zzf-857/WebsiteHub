@@ -1,0 +1,142 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  assertLibraryCategoryName,
+  assertLibrarySiteCreateInput,
+  assertLibrarySiteUpdateInput,
+  assertLibraryTagName,
+  LibraryContractError,
+  normalizeCategoryDeletePreview,
+  normalizeLibraryCategories,
+  normalizeLibrarySite,
+  normalizeLibrarySitePage,
+} from "../lib/library-contract.ts";
+
+const category = { id: "category-1", name: "开发", is_default: true, site_count: 2 };
+const site = {
+  id: "site-1",
+  name: "MDN",
+  original_url: "https://developer.mozilla.org/",
+  identity_url: "https://developer.mozilla.org",
+  description: "Web documentation",
+  favicon_url: "https://developer.mozilla.org/favicon.ico",
+  category: { id: "category-1", name: "开发", is_default: true },
+  tags: [{ id: "tag-1", name: "文档" }],
+  pinned: true,
+  source: "manual",
+  analysis_status: "not_analyzed",
+  version: 3,
+  created_at: "2026-07-25T10:00:00Z",
+  updated_at: "2026-07-26T10:00:00Z",
+};
+
+test("normalizes strict site and paginated list contracts", () => {
+  assert.deepEqual(normalizeLibrarySite(site), {
+    id: "site-1",
+    name: "MDN",
+    originalUrl: "https://developer.mozilla.org/",
+    identityUrl: "https://developer.mozilla.org",
+    description: "Web documentation",
+    faviconUrl: "https://developer.mozilla.org/favicon.ico",
+    category: { id: "category-1", name: "开发", isDefault: true },
+    tags: [{ id: "tag-1", name: "文档" }],
+    pinned: true,
+    source: "manual",
+    analysisStatus: "not_analyzed",
+    version: 3,
+    createdAt: "2026-07-25T10:00:00Z",
+    updatedAt: "2026-07-26T10:00:00Z",
+  });
+
+  const page = normalizeLibrarySitePage({
+    items: [site],
+    next_cursor: "next-page",
+    aggregate: { matched_count: 12, pinned_count: 4 },
+  });
+  assert.equal(page.items[0]?.id, "site-1");
+  assert.equal(page.nextCursor, "next-page");
+  assert.deepEqual(page.aggregate, { matchedCount: 12, pinnedCount: 4 });
+});
+
+test("accepts the collection envelope and the explicit category delete preview", () => {
+  assert.deepEqual(normalizeLibraryCategories({ items: [category] }), [
+    { id: "category-1", name: "开发", isDefault: true, siteCount: 2 },
+  ]);
+  assert.deepEqual(
+    normalizeCategoryDeletePreview({
+      category,
+      affected_site_count: 2,
+      replacement_category: { ...category, id: "category-2", name: "未分类", site_count: 0 },
+    }),
+    {
+      category: { id: "category-1", name: "开发", isDefault: true, siteCount: 2 },
+      affectedSiteCount: 2,
+      replacementCategory: { id: "category-2", name: "未分类", isDefault: true, siteCount: 0 },
+    },
+  );
+});
+
+test("rejects malformed nested values instead of leaking them into UI state", () => {
+  assert.throws(
+    () => normalizeLibrarySite({ ...site, pinned: "yes" }),
+    (error: unknown) => error instanceof LibraryContractError && /site\.pinned/.test(error.message),
+  );
+  assert.throws(
+    () => normalizeLibrarySite({ ...site, original_url: "javascript:alert(1)" }),
+    /HTTP\(S\) URL/,
+  );
+  assert.throws(
+    () => normalizeLibrarySitePage({ items: [], next_cursor: null, aggregate: {} }),
+    /matched_count/,
+  );
+});
+
+test("accepts only backend-supported site source and analysis status values", () => {
+  for (const source of ["manual", "agent", "browser_import", "backup"] as const) {
+    assert.equal(normalizeLibrarySite({ ...site, source }).source, source);
+  }
+  for (const analysisStatus of ["not_analyzed", "pending", "complete", "failed", "limited"] as const) {
+    assert.equal(
+      normalizeLibrarySite({ ...site, analysis_status: analysisStatus }).analysisStatus,
+      analysisStatus,
+    );
+  }
+  assert.throws(() => normalizeLibrarySite({ ...site, source: "web_import" }), /site\.source/);
+  assert.throws(() => normalizeLibrarySite({ ...site, analysis_status: "not_requested" }), /site\.analysis_status/);
+});
+
+test("normalizes create descriptions and preserves explicit null category updates", () => {
+  assert.equal(
+    assertLibrarySiteCreateInput({ name: "MDN", url: "https://developer.mozilla.org", description: null }).description,
+    undefined,
+  );
+  assert.equal(
+    assertLibrarySiteCreateInput({ name: "MDN", url: "https://developer.mozilla.org", description: "   " }).description,
+    undefined,
+  );
+  assert.deepEqual(assertLibrarySiteUpdateInput({ expectedVersion: 3, categoryId: null }), {
+    expectedVersion: 3,
+    categoryId: null,
+  });
+  assert.deepEqual(assertLibrarySiteUpdateInput({ expectedVersion: 3, pinned: false }), {
+    expectedVersion: 3,
+    pinned: false,
+  });
+});
+
+test("enforces backend name length limits", () => {
+  assert.equal(assertLibrarySiteCreateInput({
+    name: "s".repeat(160),
+    url: "https://example.com",
+  }).name.length, 160);
+  assert.equal(assertLibraryCategoryName("c".repeat(80)).length, 80);
+  assert.equal(assertLibraryTagName("t".repeat(40)).length, 40);
+
+  assert.throws(
+    () => assertLibrarySiteUpdateInput({ expectedVersion: 1, name: "s".repeat(161) }),
+    /160/,
+  );
+  assert.throws(() => assertLibraryCategoryName("c".repeat(81)), /80/);
+  assert.throws(() => assertLibraryTagName("t".repeat(41)), /40/);
+});
