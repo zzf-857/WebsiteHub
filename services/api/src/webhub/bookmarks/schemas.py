@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 FetchPolicy = Literal["public_revalidation_required", "export_metadata_only"]
 ProposedAction = Literal[
@@ -125,3 +125,20 @@ class BookmarkPreviewCandidatePageResponse(BaseModel):
 class BookmarkPreviewOccurrencePageResponse(BaseModel):
     items: list[BookmarkPreviewOccurrenceResponse]
     next_cursor: str | None
+
+
+class BookmarkImportApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_job_version: int = Field(ge=1)
+
+
+class BookmarkImportApplyResponse(BaseModel):
+    job_id: str
+    state: str
+    job_version: int
+    total_candidates: int
+    created: int
+    skipped_existing: int
+    skipped_needs_review: int
+    failed: int

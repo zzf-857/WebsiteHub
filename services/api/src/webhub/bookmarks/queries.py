@@ -12,7 +12,9 @@ from sqlalchemy import and_, case, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.bookmarks import persistence
+from webhub.bookmarks.apply import apply_candidates
 from webhub.bookmarks.schemas import (
+    BookmarkImportApplyResponse,
     BookmarkImportFailureCode,
     BookmarkImportProgressResponse,
     BookmarkImportStatusResponse,
@@ -35,6 +37,7 @@ from webhub.db.models import (
     BookmarkStagingCandidate,
     BookmarkStagingFolder,
     BookmarkStagingOccurrence,
+    utc_now,
 )
 
 PreviewEndpoint = Literal["folders", "candidates", "occurrences"]
@@ -604,3 +607,49 @@ async def list_preview_occurrences(
         else None
     )
     return BookmarkPreviewOccurrencePageResponse(items=items, next_cursor=next_cursor)
+
+
+async def apply_import(
+    session: AsyncSession,
+    user_id: str,
+    job_id: str,
+    *,
+    expected_job_version: int,
+) -> BookmarkImportApplyResponse:
+    """Write the job's staged candidates into the account's library.
+
+    Account-scoped through ``_current_complete_preview``: a job id belonging to
+    another account simply does not resolve.  The optimistic-lock check means a
+    preview the user is looking at cannot be applied after it was superseded by
+    a re-parse.
+    """
+
+    preview = await _current_complete_preview(session, user_id, job_id)
+    if preview.job.version != expected_job_version:
+        raise persistence.BookmarkPersistenceConflictError(
+            "导入任务已被更新，请刷新预览后重试"
+        )
+    if preview.job.state in {"committing", "cancel_requested"}:
+        raise persistence.BookmarkPersistenceConflictError("该导入任务正在处理中")
+
+    outcome = await apply_candidates(session, user_id, preview.run.id)
+
+    # Re-read: apply_candidates committed, so the in-session copy is stale.
+    job = await session.scalar(
+        select(BookmarkImportJob).where(
+            BookmarkImportJob.user_id == user_id,
+            BookmarkImportJob.id == job_id,
+        )
+    )
+    if job is not None:
+        job.state = "completed_with_errors" if outcome.failed else "completed"
+        job.completed_at = utc_now()
+        job.version += 1
+        await session.commit()
+
+    return BookmarkImportApplyResponse(
+        job_id=job_id,
+        state=job.state if job is not None else "completed",
+        job_version=job.version if job is not None else expected_job_version,
+        **outcome.as_dict(),
+    )

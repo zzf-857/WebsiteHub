@@ -34,6 +34,8 @@ from webhub.bookmarks.admission import (
 )
 from webhub.bookmarks.models import BookmarkFormatError, ParserLimits
 from webhub.bookmarks.schemas import (
+    BookmarkImportApplyRequest,
+    BookmarkImportApplyResponse,
     BookmarkImportStatusResponse,
     BookmarkImportUploadResponse,
     BookmarkPreviewCandidatePageResponse,
@@ -394,4 +396,29 @@ async def preview_occurrences(
             limit=limit,
         ),
         no_store=True,
+    )
+
+
+@router.post("/{job_id}/apply", response_model=BookmarkImportApplyResponse)
+async def apply_import(
+    job_id: str,
+    payload: BookmarkImportApplyRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> BookmarkImportApplyResponse:
+    """Write the job's staged candidates into the account's library.
+
+    Nothing before this endpoint ever created a ``Site``: upload, parse and
+    preview are all read-only from the library's point of view.  That is what
+    makes "确认前资料库无变化" true by construction rather than by discipline.
+    """
+
+    return await _call(
+        queries.apply_import(
+            session,
+            identity.user.id,
+            job_id,
+            expected_job_version=payload.expected_job_version,
+        )
     )
