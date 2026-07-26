@@ -13,10 +13,15 @@ or write directly to Site, Category, Tag, or Space records.
 - For a WebHub runtime request, accept only an account-scoped `import_job_id`. Call backend import
   tools and follow the backend's current-run and pagination references; never accept a server
   filesystem path, `user_id`, or raw staging payload from the Agent.
+- If the required backend import tools are not exposed in the current runtime, stop at the local
+  dry-run or public preview boundary. Do not invent tool names, read server staging paths, or bypass
+  the backend through direct database or filesystem access.
 - For repository development or a local dry run, execute `scripts/preview_bookmarks.py`. Store all
   generated artifacts under the workspace temp directory, never beside source code.
 - For classification, read `references/classification-contract.md` and validate every response
-  against `references/classification-output.schema.json`.
+  against `references/classification-output.schema.json`. Inside WebHub, call
+  `validate_classification_output()` from `webhub.bookmarks.classification_contract`; do not trust
+  a Provider SDK's structured-output success flag as sufficient validation.
 - For persistence, API, state, or recovery work, read `references/import-contract.md`.
 
 ## Run A Local Dry Run
@@ -29,8 +34,9 @@ uv run --project services/api python skills/import-browser-bookmarks/scripts/pre
 ```
 
 Require a new output directory. Inspect `summary.json` first, then `rejected.jsonl` and
-`classification_clusters.jsonl`. Read `candidates.jsonl` only for local debugging; do not send it
-to an external model because URLs can contain secrets.
+`classification_clusters.jsonl`. Treat both `rejected.jsonl` and `candidates.jsonl` as local-only
+sensitive artifacts: rejected entries may contain local paths or personal titles, while candidate
+URLs may contain secrets. Never send either file directly to an external model.
 
 ## Follow The Import Workflow
 
@@ -57,8 +63,10 @@ to an external model because URLs can contain secrets.
    explicit completed zero-event checkpoint, and never replace a complete current run with a
    running, failed, or partial run.
    Present the parse preview and classification budget before spending Provider tokens.
-8. Classify folder clusters first. Classify only ambiguous candidates afterward. Prefer existing
-   account categories; propose a small number of new categories and 2-8 useful tags.
+8. Have the backend build sanitized batches of at most 50 subjects with opaque batch and subject
+   IDs. Classify folder clusters first and only ambiguous candidates afterward. Prefer existing
+   account categories; propose a small number of new categories and 2-8 useful tags. Never let the
+   Agent invent batch IDs, bindings, or taxonomy allowlists.
 9. Present the final editable diff. Require a short-lived, single-use, account-bound confirmation
    before committing business data.
 10. Enqueue optional metadata enrichment only after commit. Reuse the safe fetcher and split work

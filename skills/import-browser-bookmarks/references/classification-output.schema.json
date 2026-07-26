@@ -45,7 +45,8 @@
           },
           "category_name": {
             "type": "string",
-            "maxLength": 80
+            "maxLength": 80,
+            "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u200B\\u200E\\u200F\\u202A-\\u202E\\u2060-\\u206F\\uFEFF]*$"
           },
           "tags": {
             "type": "array",
@@ -55,7 +56,8 @@
             "items": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 40
+              "maxLength": 40,
+              "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u200B\\u200E\\u200F\\u202A-\\u202E\\u2060-\\u206F\\uFEFF]*$"
             }
           },
           "confidence": {
@@ -86,7 +88,8 @@
             "then": {
               "properties": {
                 "category_id": {"type": "string", "minLength": 1},
-                "category_name": {"minLength": 1}
+                "category_name": {"minLength": 1},
+                "tags": {"minItems": 2}
               }
             }
           },
@@ -99,7 +102,8 @@
             "then": {
               "properties": {
                 "category_id": {"type": "null"},
-                "category_name": {"minLength": 1}
+                "category_name": {"minLength": 1},
+                "tags": {"minItems": 2}
               }
             }
           },
@@ -112,7 +116,33 @@
             "then": {
               "properties": {
                 "category_id": {"type": "null"},
-                "category_name": {"const": "未分类"}
+                "category_name": {"const": "未分类"},
+                "needs_review": {"const": true}
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "reason_code": {"const": "insufficient_evidence"}
+              }
+            },
+            "then": {
+              "properties": {
+                "category_action": {"const": "uncategorized"},
+                "needs_review": {"const": true}
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "confidence": {"exclusiveMaximum": 0.5}
+              }
+            },
+            "then": {
+              "properties": {
+                "needs_review": {"const": true}
               }
             }
           }

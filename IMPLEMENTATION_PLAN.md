@@ -1,10 +1,10 @@
 # WebHub 实施计划
 
-> 文档版本：v1.5
+> 文档版本：v1.6
 > 更新日期：2026-07-26
 > 需求基线：`PRD.md v0.8 Draft`
 > 产品形态：局域网部署的跨平台 Web 网站系统
-> 当前阶段：Phase 2A/2B/2C 后端 checkpoint 已完成；账号隔离资料库、Space 与大规模书签解析暂存内核已验证。Phase 2 整体仍在进行：网站前端集成、书签分类/两次确认提交闭环与 100,000 Site 性能门禁未完成
+> 当前阶段：Phase 2A/2B/2C 后端 checkpoint 已完成；账号隔离资料库、Space、书签持久化、两阶段文件 intake、公开上传/状态 API、严格分类输出校验、只读预览 API 与单 worker 上传 admission 已验证。书签上传 POST 已由 custom server 专用流式代理绕过 Next 10 MiB request clone，并通过真实 mock、12 MiB、头部保留和超限测试；网站代理 512 MiB 单请求上限与后端 512 MiB 磁盘保留策略均不代表 512 MiB 文件容量门禁已经实测。Phase 2 整体仍在进行：前端集成、分类执行 worker、真实 LLM、两次确认提交闭环与 100,000 Site 性能门禁未完成
 
 ## 1. 计划目的
 
@@ -195,7 +195,7 @@ WebHub/
 - 网站刷新后结构稳定，API 不可用时显示明确状态。
 - 前后端自动检查通过。
 
-补充现状（不扩大 Phase 0 的完成含义）：浏览器书签 parser/dry-run 纵向切片、`import-browser-bookmarks` Skill 合同与本地 CLI 已完成。用户提供的 2,541 occurrence mock 已得到确定性预览；8,109,840 bytes / 100,000 occurrence 合成文件的完整预检为 61.02 秒，额外 Python 分配峰值低于 1 MiB。以上只证明本地只读管线与 Skill 合同可行，不代表账号隔离、业务表、持久任务 API、真实 LLM 分类、两阶段写库确认或 Agent 运行时注册已经完成。
+补充现状（不扩大 Phase 0 的完成含义）：浏览器书签 parser/dry-run 纵向切片、`import-browser-bookmarks` Skill 合同与本地 CLI 已完成。用户提供的 2,541 occurrence mock 已得到确定性预览；8,109,840 bytes / 100,000 occurrence 合成文件的完整预检为 61.02 秒，额外 Python 分配峰值低于 1 MiB。后续 Phase 2C 已用独立 API 测试补齐账号隔离持久化、公开上传/状态和只读预览能力；这些本地 dry-run 基准本身仍不代表分类 worker、真实 LLM 分类、两阶段写库确认或 Agent 运行时注册已经完成。
 
 ### Phase 1 - Identity & Data Kernel
 
@@ -269,11 +269,19 @@ WebHub/
 - 已有 Site 只生成 `skip_existing`，不覆盖名称、描述、置顶等业务字段；首次确认前不写 Category、Tag、Site 或 Space
 - 自动化覆盖跨账号复合外键篡改、终态增删改、封口后进程中断恢复、算法版本漂移、零事件导出、Site/job 级联、`0003 -> 0004 -> 0003 -> 0004` 数据/FTS 保留与 schema drift
 - 用户提供的 2,541 occurrence 私有 mock 通过脱敏 golden 合同：368 folders、2,024 candidates、511 duplicate occurrences、6 unsupported，统计与统一源序列无漂移
+- 流式上传内核按账号写入服务器生成的 incoming 路径，边写边校验大小、SHA-256、编码与 Netscape HTML 标记；空文件、超限、错误格式、取消和异常均有清理测试
+- intake 使用 `receiving -> queued_parse` 两阶段协议：先提交 snapshot/job，再无覆盖原子发布源文件，最后以版本 CAS 排队；数据库提交后/文件发布后两个崩溃窗口、并发同幂等键和跨账号路径均可恢复或拒绝
+- 分类器输出已有独立的严格 JSON 合同、大小/批次/subject/category/新分类预算校验与不可信输出测试；这只完成输出边界，不代表分类调度或真实 LLM 已接通
+- 账号隔离的只读预览已提供 summary、folders、candidates、occurrences API；集合使用作用域绑定的 keyset cursor、有界分页，并只返回当前完整 run 的安全字段
+- 公开 `POST /api/bookmark-imports` raw-body 上传与 `GET /api/bookmark-imports/{job_id}` 状态 API 已通过认证、Origin、媒体类型、流式/声明超限、格式/编码、幂等冲突、同源提示、跨账号、no-store 和敏感字段隔离测试；1.6 MB Chrome/Edge mock 已通过 FastAPI API 测试
+- 书签上传 admission 默认限制为全局并发 4、同账号并发 1、同账号 6 次/60 秒、账号已发布与 incoming 源文件累计 2 GiB；保留至少 512 MiB 磁盘余量并在流式接收期间每 8 MiB 复查。并发、频率和追踪窗口属于单 API worker 的进程内门禁，当前启动合同不支持多 worker
+- 网站 custom server 只对 `POST /api/backend/bookmark-imports` 启用专用流式代理，绕过 Next 的 10 MiB request clone；真实 mock 精确字节/哈希、请求与响应头保留、12 MiB 流式上传、声明长度超限及 chunked 超限测试已通过。其他 `/api/backend/*` 路径仍走 Next rewrite；网站代理 512 MiB 单请求上限与后端 512 MiB 磁盘保留策略相互独立，均不代表已经完成 512 MiB 文件容量门禁
 
 未完成，不得将 Phase 2 整体标记完成：
 
 - `/library` 与 `/library/[siteId]` 的正式网站集成与浏览器验收
-- 书签上传/任务 API、目录簇分类、两次确认、永久 source/Site 提交与恢复接口闭环
+- 上传 POST 的 custom server 流式代理已通过 12 MiB 和真实 mock 验证，但 512 MiB 配置上限尚未完成容量门禁实测；其他 `/api/backend/*` 路径仍使用 Next rewrite
+- 解析/分类 worker、目录簇分类执行、真实 LLM 调用、两次确认、永久 source/Site 提交与恢复接口闭环
 - 100,000 Site 隔离、分页、聚合与 FTS P95 性能门禁
 
 ### Phase 3 - Conversation & Stream Contract
@@ -338,10 +346,10 @@ WebHub/
 | 能力 | 前置阶段 | 状态/说明 |
 |---|---|---|
 | Netscape HTML parser dry-run、目录树/occurrence 解析和预检合同 | 无 | 已完成 2,541 occurrence 私有 mock 的脱敏 golden 合同与 100,000 occurrence 合成基准；Release 阶段仍需复测硬件/数据集版本 |
-| 账号范围、会话与跨账号拒绝 | Phase 1 | snapshot/job/run/checkpoint/staging/source schema 与持久化核心已完成账号隔离；任务 HTTP API 尚未开放 |
+| 账号范围、会话与跨账号拒绝 | Phase 1 | snapshot/job/run/checkpoint/staging/source schema、两阶段 intake、公开上传/状态 API 与预览查询已完成账号隔离；上传 POST 专用代理已通过 12 MiB/真实 mock，512 MiB 容量门禁仍待实测 |
 | Site identity、业务表、源目录和 occurrence 持久化 | Phase 2 | Alembic 模型、解析暂存和永久 source 表已完成；两次确认后的幂等提交服务尚未完成 |
 | 可选 LLM 所需 Provider API、凭据与预算快照 | Phase 4 | 未完成；本阶段只提供受控 API 能力，本地分类不依赖 Provider |
-| 目录簇分类编排、大规模导入任务 API、持久 worker、checkpoint、进度、取消和预览基础设施 | Phase 5 | parse run/current run/chunk checkpoint 内核已完成；worker、分类、取消、分页 HTTP API 仍未完成 |
+| 目录簇分类编排、大规模导入任务 API、持久 worker、checkpoint、进度、取消和预览基础设施 | Phase 5 | parse run/current run/chunk checkpoint、公开上传/状态 API、严格分类输出合同和 summary/folders/candidates/occurrences keyset API 已完成；上传 POST 专用流式代理通过 12 MiB/真实 mock/头部/超限测试，worker、分类执行、取消和 512 MiB 容量门禁仍未完成 |
 | 第二次确认提交、Agent 调用与内置 Skill | Phase 7 | Skill 合同和 dry-run 脚本已完成，运行时注册/账号工具/提交闭环未完成；Phase 7 前不得宣称 Agent Skill 闭环完成 |
 
 Phase 5B 是跨依赖的独立纵向轨道：各里程碑随前置阶段落地，完整阶段门禁在 Phase 7 集成后关闭；它不改变 Phase 5 的 50 URL 验收边界，也不要求阻塞无关的 Phase 6 检索工作。
@@ -466,7 +474,7 @@ Phase 5B 是跨依赖的独立纵向轨道：各里程碑随前置阶段落地�
 | AI SDK v7 跨语言流协议变化 | 独立 codec、固定版本和 fixture 合同测试 |
 | LangGraph checkpoint 与业务消息双存储 | main DB 作为 UI 事实源，以 run/message ID 对齐 |
 | SQLite + Qdrant Local 单写者限制 | Windows MVP 固定单 API worker；扩容时迁移服务型存储 |
-| 进程内登录限流在重启后清空 | MVP 固定单 API worker 并使用两级有界窗口；多 worker 或更高安全等级前迁移到共享持久限流 |
+| 进程内登录限流与书签上传并发/频率门禁在重启后清空 | MVP 固定单 API worker 并使用有界窗口；多 worker 或更高安全等级前迁移到共享限流与并发协调。书签账号占用和磁盘余量仍从文件系统重新计算 |
 | Ollama / bge-m3 不可用 | 显示索引状态，始终保留 FTS 与手动管理 |
 | 任意模型不支持 tool/structured output | 明确报错并回退手动流程，禁止猜测执行 |
 | 局域网 HTTP 无传输加密 | 明示仅适用于受信任 LAN；公网或不可信网络必须先加 HTTPS |
@@ -492,4 +500,4 @@ Phase 5B 是跨依赖的独立纵向轨道：各里程碑随前置阶段落地�
 
 ## 10. 当前迭代
 
-Phase 0 网站与 API Foundation 已完成，Phase 1 账号闭环已稳定支撑真实业务资源。当前完成 Phase 2A/2B 后端 checkpoint：Category、Tag、Site、Space CRUD、默认“未分类”、多 Space 成员关系与排序、保守 URL identity、FTS5/短词搜索、版本绑定游标、原子版本冲突和跨账号拒绝已接通；后端自动化测试基线为 64 项。下一步并行完成资料库网站集成与真实浏览器验收，后端继续实施书签持久化表和 100,000 Site 性能门禁。浏览器书签 parser/dry-run、2,541 occurrence mock、100,000 occurrence 合成预检和 `import-browser-bookmarks` Skill 仍只是只读管线与合同；不得表述为正式导入、真实自动分类、两阶段写库确认或 Agent 运行时闭环。
+Phase 0 网站与 API Foundation 已完成，Phase 1 账号闭环已稳定支撑真实业务资源。Phase 2A/2B 的 Category、Tag、Site、Space CRUD、FTS5、版本游标、CAS 和跨账号拒绝已经接通；Phase 2C 已完成账号隔离 snapshot/job/run/checkpoint/staging 内核、可恢复的两阶段文件 intake、公开 raw-body 上传/状态 API、严格分类输出合同，以及 summary/folders/candidates/occurrences 只读 keyset API。公开 POST/GET 的安全合同与 1.6 MB Chrome/Edge mock 已通过 FastAPI API 测试；单 worker 进程内上传 admission 已按全局并发 4、同账号并发 1、同账号 6 次/60 秒、账号累计 2 GiB、磁盘保留 512 MiB 和每 8 MiB 复查落地。网站 custom server 只对上传 POST 使用专用流式代理，绕过 Next 10 MiB request clone，并通过真实 mock、12 MiB、头部保留和超限测试；其他 `/api/backend/*` 路径仍走 Next rewrite。网站代理 512 MiB 单请求上限与后端 512 MiB 磁盘保留策略不是同一限制，512 MiB 文件容量门禁仍未实测。此后仍需实现解析/分类 worker、真实 LLM、取消、两次确认与永久 source/Site 提交，并继续完成资料库网站集成和 100,000 Site 性能门禁。`import-browser-bookmarks` Skill 当前仍是合同和 dry-run 编排，不代表 Agent 运行时闭环。

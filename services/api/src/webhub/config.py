@@ -13,6 +13,19 @@ def _environment_flag(name: str, default: bool) -> bool:
     return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
+def _positive_environment_integer(name: str, default: int) -> int:
+    value = getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value.strip())
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
 def _default_data_directory() -> Path:
     configured = getenv("WEBHUB_DATA_DIR")
     if not configured:
@@ -47,6 +60,74 @@ class Settings:
     session_ttl_seconds: int = 60 * 60 * 24 * 30
     session_cookie_secure: bool = False
     allowed_origins: tuple[str, ...] = field(default_factory=_allowed_origins)
+    bookmark_upload_global_concurrency: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_BOOKMARK_UPLOAD_GLOBAL_CONCURRENCY", 4
+        )
+    )
+    bookmark_upload_rate_limit_attempts: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_BOOKMARK_UPLOAD_RATE_LIMIT_ATTEMPTS", 6
+        )
+    )
+    bookmark_upload_rate_limit_window_seconds: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_BOOKMARK_UPLOAD_RATE_LIMIT_WINDOW_SECONDS", 60
+        )
+    )
+    bookmark_upload_max_tracked_accounts: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_BOOKMARK_UPLOAD_MAX_TRACKED_ACCOUNTS", 10_000
+        )
+    )
+    bookmark_upload_account_quota_bytes: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_BOOKMARK_UPLOAD_ACCOUNT_QUOTA_BYTES", 2 * 1024 * 1024 * 1024
+        )
+    )
+    bookmark_upload_minimum_free_bytes: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_BOOKMARK_UPLOAD_MINIMUM_FREE_BYTES", 512 * 1024 * 1024
+        )
+    )
+    bookmark_upload_disk_check_interval_bytes: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_BOOKMARK_UPLOAD_DISK_CHECK_INTERVAL_BYTES", 8 * 1024 * 1024
+        )
+    )
+
+    def __post_init__(self) -> None:
+        limits = {
+            "bookmark_upload_global_concurrency": self.bookmark_upload_global_concurrency,
+            "bookmark_upload_rate_limit_attempts": self.bookmark_upload_rate_limit_attempts,
+            "bookmark_upload_rate_limit_window_seconds": (
+                self.bookmark_upload_rate_limit_window_seconds
+            ),
+            "bookmark_upload_max_tracked_accounts": self.bookmark_upload_max_tracked_accounts,
+            "bookmark_upload_account_quota_bytes": self.bookmark_upload_account_quota_bytes,
+            "bookmark_upload_minimum_free_bytes": self.bookmark_upload_minimum_free_bytes,
+            "bookmark_upload_disk_check_interval_bytes": (
+                self.bookmark_upload_disk_check_interval_bytes
+            ),
+        }
+        for name, value in limits.items():
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        if self.bookmark_upload_global_concurrency > self.bookmark_upload_max_tracked_accounts:
+            raise ValueError(
+                "bookmark_upload_global_concurrency cannot exceed "
+                "bookmark_upload_max_tracked_accounts"
+            )
+        minimum_disk_reserve = (
+            self.bookmark_upload_global_concurrency
+            * self.bookmark_upload_disk_check_interval_bytes
+        )
+        if self.bookmark_upload_minimum_free_bytes < minimum_disk_reserve:
+            raise ValueError(
+                "bookmark_upload_minimum_free_bytes must be at least "
+                "bookmark_upload_global_concurrency * "
+                "bookmark_upload_disk_check_interval_bytes"
+            )
 
 
 @lru_cache

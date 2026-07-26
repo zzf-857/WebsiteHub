@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import re
+import sqlite3
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
@@ -11,7 +13,7 @@ from uuid import UUID, uuid5
 
 from sqlalchemy import and_, case, delete, func, literal, select, union_all, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.bookmarks.models import (
@@ -70,6 +72,7 @@ class BookmarkPersistenceValidationError(BookmarkPersistenceError):
 class ImportJobResult:
     snapshot_id: str
     job_id: str
+    storage_key: str
     state: str
     job_version: int
     replayed: bool
@@ -178,6 +181,7 @@ def _job_result(
     return ImportJobResult(
         snapshot_id=snapshot.id,
         job_id=job.id,
+        storage_key=snapshot.storage_key,
         state=job.state,
         job_version=job.version,
         replayed=replayed,
@@ -194,6 +198,33 @@ async def _owned_job(session: AsyncSession, user_id: str, job_id: str) -> Bookma
     if job is None:
         raise BookmarkPersistenceNotFoundError("书签导入任务不存在")
     return job
+
+
+async def _owned_import(
+    session: AsyncSession,
+    user_id: str,
+    job_id: str,
+) -> tuple[BookmarkImportSnapshot, BookmarkImportJob]:
+    row = (
+        await session.execute(
+            select(BookmarkImportSnapshot, BookmarkImportJob)
+            .join(
+                BookmarkImportJob,
+                and_(
+                    BookmarkImportJob.user_id == BookmarkImportSnapshot.user_id,
+                    BookmarkImportJob.snapshot_id == BookmarkImportSnapshot.id,
+                ),
+            )
+            .where(
+                BookmarkImportJob.user_id == user_id,
+                BookmarkImportJob.id == job_id,
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise BookmarkPersistenceNotFoundError("书签导入任务不存在")
+    snapshot, job = row
+    return snapshot, job
 
 
 async def _owned_run(
@@ -300,6 +331,17 @@ def _parse_completion_hash(source_hash: str, completion: ParseCompletion) -> str
 
 def _is_database_busy(error: OperationalError) -> bool:
     return "locked" in str(error.orig).casefold()
+
+
+def is_database_storage_exhausted(error: DBAPIError) -> bool:
+    original = error.orig
+    sqlite_error_code = getattr(original, "sqlite_errorcode", None)
+    if isinstance(sqlite_error_code, int):
+        return sqlite_error_code & 0xFF == sqlite3.SQLITE_FULL
+    return isinstance(original, OSError) and original.errno in {
+        errno.ENOSPC,
+        getattr(errno, "EDQUOT", errno.ENOSPC),
+    }
 
 
 def _assert_run_versions(run: BookmarkImportRun) -> None:
@@ -445,10 +487,18 @@ async def create_import(
     source_size_bytes: int,
     original_filename: str | None,
     idempotency_key: str,
+    detected_encoding: str | None = None,
+    ready_for_parse: bool = True,
 ) -> ImportJobResult:
     source_hash = _validate_digest(source_sha256, field="源文件摘要")
     if not 0 < source_size_bytes <= ParserLimits().max_file_bytes:
         raise BookmarkPersistenceValidationError("源文件大小超出书签导入限制")
+    normalized_encoding = detected_encoding.strip().casefold() if detected_encoding else None
+    if normalized_encoding is not None and (
+        len(normalized_encoding) > 40
+        or re.fullmatch(r"[a-z0-9._-]+", normalized_encoding) is None
+    ):
+        raise BookmarkPersistenceValidationError("书签文件编码标识不合法")
     request_key_hash = _key_hash(idempotency_key, field="请求幂等键")
     existing_snapshot = await session.scalar(
         select(BookmarkImportSnapshot).where(
@@ -483,7 +533,7 @@ async def create_import(
         source_format="netscape_html",
         original_filename=_display_filename(original_filename),
         storage_key=f"bookmark-imports/{user_id}/{snapshot_id}/source.html",
-        detected_encoding=None,
+        detected_encoding=normalized_encoding,
         request_idempotency_key_hash=request_key_hash,
         created_at=now,
     )
@@ -491,7 +541,7 @@ async def create_import(
         id=job_id,
         user_id=user_id,
         snapshot_id=snapshot_id,
-        state="queued_parse",
+        state="queued_parse" if ready_for_parse else "receiving",
         parser_version=PARSER_VERSION,
         normalizer_version=NORMALIZER_VERSION,
         skill_version=SKILL_VERSION,
@@ -539,6 +589,56 @@ async def create_import(
             raise BookmarkPersistenceConflictError("书签导入数据库繁忙，请稍后重试") from error
         raise
     return _job_result(snapshot, job, replayed=False)
+
+
+async def queue_import_for_parse(
+    session: AsyncSession,
+    user_id: str,
+    job_id: str,
+    *,
+    expected_job_version: int,
+) -> ImportJobResult:
+    if (
+        isinstance(expected_job_version, bool)
+        or not isinstance(expected_job_version, int)
+        or expected_job_version <= 0
+    ):
+        raise BookmarkPersistenceValidationError("任务版本必须为正整数")
+    snapshot, job = await _owned_import(session, user_id, job_id)
+    if job.state != "receiving":
+        return _job_result(snapshot, job, replayed=True)
+    if job.version != expected_job_version:
+        raise BookmarkPersistenceConflictError("书签导入任务已被修改，请刷新后重试")
+
+    try:
+        queued = await session.execute(
+            update(BookmarkImportJob)
+            .where(
+                BookmarkImportJob.user_id == user_id,
+                BookmarkImportJob.id == job_id,
+                BookmarkImportJob.state == "receiving",
+                BookmarkImportJob.version == expected_job_version,
+            )
+            .values(
+                state="queued_parse",
+                version=BookmarkImportJob.version + 1,
+                updated_at=utc_now(),
+            )
+        )
+        if queued.rowcount == 1:
+            await session.commit()
+            await session.refresh(job)
+            return _job_result(snapshot, job, replayed=False)
+        await session.rollback()
+    except OperationalError as error:
+        await session.rollback()
+        if not _is_database_busy(error):
+            raise
+
+    replay_snapshot, replay_job = await _owned_import(session, user_id, job_id)
+    if replay_job.state != "receiving":
+        return _job_result(replay_snapshot, replay_job, replayed=True)
+    raise BookmarkPersistenceConflictError("书签导入任务已被修改，请刷新后重试")
 
 
 async def find_same_source(

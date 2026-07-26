@@ -30,12 +30,27 @@ Prefer an existing category. Use exactly one category per mapping. Choose `uncat
 is weak. Propose a new category only when multiple related candidates need it and no existing
 category fits. Never create Spaces automatically.
 
-Suggest 2-8 concise, high-information tags. Avoid category-name duplication, generic tags such as
-`网站` or `工具` without discriminating value, and claims unsupported by the supplied metadata.
+For `existing` and `propose`, suggest 2-8 concise, high-information tags. The `uncategorized`
+fallback may return 0-8 tags. Avoid category-name duplication, generic tags such as `网站` or `工具`
+without discriminating value, and claims unsupported by the supplied metadata. Output category and
+tag labels must not contain invisible control, format, or bidirectional text characters.
+
+Set `needs_review=true` for every `uncategorized` mapping and every mapping with confidence below
+`0.5`. `insufficient_evidence` must use `uncategorized` and `needs_review=true`.
 
 Return JSON only. Validate it with `classification-output.schema.json`. Reject unknown fields,
 unknown taxonomy IDs, invalid tag counts, out-of-range confidence, duplicate IDs, or mappings for
 items outside the batch. Record skill, prompt, taxonomy, and model versions with the accepted result.
+
+Within the WebHub backend, pass the decoded response, expected batch ID, exact subject ID set,
+current category ID/name allowlist, and new-category budget to
+`webhub.bookmarks.classification_contract.validate_classification_output`. Bind downstream previews
+to `binding_sha256`, which canonicalizes the schema and batch IDs, sorted expected and missing subject
+sets, sorted allowed taxonomy, new-category budget, validator version, and mappings sorted by subject
+ID. Increment `CLASSIFICATION_VALIDATOR_VERSION` whenever validation or canonicalization semantics
+change. Do not bind a preview to the response-only canonical JSON. Treat IDs omitted by an otherwise
+valid response as unresolved and apply the deterministic `未分类/待复核` fallback; never silently drop
+them.
 
 ## Handle Failure
 

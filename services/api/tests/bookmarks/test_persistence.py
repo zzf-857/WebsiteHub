@@ -19,6 +19,7 @@ from webhub.db.models import (
     BookmarkImportCurrentRun,
     BookmarkImportJob,
     BookmarkImportRun,
+    BookmarkImportSnapshot,
     BookmarkStagingCandidate,
     BookmarkStagingCandidateFolder,
     BookmarkStagingCandidateOccurrence,
@@ -86,6 +87,79 @@ def _bookmark_events(path: Path) -> tuple[list[object], ParserStats]:
     return events, stats
 
 
+def test_receiving_import_is_queued_with_cas_and_replays_after_transition(
+    persistence_environment: tuple[TestClient, Path],
+) -> None:
+    client, database_path = persistence_environment
+    user_id, _ = _register(client, "receiving-import-user")
+    database = Database(f"sqlite+aiosqlite:///{database_path.as_posix()}")
+
+    async def scenario() -> None:
+        async with database.sessions() as session:
+            receiving = await persistence.create_import(
+                session,
+                user_id,
+                source_sha256="a" * 64,
+                source_size_bytes=128,
+                original_filename="bookmarks.html",
+                idempotency_key="receiving-upload-request-0001",
+                detected_encoding="UTF-8",
+                ready_for_parse=False,
+            )
+        assert receiving.state == "receiving"
+        assert receiving.job_version == 1
+        assert receiving.storage_key == (
+            f"bookmark-imports/{user_id}/{receiving.snapshot_id}/source.html"
+        )
+        assert not receiving.replayed
+
+        async with database.sessions() as session:
+            replayed_receiving = await persistence.create_import(
+                session,
+                user_id,
+                source_sha256="a" * 64,
+                source_size_bytes=128,
+                original_filename="renamed.html",
+                idempotency_key="receiving-upload-request-0001",
+                detected_encoding="utf-8",
+                ready_for_parse=False,
+            )
+            snapshot = await session.get(BookmarkImportSnapshot, receiving.snapshot_id)
+        assert replayed_receiving.replayed
+        assert replayed_receiving.job_id == receiving.job_id
+        assert replayed_receiving.state == "receiving"
+        assert snapshot is not None
+        assert snapshot.detected_encoding == "utf-8"
+
+        async with database.sessions() as session:
+            queued = await persistence.queue_import_for_parse(
+                session,
+                user_id,
+                receiving.job_id,
+                expected_job_version=1,
+            )
+        assert queued.state == "queued_parse"
+        assert queued.job_version == 2
+        assert not queued.replayed
+
+        async with database.sessions() as session:
+            replayed_queue = await persistence.queue_import_for_parse(
+                session,
+                user_id,
+                receiving.job_id,
+                expected_job_version=1,
+            )
+        assert replayed_queue.state == "queued_parse"
+        assert replayed_queue.job_version == 2
+        assert replayed_queue.replayed
+        assert replayed_queue.storage_key == receiving.storage_key
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.dispose())
+
+
 def test_account_scoped_staging_is_idempotent_and_switches_only_complete_runs(
     persistence_environment: tuple[TestClient, Path],
     tmp_path: Path,
@@ -141,6 +215,7 @@ def test_account_scoped_staging_is_idempotent_and_switches_only_complete_runs(
                 idempotency_key="upload-request-00000001",
             )
         assert first_import.job_version == 1
+        assert first_import.state == "queued_parse"
         assert not first_import.replayed
 
         async with database.sessions() as session:
