@@ -35,36 +35,32 @@
 
 ## Q1b · Provider 配置页面与组件
 
-状态: 待做
+状态: 已完成 · 8b09093
 对应: Phase 4（前端部分，第二半）· todolist 基本功能第 3 条(a)(b)
 
-**这是「空白页」真正被消除的那一步。** Q1a 已经把契约层和样式铺好，
-但 `app/(workspace)/settings/providers/page.tsx` 仍是纯 `WorkspaceEmptyState` 占位，
-`components/settings/` 目录还不存在。所以用户依然无法通过 UI 填 API Key。
+空白页已消除。交付：`lib/provider-form.ts`（表单纯逻辑，可脱离 DOM 单测）、
+`components/settings/` 四个组件（workspace 编排 / form / card / dialog）、
+`tests/provider-form.test.ts` 18 个测试（前端 87 → 105）。
+样式全部复用 Q1a 的 `provider-` 类名，`providers.css` 只增补 `.provider-page-lead`、
+`.provider-notice` 与一条 `.provider-error` 内嵌按钮的图标修正。
 
-直接复用 Q1a 的成果：`@/lib/provider-client` 的 8 个函数、`@/lib/provider-contract` 的类型、
-`app/styles/providers.css` 里已写好的 `provider-` 前缀类名（动手前先读那个 CSS，按已有类名写组件，
-不要另造一套）。
+完成标准逐条核对：
+- 密钥不进 React state：输入框非受控（`ref` + `type="password"`，从不设 `value` prop），
+  组件只留 `secretFilled` 布尔量；提交读一次 ref 直接进请求体，成功后清空。
+  四个组件 + `provider-form.ts` 零 `console` 调用。
+- 编辑不填密钥 = 请求体无 `secret` 键；「意图换新但没填」不会退化成 `clear`。两条都有测试。
+- 启用后整表重拉而不是就地打补丁，同 kind 下不会同时出现两个「已启用」。
+- Ollama 留空提交有测试覆盖（`secret` 键完全不出现）。
+- **未做浏览器端到端验证**：登录需要输入密码、试通需要真实 API Key，两者都得由用户本人操作。
+  静态门禁（tsc / eslint / 105 测试 / next build / pytest / ruff）全绿。
+  下次有人登录后请实测一遍「配一个模型 Provider → 首页 Agent 回话」，有偏差按 Q9 一并收尾。
 
-**为什么排第一**：这就是用户实测看到的空白页。后端 providers 模块已全功能（CRUD、AES-GCM
-加密、SSRF 校验、registry 内置厂商预设含申请地址），但前端零消费——
-`app/(workspace)/settings/providers/page.tsx` 整页只有一个 `WorkspaceEmptyState`，
-`lib/` 下没有 provider 客户端。后果：用户无法通过 UI 填 API Key，
-阶段A/B 建成的**整条 Agent 链路对普通用户不可达**。这一条不做，前面所有工作都验收不了。
-
-交付：
-- `lib/provider-contract.ts` + `lib/provider-client.ts`（镜像 library-contract/library-client 的拆分与约定）
-- 配置页：厂商列表（消费 `GET /api/providers/registry`，展示内置预设、是否需要 Key、申请地址）、
-  新增/编辑/启用/删除表单、按 kind（model / search / embedding）分区
-- 视觉走设计稿令牌体系，与首页同一套（`app/styles/` 下新增 partial）
-
-完成标准：
-- 从零开始，只用浏览器就能配好一个模型 Provider 并让首页 Agent 真的回话
-- 密钥输入后，任何 GET 响应里都只出现 `SECRET_MASK`（`********`），前端 state / 日志 / DOM 均无明文
-- 编辑时不填密钥 = 保留原密钥，不会把已存的 Key 清空
-- 同一 kind 下启用第二个配置时，前一个自动停用（后端唯一索引已保证，前端要正确反映）
-- Ollama 这类无需 Key 的厂商可以留空提交
-- 新增前端测试覆盖 contract 归一化与 client 请求形状
+刻意没做的：
+- 「测试连接」按钮按 registry 的 `connection_test_supported` 显示。后端当前恒 false，
+  所以这一版看不到该按钮——处理函数 / 结果条 / 429 限流文案都已接好，Q2 翻真后自动出现。
+  不做点了必然无效的假入口。
+- 向量服务分区文案如实写「检索链路尚未接入，此处保存的配置暂时不会被调用」
+  （`langgraph_runner` 只解析 model 与 search）。Q8 接入后再改文案。
 
 ---
 
