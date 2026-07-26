@@ -105,7 +105,7 @@ export function validateAuthForm(mode: AuthMode, values: AuthFormValues): AuthFi
 }
 
 export function safeNextPath(value: string | null | undefined): string {
-  const fallback = "/chat/new";
+  const fallback = "/";
   if (!value) return fallback;
 
   try {

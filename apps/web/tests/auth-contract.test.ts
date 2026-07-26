@@ -62,14 +62,14 @@ test("validates registration constraints and matching passwords", () => {
 
 test("keeps redirects on local website routes", () => {
   assert.equal(safeNextPath("/library?category=ai"), "/library?category=ai");
-  assert.equal(safeNextPath("//attacker.invalid"), "/chat/new");
-  assert.equal(safeNextPath("/\\attacker.invalid"), "/chat/new");
-  assert.equal(safeNextPath("https://attacker.invalid"), "/chat/new");
-  assert.equal(safeNextPath("/login"), "/chat/new");
-  assert.equal(safeNextPath("/login/"), "/chat/new");
-  assert.equal(safeNextPath("/login?next=/library"), "/chat/new");
-  assert.equal(safeNextPath("/register/"), "/chat/new");
-  assert.equal(safeNextPath("/register?next=/spaces"), "/chat/new");
+  assert.equal(safeNextPath("//attacker.invalid"), "/");
+  assert.equal(safeNextPath("/\\attacker.invalid"), "/");
+  assert.equal(safeNextPath("https://attacker.invalid"), "/");
+  assert.equal(safeNextPath("/login"), "/");
+  assert.equal(safeNextPath("/login/"), "/");
+  assert.equal(safeNextPath("/login?next=/library"), "/");
+  assert.equal(safeNextPath("/register/"), "/");
+  assert.equal(safeNextPath("/register?next=/spaces"), "/");
 });
 
 test("extracts useful API errors and falls back by status", () => {

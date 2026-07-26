@@ -29,7 +29,9 @@ import {
   type FormEvent,
 } from "react";
 
-import { SiteFavicon } from "@/components/library/site-favicon";
+// 全站统一使用共享版网站图标（size 为像素值）；
+// 旧枚举尺寸按 small=20 / medium=24 / large=32 迁移
+import { SiteFavicon } from "@/components/site-favicon";
 import { SpaceDialog } from "@/components/spaces/space-dialog";
 import {
   createSpace,
@@ -240,7 +242,7 @@ function SpaceMemberRow({
         <GripVertical aria-hidden="true" />
         <span>{order + 1}</span>
       </span>
-      <SiteFavicon url={member.site.faviconUrl} name={member.site.name} size="medium" />
+      <SiteFavicon url={member.site.faviconUrl} name={member.site.name} size={24} />
       <div className="space-member-copy">
         <div className="space-member-title-row">
           <Link href={`/library/${encodeURIComponent(member.site.id)}`}>{member.site.name}</Link>
@@ -1044,7 +1046,7 @@ export function SpaceWorkspace({
         {dialog?.kind === "remove" && (
           <div className="space-remove-confirmation">
             <div className="space-remove-site">
-              <SiteFavicon url={dialog.member.site.faviconUrl} name={dialog.member.site.name} size="large" />
+              <SiteFavicon url={dialog.member.site.faviconUrl} name={dialog.member.site.name} size={32} />
               <div>
                 <strong>{dialog.member.site.name}</strong>
                 <span>{siteHost(dialog.member.site.originalUrl)}</span>

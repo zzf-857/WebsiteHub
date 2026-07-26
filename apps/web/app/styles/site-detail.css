@@ -1,0 +1,784 @@
+/* site-detail：网站详情页（设计稿 1d）。只使用 globals.css 中定义的设计令牌。
+   布局满宽自适应：内容跟随窗口宽度，仅保留 --page-gutter 页边距，不居中封顶。 */
+
+.sd-page {
+  width: 100%;
+  padding: 24px var(--page-gutter) 88px;
+  letter-spacing: 0;
+}
+
+/* ---------- 面包屑 ---------- */
+
+.sd-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+
+.sd-breadcrumb a {
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--duration-hover) var(--ease-standard);
+}
+
+.sd-breadcrumb a:hover {
+  color: var(--accent-strong);
+}
+
+.sd-breadcrumb svg {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.sd-breadcrumb-current {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 成功提示 ---------- */
+
+.sd-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 9px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 25%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 13px;
+}
+
+.sd-notice svg {
+  flex-shrink: 0;
+}
+
+/* ---------- 双栏布局 ---------- */
+
+.sd-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: var(--sidebar-gap);
+  align-items: start;
+  margin-top: 20px;
+}
+
+.sd-main,
+.sd-side {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.sd-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+/* ---------- 主信息卡 ---------- */
+
+.sd-hero {
+  padding: 28px 32px;
+}
+
+.sd-hero-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.sd-hero-icon {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--surface-input);
+  place-items: center;
+}
+
+.sd-hero-heading {
+  min-width: 240px;
+  flex: 1;
+}
+
+.sd-hero-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 字阶 1f：26 页面标题 */
+.sd-hero-title {
+  min-width: 0;
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.sd-pin-badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sd-hero-domain {
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+
+.sd-hero-domain a {
+  color: var(--accent-strong);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.sd-hero-domain a:hover {
+  text-decoration: underline;
+}
+
+/* 导语只留两行，全文放「详细介绍」卡 */
+.sd-hero-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 8px 0 0;
+  -webkit-box-orient: vertical;
+  color: var(--text-muted);
+  font-size: 15px;
+  -webkit-line-clamp: 2;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.sd-hero-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* ---------- 按钮 ---------- */
+
+.sd-btn {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.sd-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sd-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.sd-btn-primary {
+  padding: 0 20px;
+  background: var(--action);
+  color: var(--on-action);
+}
+
+.sd-btn-primary:hover {
+  background: var(--action-hover);
+}
+
+.sd-btn-secondary {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.sd-btn-secondary:hover {
+  border-color: var(--line-strong);
+}
+
+.sd-btn-danger-ghost {
+  width: 42px;
+  padding: 0;
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text-subtle);
+}
+
+.sd-btn-danger-ghost:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.sd-btn-danger {
+  background: var(--danger);
+  color: var(--on-action);
+}
+
+.sd-btn-danger:hover {
+  background: color-mix(in srgb, var(--danger) 86%, var(--text));
+}
+
+.sd-btn-small {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+/* ---------- 主信息卡的元信息条 ---------- */
+
+.sd-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px 36px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+
+.sd-meta-label {
+  margin-bottom: 6px;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.sd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.sd-chip-solid {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
+.sd-chip-outline {
+  border: 1px solid var(--line-header);
+  color: var(--text-muted);
+}
+
+.sd-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sd-meta-default {
+  color: var(--text-subtle);
+  font-size: 11.5px;
+}
+
+.sd-meta-empty {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.sd-meta-fill {
+  flex: 1;
+}
+
+.sd-meta-times {
+  color: var(--text-subtle);
+  font-size: 12px;
+  line-height: 1.9;
+  text-align: right;
+}
+
+/* ---------- 通用分区卡 ---------- */
+
+.sd-section {
+  padding: 26px 32px;
+}
+
+/* 字阶 1f：17 分区标题 */
+.sd-section-title {
+  margin: 0 0 12px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.sd-desc {
+  max-width: var(--reading-max);
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.sd-desc-empty {
+  color: var(--text-subtle);
+}
+
+/* ---------- 收录动态 ---------- */
+
+.sd-activity-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  list-style: none;
+}
+
+.sd-activity-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.sd-activity-item:last-child {
+  border-bottom: 0;
+}
+
+.sd-activity-item svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.sd-activity-item[data-tone="accent"] svg {
+  color: var(--accent-strong);
+}
+
+.sd-activity-text {
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.sd-activity-spacer {
+  flex: 1;
+}
+
+.sd-activity-meta {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* ---------- 右侧栏卡片 ---------- */
+
+.sd-side-card {
+  padding: 20px 22px;
+}
+
+.sd-side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* 字阶 1f：15 卡片标题 */
+.sd-side-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.sd-side-badge {
+  padding: 2px 7px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-subtle);
+  color: var(--text-subtle);
+  font-size: 11.5px;
+}
+
+.sd-side-spacer {
+  flex: 1;
+}
+
+.sd-side-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  text-decoration: none;
+  transition: color var(--duration-hover) var(--ease-standard);
+}
+
+.sd-side-more:hover {
+  color: var(--accent-strong);
+}
+
+.sd-agent-icon {
+  color: var(--accent-strong);
+}
+
+.sd-related-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 卡片 hover 只改边框和阴影，不位移不缩放（规范 1f） */
+.sd-related-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-hover) var(--ease-standard);
+}
+
+.sd-related-item:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.sd-related-item:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sd-related-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.sd-related-name {
+  display: block;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sd-related-desc {
+  display: block;
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sd-related-arrow {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.sd-suggest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sd-suggest {
+  display: block;
+  padding: 8px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-input);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.sd-suggest:hover {
+  border-color: var(--accent-hover);
+  color: var(--text);
+}
+
+.sd-suggest:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---------- 卡片/弹层内的加载、错误、提示 ---------- */
+
+.sd-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 13px;
+}
+
+.sd-hint-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.sd-inline-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.sd-inline-error p {
+  margin: 0;
+  color: var(--danger);
+}
+
+.sd-form-error {
+  margin: 12px 0 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+/* ---------- 弹层内容 ---------- */
+
+.sd-delete-site {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.sd-delete-info {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sd-delete-info strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.sd-delete-info span {
+  color: var(--text-subtle);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sd-dialog-text {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.sd-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.sd-space-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sd-space-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+
+.sd-space-item > svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.sd-space-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.sd-space-name {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sd-space-count {
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+/* ---------- 加载/404/错误兜底 ---------- */
+
+.sd-back-link {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.sd-back-link:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.sd-status {
+  display: flex;
+  min-height: 52vh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 0;
+  text-align: center;
+}
+
+.sd-status-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 16px;
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  place-items: center;
+}
+
+.sd-status-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.sd-status-text {
+  max-width: 28rem;
+  margin: 8px 0 0;
+  color: var(--text-subtle);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.sd-status-retry {
+  margin-top: 20px;
+}
+
+/* 加载圆环统一用共享的 Spinner 组件（纯 CSS，自带 reduced-motion 降级），
+   本文件不再定义旋转动画 */
+
+/* ---------- 响应式（规范 1f：1024–1279 收窄，<768 单列） ---------- */
+
+@media (max-width: 1279px) {
+  .sd-layout {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .sd-page {
+    padding: 20px 24px 64px;
+  }
+
+  .sd-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .sd-hero {
+    padding: 20px;
+  }
+
+  .sd-section {
+    padding: 20px;
+  }
+
+  .sd-hero-actions {
+    width: 100%;
+  }
+
+  .sd-hero-meta {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .sd-meta-fill {
+    display: none;
+  }
+
+  .sd-meta-times {
+    text-align: left;
+  }
+}
+
+/* ---------- 降级动效（规范 1f：reduced-motion 一律静态） ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-page *,
+  .sd-page *::before,
+  .sd-page *::after {
+    animation-duration: 0ms !important;
+    transition-duration: 0ms !important;
+  }
+}

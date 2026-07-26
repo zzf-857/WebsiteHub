@@ -1,0 +1,809 @@
+/* home：由设计稿 1a–1f 对齐生成，只用 globals.css 中定义的设计令牌。 */
+
+/* ============ 首页布局骨架（1a 行 50–76） ============ */
+
+/* 侧栏 216px 固定 + 主列自适应；底部 64px 留白让最后一个分区收得住 */
+.home-layout {
+  display: flex;
+  gap: var(--sidebar-gap);
+  padding: 24px var(--page-gutter) 64px;
+}
+
+.home-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+/* 1024–1279：侧栏在 sidebar.css 里折叠为横向 Tabs，布局随之切纵向 */
+@media (max-width: 1279px) {
+  .home-layout {
+    flex-direction: column;
+  }
+}
+
+/* <768：侧栏隐藏，页边距同步收窄，避免窄屏两侧留白过大 */
+@media (max-width: 767px) {
+  .home-layout {
+    padding: 16px 16px 48px;
+  }
+}
+
+/* ============ 分区通用 ============ */
+
+.home-section {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 分区标题行：图标 15px + 标题 15px/700 + 撑开 + 右侧 13px 次要操作（1a 通用结构） */
+.home-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.home-section-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.home-section-icon[data-tone="accent"] {
+  color: var(--accent-strong);
+}
+
+.home-section-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.home-section-spacer {
+  flex: 1;
+}
+
+.home-section-action {
+  font-size: 13px;
+  color: var(--text-subtle);
+  text-decoration: none;
+  transition: color var(--duration-hover) var(--ease-standard);
+}
+
+.home-section-action:hover {
+  color: var(--accent-strong);
+}
+
+/* 卡片栅格：默认 4 列；1f 断点为 1024–1279 三列、<768 单列（中间档取两列过渡） */
+.home-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 1279px) {
+  .home-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1023px) {
+  .home-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .home-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ============ 空态 / 错误态 / 骨架 ============ */
+
+.home-empty {
+  margin: 0;
+  padding: 18px 16px;
+  font-size: 13px;
+  color: var(--text-subtle);
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.home-empty a {
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.home-empty a:hover {
+  text-decoration: underline;
+}
+
+.home-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  font-size: 13px;
+  color: var(--danger);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.home-error-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.home-error-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-error-retry {
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.home-error-retry:hover {
+  border-color: var(--accent-hover);
+  color: var(--accent-strong);
+}
+
+/* 骨架元素：与真实卡片同类名叠加，min-height 保证加载完成后零位移 */
+.home-skeleton-card {
+  pointer-events: none;
+}
+
+.home-skeleton-bar,
+.home-skeleton-block {
+  display: block;
+  flex-shrink: 0;
+  background: var(--surface-subtle);
+  border-radius: var(--radius-xs);
+  animation: home-skeleton-pulse 1.2s var(--ease-standard) infinite;
+}
+
+@keyframes home-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ============ 置顶网站（1a 行 106–120） ============ */
+
+.home-pinned-card {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  /* padding 12+12 + 两行文字 19+17 + 边框 2 = 62，骨架靠它保持同高 */
+  min-height: 62px;
+  padding: 12px 14px;
+  color: inherit;
+  text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-hover) var(--ease-standard);
+}
+
+.home-pinned-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.home-pinned-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.home-pinned-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 19px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-pinned-host {
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============ Space 快速入口（1a 行 121–136） ============ */
+
+.home-space-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 69px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-hover) var(--ease-standard);
+}
+
+.home-space-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.home-space-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.home-space-name {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-space-count {
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--text-subtle);
+}
+
+.home-space-open {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  /* 它是按钮：按圆角规范走 --radius-md（7px） */
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.home-space-open:hover {
+  border-color: var(--accent-hover);
+  color: var(--accent-strong);
+}
+
+.home-space-open svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 「全部打开」确认浮层：轻量方案——透明遮罩接管点击，面板靠阴影分层 */
+.home-open-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.home-open-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(360px, 100%);
+  padding: 18px 20px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  outline: none;
+  animation: home-dialog-in var(--duration-panel) var(--ease-standard);
+}
+
+@keyframes home-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.home-open-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.home-open-meta {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+.home-open-warning {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--warning);
+}
+
+.home-open-error {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--danger);
+}
+
+.home-open-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+
+.home-open-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.home-open-primary {
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--on-action);
+  background: var(--action);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--duration-hover) var(--ease-standard);
+}
+
+.home-open-primary:hover {
+  background: var(--action-hover);
+}
+
+.home-open-secondary {
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.home-open-secondary:hover {
+  border-color: var(--accent-hover);
+  color: var(--accent-strong);
+}
+
+.home-open-cancel {
+  align-self: center;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-subtle);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color var(--duration-hover) var(--ease-standard);
+}
+
+.home-open-cancel:hover {
+  color: var(--text);
+}
+
+/* ============ 最近收录（1a 行 137–156） ============ */
+
+.home-recent-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.home-recent-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  /* padding 13+13 + 内容 20（favicon 高于 13.5px 行文字）= 46 */
+  min-height: 46px;
+  padding: 13px 18px;
+  font-size: 13.5px;
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid var(--line-soft);
+  transition: background-color var(--duration-hover) var(--ease-standard);
+}
+
+.home-recent-row:last-child {
+  border-bottom: none;
+}
+
+.home-recent-row:hover {
+  /* 设计稿是近白的 #FAFBFB：--surface-hover 直接铺整行太灰，
+     向表面色回混到 45% 得到同级的极浅提示 */
+  background: color-mix(in srgb, var(--surface-hover) 45%, var(--surface));
+}
+
+/* 共享 SiteFavicon 自带 --radius-sm 圆角，这一行按设计要 --radius-xs：外层裁切 */
+.home-recent-favicon {
+  display: inline-flex;
+  flex-shrink: 0;
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+}
+
+.home-recent-name {
+  flex-shrink: 0;
+  max-width: 220px;
+  font-weight: 500;
+  line-height: 19px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-recent-desc {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-recent-cat {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.home-recent-time {
+  flex-shrink: 0;
+  width: 64px;
+  font-size: 12px;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.home-recent-arrow {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+@media (max-width: 767px) {
+  /* 窄屏下先保住 名称/时间，胶囊与描述让位 */
+  .home-recent-cat,
+  .home-recent-desc {
+    display: none;
+  }
+}
+
+/* ============ 分类分区 + 吸顶 Tabs（1c 行 292–343） ============ */
+
+.home-category-block {
+  display: flex;
+  flex-direction: column;
+  scroll-margin-top: calc(var(--header-height) + 8px);
+}
+
+/* Tabs 吸附在 Header 正下方；与 Header 同款半透明白底 + 模糊，
+   吸顶时两者拼成同一块白色悬浮面，投影表达抬升层次（1c 行 294） */
+.home-category-tabs {
+  position: sticky;
+  /* Tabs 吸住时页面必已滚过 Agent 面板，顶栏恒为紧凑态 56px，
+     所以按 64-8 对齐；高度收放过渡期两面同底色，8px 重叠不可见。 */
+  top: calc(var(--header-height) - 8px);
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 12px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line-header);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.home-category-tab {
+  padding: 6px 16px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--line-header);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard),
+    background-color var(--duration-hover) var(--ease-standard);
+}
+
+.home-category-tab:hover {
+  border-color: var(--accent-hover);
+  color: var(--text);
+}
+
+.home-category-tab[data-active="true"] {
+  font-weight: 500;
+  color: var(--on-action);
+  background: var(--action);
+  border-color: var(--action);
+}
+
+/* ============ 排序控件（1c 行 308 / 319） ============ */
+
+/* 原生 select 隐去系统箭头后自绘 chevron：既保住键盘/读屏可达性，
+   又能贴合设计稿的按钮外观 */
+.home-sort {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.home-sort-select {
+  appearance: none;
+  padding: 6px 29px 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--line-header);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.home-sort-select:hover {
+  border-color: var(--accent-hover);
+  color: var(--text);
+}
+
+/* chevron 覆盖在 select 右端，pointer-events 关掉不挡点击 */
+.home-sort-chevron {
+  position: absolute;
+  right: 10px;
+  width: 13px;
+  height: 13px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* 分区标题行内的轻量形态：无边框纯文本 + 12px chevron（1c 行 319） */
+.home-sort--plain .home-sort-select {
+  padding: 2px 21px 2px 4px;
+  color: var(--text-subtle);
+  background: none;
+  border: none;
+}
+
+.home-sort--plain .home-sort-select:hover {
+  color: var(--text-muted);
+}
+
+.home-sort--plain .home-sort-chevron {
+  right: 5px;
+  width: 12px;
+  height: 12px;
+  color: var(--text-subtle);
+}
+
+.home-category-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding-top: 22px;
+}
+
+/* 锚点滚动时给 Header + 吸顶 Tabs 让位，分区标题不会被盖住 */
+.home-category-section {
+  scroll-margin-top: calc(var(--header-height) + 64px);
+}
+
+.home-category-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+/* 3px 圆角取自设计稿的 10px 青柠小方块，非令牌值仅此一处装饰 */
+.home-category-mark {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border-radius: 3px;
+}
+
+.home-category-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.home-category-count {
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+
+/* 分类网站卡：比置顶卡多描述行与 tag（1c 行 322–332） */
+.home-site-card {
+  display: block;
+  min-width: 0;
+  /* padding 13+13 + 头行 22 + 描述 7+18 + 域名 5+16 + 边框 2 = 96 */
+  min-height: 96px;
+  padding: 13px 15px;
+  color: inherit;
+  text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-hover) var(--ease-standard);
+}
+
+.home-site-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.home-site-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+}
+
+.home-site-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-site-tag {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.home-site-desc {
+  display: block;
+  margin-top: 7px;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-site-host {
+  display: block;
+  margin-top: 5px;
+  font-size: 11.5px;
+  line-height: 16px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============ 可达性 ============ */
+
+.home-section-action:focus-visible,
+.home-error-retry:focus-visible,
+.home-pinned-card:focus-visible,
+.home-space-copy:focus-visible,
+.home-space-open:focus-visible,
+.home-open-primary:focus-visible,
+.home-open-secondary:focus-visible,
+.home-open-cancel:focus-visible,
+.home-recent-row:focus-visible,
+.home-category-tab:focus-visible,
+.home-sort-select:focus-visible,
+.home-site-card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* reduced-motion：骨架与浮层动画静止，hover 过渡瞬时完成（平滑滚动在 JS 里降级） */
+@media (prefers-reduced-motion: reduce) {
+  .home-skeleton-bar,
+  .home-skeleton-block,
+  .home-open-dialog {
+    animation: none;
+  }
+
+  .home-section-action,
+  .home-error-retry,
+  .home-pinned-card,
+  .home-space-card,
+  .home-space-open,
+  .home-open-primary,
+  .home-open-secondary,
+  .home-open-cancel,
+  .home-recent-row,
+  .home-category-tab,
+  .home-sort-select,
+  .home-site-card {
+    transition-duration: 0ms;
+  }
+}

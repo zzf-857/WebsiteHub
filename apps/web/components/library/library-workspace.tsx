@@ -30,9 +30,11 @@ import {
 } from "react";
 
 import { LibraryDialog } from "@/components/library/library-dialog";
-import { SiteFavicon } from "@/components/library/site-favicon";
 import { SiteForm } from "@/components/library/site-form";
 import { TaxonomyManager } from "@/components/library/taxonomy-manager";
+// 全站统一使用共享版网站图标（size 为像素值）；
+// 旧枚举尺寸按 small=20 / medium=24 / large=32 迁移
+import { SiteFavicon } from "@/components/site-favicon";
 import {
   createLibrarySite,
   DEFAULT_LIBRARY_PAGE_SIZE,
@@ -137,7 +139,7 @@ function SiteCollection({
         return (
           <article className="library-site-card" key={site.id}>
             <div className="library-site-card-main">
-              <SiteFavicon url={site.faviconUrl} name={site.name} size={viewMode === "grid" ? "large" : "medium"} />
+              <SiteFavicon url={site.faviconUrl} name={site.name} size={viewMode === "grid" ? 32 : 24} />
               <div className="library-site-copy">
                 <div className="library-site-title-row">
                   <Link href={`/library/${encodeURIComponent(site.id)}`} className="library-site-title">
@@ -229,7 +231,33 @@ function SiteCollection({
   );
 }
 
+const LIBRARY_SORTS: readonly LibrarySort[] = ["created", "updated", "name"];
+
+/**
+ * 首页与顶栏用 query 参数把筛选意图带过来（?category= / ?pinned=1 / ?sort= / ?focus=search）。
+ * 只在挂载时读一次，之后由页内交互接管——做双向同步会让每次点筛选都写一条历史记录。
+ * 直接读 window.location 而不用 useSearchParams，避免额外的 Suspense 边界。
+ */
+function initialIntent(): {
+  categoryId: string;
+  pinnedOnly: boolean;
+  sort: LibrarySort;
+  focusSearch: boolean;
+} {
+  const empty = { categoryId: "", pinnedOnly: false, sort: "updated" as LibrarySort, focusSearch: false };
+  if (typeof window === "undefined") return empty;
+  const params = new URLSearchParams(window.location.search);
+  const sort = params.get("sort");
+  return {
+    categoryId: params.get("category")?.trim() ?? "",
+    pinnedOnly: params.get("pinned") === "1",
+    sort: LIBRARY_SORTS.includes(sort as LibrarySort) ? (sort as LibrarySort) : "updated",
+    focusSearch: params.get("focus") === "search",
+  };
+}
+
 export function LibraryWorkspace() {
+  const [intent] = useState(initialIntent);
   const [categories, setCategories] = useState<LibraryCategory[]>([]);
   const [tags, setTags] = useState<LibraryTag[]>([]);
   const [taxonomyLoading, setTaxonomyLoading] = useState(true);
@@ -237,11 +265,17 @@ export function LibraryWorkspace() {
 
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [categoryId, setCategoryId] = useState("");
+  const [categoryId, setCategoryId] = useState(intent.categoryId);
   const [tagId, setTagId] = useState("");
-  const [pinnedOnly, setPinnedOnly] = useState(false);
-  const [sort, setSort] = useState<LibrarySort>("updated");
+  const [pinnedOnly, setPinnedOnly] = useState(intent.pinnedOnly);
+  const [sort, setSort] = useState<LibrarySort>(intent.sort);
   const [direction, setDirection] = useState<LibraryDirection>("desc");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // ⌘K 从顶栏跳过来时应当直接可以打字，否则用户还要再点一次输入框。
+  useEffect(() => {
+    if (intent.focusSearch) searchInputRef.current?.focus();
+  }, [intent.focusSearch]);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
 
   const [pinnedPage, setPinnedPage] = useState<SitePageState>(EMPTY_PAGE);
@@ -621,6 +655,7 @@ export function LibraryWorkspace() {
               <Search aria-hidden="true" />
               <span className="sr-only">搜索资料库</span>
               <input
+                ref={searchInputRef}
                 type="search"
                 placeholder="搜索名称、网址或描述"
                 value={searchInput}
@@ -847,7 +882,7 @@ export function LibraryWorkspace() {
         {dialog?.kind === "delete" && (
           <div className="library-delete-confirmation">
             <div className="library-delete-site">
-              <SiteFavicon url={dialog.site.faviconUrl} name={dialog.site.name} size="large" />
+              <SiteFavicon url={dialog.site.faviconUrl} name={dialog.site.name} size={32} />
               <div>
                 <strong>{dialog.site.name}</strong>
                 <span>{siteHost(dialog.site)}</span>

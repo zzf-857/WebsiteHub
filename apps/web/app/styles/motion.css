@@ -1,0 +1,75 @@
+/* 动效原语（components/react-bits）的 keyframes 与静态样式。
+   时长/缓动一律引用 globals.css 的动效令牌；组件内还有 useReducedMotion 双保险，
+   文末的 reduced-motion 块负责兜底水合前首帧与纯 CSS 驱动的动画。 */
+
+/* Spinner：青柠圆环 0.9s 线性旋转（设计稿 1b/1e 的加载指示，1f 动效规范）。
+   border-radius:50% 是"圆角 ≤8px"铁律的合规例外——该铁律约束卡片/徽标等界面容器，
+   而加载圆环本身就是圆形指示器，设计稿明确要求此形态。
+   边框走 currentColor 而非硬绑 --accent：调用方可用 CSS 覆盖 color 改色，
+   默认 color 仍是 --accent 青柠。reduced-motion 时组件改渲染 .spinner-static。 */
+.spinner {
+  display: inline-block;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  color: var(--accent);
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spinner-rotate 0.9s linear infinite;
+}
+
+.spinner-static {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  color: var(--text-subtle);
+}
+
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* StaggerList：位移与透明度由 motion/react 驱动，包装层只需避免在网格/弹性布局里撑破容器 */
+.stagger-item {
+  min-width: 0;
+}
+
+/* PopCheck：完成态对勾用成功色（青柠系），弹入由 motion/react 按 --duration-pop 驱动 */
+.pop-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  color: var(--success);
+}
+
+/* CountUp：数值变化时脉冲一次（scale 1→1.18→1）；等宽数字避免脉冲时横向抖动。
+   时长按 1f 规范"收录成功：计数 +1 脉冲 320ms"取 --duration-celebrate，而非 --duration-pop */
+.count-up {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+}
+
+.count-up[data-pulse] {
+  animation: count-up-pulse var(--duration-celebrate) var(--ease-standard);
+}
+
+@keyframes count-up-pulse {
+  50% {
+    transform: scale(1.18);
+  }
+}
+
+/* 系统要求减弱动效时，本文件涉及的动画一律停用（组件层会另行切换到静态形态） */
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .spinner-static,
+  .stagger-item,
+  .pop-check,
+  .count-up {
+    animation: none !important;
+    transition: none !important;
+  }
+}

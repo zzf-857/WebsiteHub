@@ -19,7 +19,9 @@ function ThemeIcon({ mode }: Readonly<{ mode: ThemeMode }>) {
   return <Monitor aria-hidden="true" />;
 }
 
-export function ThemeToggle() {
+/* className 可由使用方覆盖：顶栏传入 header.css 里的 header-icon-btn 以对齐设计稿，
+   登录页等旧场景缺省仍走 globals 里的 icon-button，互不影响。 */
+export function ThemeToggle({ className = "icon-button" }: Readonly<{ className?: string }>) {
   const auth = useAuth();
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +36,7 @@ export function ThemeToggle() {
   return (
     <div className="theme-control">
       <button
-        className="icon-button"
+        className={className}
         type="button"
         onClick={cycleTheme}
         aria-label={`当前为${themeLabels[auth.theme]}，点击切换主题`}

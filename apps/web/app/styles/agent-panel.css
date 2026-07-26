@@ -1,0 +1,936 @@
+/* agent-panel：首页内嵌 Agent 模块（设计稿 1a 空闲态 / 1b 工作态）。
+   只用 globals.css 的设计令牌；会话流沿用 conversation-thread 的既有类名，
+   与设计稿冲突的部分统一在 .agent-panel 作用域内覆盖，不改组件本身。 */
+
+/* ========== 外壳：空闲态白卡片，工作态青柠描边（1f"外部结果/待确认"同源） ========== */
+
+.agent-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-hover) var(--ease-standard);
+}
+
+.agent-panel[data-state="idle"] {
+  padding: 22px 26px 18px;
+  gap: 16px;
+}
+
+.agent-panel[data-state="active"] {
+  border-color: var(--accent-hover);
+  box-shadow: var(--shadow-agent);
+}
+
+/* ========== 标题行 ========== */
+
+.agent-panel-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.agent-panel[data-state="active"] .agent-panel-head {
+  padding: 16px 26px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.agent-panel-spark {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: var(--accent-mid);
+}
+
+.agent-panel[data-state="active"] .agent-panel-spark {
+  width: 18px;
+  height: 18px;
+}
+
+/* 空闲态 21px（1f 字阶：Agent 标题），工作态降为 15px 的会话名 */
+.agent-panel-title {
+  overflow: hidden;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-panel[data-state="active"] .agent-panel-title {
+  font-size: 15px;
+}
+
+.agent-panel-time {
+  flex: 0 0 auto;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.agent-head-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-left: auto;
+  gap: 12px; /* 设计稿 1a 行 79 的标题行间距 */
+}
+
+/* 「仅收藏库 | 允许联网」分段控件：选中段用主按钮色，未选中保持弱化 */
+.agent-scope {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.agent-scope button {
+  display: flex;
+  align-items: center;
+  padding: 6px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: inherit;
+  gap: 6px;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-scope button:hover {
+  color: var(--text);
+}
+
+.agent-scope button[data-active] {
+  background: var(--action);
+  color: var(--on-action);
+  font-weight: 500;
+}
+
+.agent-scope button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-panel[data-state="active"] .agent-scope {
+  font-size: 12.5px;
+}
+
+.agent-panel[data-state="active"] .agent-scope button {
+  padding: 5px 12px;
+}
+
+/* 「历史 / 新对话」文字按钮 */
+.agent-head-button {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  gap: 6px;
+  white-space: nowrap;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-head-button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-head-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ========== 历史会话下拉（真实分组数据，浮层动效按 1f：y 8→0 淡入） ========== */
+
+.agent-history {
+  position: relative;
+}
+
+.agent-history-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  overflow-y: auto;
+  width: 300px;
+  max-height: 380px;
+  flex-direction: column;
+  padding: 10px;
+  animation: agent-pop-in var(--duration-panel) var(--ease-standard);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  gap: 10px;
+}
+
+.agent-history-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-history-label {
+  padding: 0 8px 4px;
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* 历史项是按钮（在面板内直接切换会话，不做路由跳转），这里补上按钮默认样式的重置 */
+.agent-history-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  padding: 7px 8px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  gap: 8px;
+  text-align: left;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-history-item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.agent-history-item[data-active] {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
+.agent-history-item svg {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  color: var(--text-subtle);
+}
+
+.agent-history-title {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-history-count {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.agent-history-note {
+  margin: 0;
+  padding: 10px 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.agent-history-note[data-tone="danger"] {
+  color: var(--danger);
+}
+
+/* ========== 空闲态输入区（聚焦时边框转青柠，180ms · 1f） ========== */
+
+.agent-composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--duration-focus) var(--ease-standard);
+}
+
+/* hover 与聚焦同为青柠描边（1a 行 90 的 style-hover），提示这里可以直接开聊 */
+.agent-composer:hover,
+.agent-composer:focus-within {
+  border-color: var(--accent-hover);
+}
+
+.agent-composer textarea {
+  min-height: 44px;
+  max-height: 180px;
+  padding: 14px 16px 6px;
+  border: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.6;
+  outline: none;
+  resize: none;
+}
+
+.agent-composer textarea::placeholder {
+  color: var(--text-subtle);
+}
+
+.agent-composer-bar {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px 12px;
+  gap: 10px;
+}
+
+.agent-command-hint {
+  display: flex;
+  align-items: center;
+  color: var(--text-subtle);
+  font-size: 12.5px;
+  gap: 6px;
+}
+
+.agent-command-hint kbd {
+  padding: 1px 7px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.agent-key-hint {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+
+/* 36×36 青柠发送键；生成中由组件换成 square 停止图标，样式共用 */
+.agent-send-button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 0;
+  background: var(--accent);
+  border-radius: var(--radius-md);
+  color: var(--on-accent);
+  cursor: pointer;
+  place-items: center;
+  transition: background-color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-send-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.agent-send-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.agent-send-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* ========== 快捷提问 chips ========== */
+
+.agent-chips {
+  display: flex;
+  flex-wrap: wrap;
+
+  /* 空闲态面板列间距 16px，设计稿 1a 行 99 里 chips 距输入框只有 12px，这里回收 4px */
+  margin-top: -4px;
+  gap: 8px;
+}
+
+.agent-chip {
+  padding: 5px 12px;
+  background: var(--canvas); /* 1a 行 100：chip 底色同页面画布 */
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-chip:hover {
+  border-color: var(--accent-hover);
+  color: var(--text);
+}
+
+/* ========== Slash 命令面板（浮于输入框上方） ========== */
+
+.agent-command-panel {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  animation: agent-pop-in var(--duration-panel) var(--ease-standard);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  gap: 2px;
+}
+
+.agent-command-panel button {
+  display: flex;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 13px;
+  gap: 10px;
+  text-align: left;
+}
+
+.agent-command-panel button[data-selected] {
+  background: var(--surface-hover);
+}
+
+.agent-command-panel strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.agent-command-panel button > span {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-command-panel code {
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+
+.agent-command-empty {
+  margin: 0;
+  padding: 10px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+/* ========== 工作态主体 ========== */
+
+.agent-panel-body {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 26px;
+  gap: 16px;
+}
+
+/* 会话流覆盖：设计稿 1b 没有头像与独立工具卡，链接结果改由下方分组卡呈现 */
+.agent-panel .chat-thread {
+  max-height: min(560px, 58vh);
+  padding: 0 2px 4px;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.agent-panel .chat-avatar {
+  display: none;
+}
+
+/* 检索中的占位轮次与阶段进度条重复，藏掉前者 */
+.agent-panel .chat-turn[data-pending="true"] {
+  display: none;
+}
+
+/* 链接类工具卡由 .agent-results 的分组卡片替代（数据同源，外观按 1b） */
+.agent-panel .tool-card[data-kind="links"] {
+  display: none;
+}
+
+/* 用户气泡上限 520（设计稿行 203），压过 globals 通用会话流的 560 */
+.agent-panel .chat-turn[data-role="user"] {
+  max-width: min(100%, 520px);
+}
+
+.agent-panel .chat-turn[data-role="user"] .chat-turn-body {
+  padding: 9px 15px;
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+}
+
+/* 回答正文按设计稿行 212：14.5px / 1.7 行高 / 次级文字色 */
+.agent-panel .chat-text {
+  color: var(--text-secondary);
+  font-size: 14.5px;
+  line-height: 1.7;
+}
+
+/* 流式打字光标（设计稿行 212 的 8×16 青柠方块）。回答正文由 ConversationThread
+   渲染、不属于本任务可改文件，故用 ::after 挂在最后一段流式文本末尾，视觉与
+   内联 span.agent-caret 等价；data-streaming 只在回答文本流式输出时存在，
+   生成结束随属性移除，光标自然消失 */
+.agent-panel[data-streaming] .chat-turn[data-role="assistant"]:last-of-type .chat-text:last-of-type::after {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  margin-left: 3px;
+  animation: agent-caret-blink 1s steps(1) infinite;
+  background: var(--accent);
+  vertical-align: -3px;
+}
+
+/* ========== 阶段进度条（真实工具事件驱动） ========== */
+
+.agent-stages {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: 13px;
+  gap: 10px 18px;
+}
+
+.agent-stage {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  gap: 7px;
+}
+
+.agent-stage[data-done] {
+  color: var(--accent-strong);
+}
+
+/* 进行中的一步才是视觉焦点（设计稿行 210）：正文色 + 500 字重，
+   圆环用青柠强调色，而不是把"当前步骤"弱化成灰 */
+.agent-stage:not([data-done]) {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.agent-stage:not([data-done]) .spinner {
+  color: var(--accent);
+}
+
+/* 步骤之间 22×1 的短横线（设计稿行 210） */
+.agent-stage-gap {
+  width: 22px;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+/* ========== 结果分组（来自收藏库 / 来自网络） ========== */
+
+.agent-results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.agent-result-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agent-result-label {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 700;
+  gap: 10px;
+}
+
+/* 收录成功后的计数徽标，数值脉冲由 CountUp 组件驱动 */
+.agent-saved-count {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  color: var(--accent-strong);
+  font-weight: 600;
+  gap: 4px;
+}
+
+/* 设计稿 1b 行 214/228 固定两列宽卡（1920 下每卡约 760px），
+   不用 auto-fill：宽屏排四列窄卡会破坏密度与形态 */
+.agent-result-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* 1280 以下两列放不下完整的"标题 + 描述 + 操作"，降为单列 */
+@media (max-width: 1279px) {
+  .agent-result-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 卡片 hover 只改边框和阴影，不位移不缩放（1f 动效规范） */
+.agent-site-card {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  padding: 13px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  gap: 13px;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-hover) var(--ease-standard);
+}
+
+.agent-site-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* 站外结果 = 1f 的"外部结果/待确认"状态：青柠描边 + 微青底 */
+.agent-site-card[data-external] {
+  background: var(--accent-tint);
+  border-color: var(--accent-hover);
+}
+
+/* 设计稿行 230 的 hover 描边是 #A8D42C（--accent-hover），不是更深的 --accent-mid */
+.agent-site-card[data-external]:hover {
+  border-color: var(--accent-hover);
+  box-shadow: none;
+}
+
+.agent-site-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-site-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-site-title strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-site-title span {
+  flex: 0 0 auto;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.agent-site-desc {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-site-meta {
+  display: flex;
+  align-items: center;
+  margin-top: 3px;
+  color: var(--text-subtle);
+  font-size: 11.5px;
+  gap: 6px;
+}
+
+.agent-site-origin {
+  padding: 1px 7px;
+  background: var(--surface-subtle);
+  border-radius: var(--radius-xs);
+}
+
+.agent-site-origin[data-tone="accent"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 500;
+}
+
+.agent-site-error {
+  margin: 2px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.agent-site-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.agent-open-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 11px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 12.5px;
+  gap: 5px;
+  white-space: nowrap;
+  transition: border-color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-open-button:hover {
+  border-color: var(--action);
+}
+
+.agent-open-button svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 青柠「+ 收录」；成功后转成静态"已收录"态并禁用 */
+.agent-collect-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 11px;
+  border: 0;
+  background: var(--accent);
+  border-radius: var(--radius-md);
+  color: var(--on-accent);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+  gap: 5px;
+  white-space: nowrap;
+  transition: background-color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-collect-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.agent-collect-button:disabled {
+  cursor: default;
+}
+
+.agent-collect-button[data-done] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.agent-collect-button svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ========== 底部追问输入 ========== */
+
+.agent-panel-foot {
+  padding: 12px 26px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.agent-followup {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.agent-followup textarea {
+  min-height: 38px;
+  max-height: 180px;
+  flex: 1;
+  padding: 9px 14px;
+  background: var(--surface-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+  outline: none;
+  resize: none;
+  transition: border-color var(--duration-focus) var(--ease-standard);
+}
+
+.agent-followup textarea:focus {
+  border-color: var(--accent-hover);
+}
+
+.agent-followup textarea::placeholder {
+  color: var(--text-subtle);
+}
+
+.agent-stop-button {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  gap: 6px;
+  white-space: nowrap;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-stop-button:hover {
+  border-color: var(--action);
+  color: var(--text);
+}
+
+.agent-stop-button svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ========== 空闲态错误提示（会话恢复失败等） ========== */
+
+.agent-panel-error {
+  display: flex;
+  align-items: center;
+  padding: 10px 13px;
+  margin: 0;
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--line));
+  border-radius: var(--radius-md);
+  color: var(--danger);
+  font-size: 13px;
+  gap: 8px;
+  line-height: 1.6;
+}
+
+.agent-panel-error svg {
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+}
+
+/* ========== 动效与降级 ========== */
+
+@keyframes agent-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 打字光标 1s steps(1) 方波闪烁（设计稿 wh-blink：半程压到 0.15 而非全灭） */
+@keyframes agent-caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-panel,
+  .agent-panel * {
+    animation-duration: 0ms !important;
+    transition-duration: 0ms !important;
+  }
+
+  /* 通配选择器不命中伪元素：打字光标单独降级为常亮不闪 */
+  .agent-panel[data-streaming] .chat-turn[data-role="assistant"]:last-of-type .chat-text:last-of-type::after {
+    animation: none;
+  }
+}
+
+/* ========== 响应式（1f：<768 单列，控件收紧） ========== */
+
+@media (max-width: 1023px) {
+  .agent-panel-head {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+}
+
+@media (max-width: 767px) {
+  .agent-panel[data-state="idle"] {
+    padding: 16px 16px 14px;
+  }
+
+  .agent-panel[data-state="active"] .agent-panel-head {
+    padding: 12px 16px;
+  }
+
+  .agent-panel-body {
+    padding: 16px;
+  }
+
+  .agent-panel-foot {
+    padding: 10px 16px 14px;
+  }
+
+  .agent-key-hint {
+    display: none;
+  }
+
+  .agent-result-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-history-menu {
+    width: min(300px, 86vw);
+  }
+}

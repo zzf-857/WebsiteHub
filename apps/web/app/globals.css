@@ -1,83 +1,164 @@
 @import "tailwindcss";
 
+/* 按设计稿分区拆分的样式，避免单文件继续膨胀。令牌仍统一定义在本文件。 */
+@import "./styles/header.css";
+@import "./styles/sidebar.css";
+@import "./styles/home.css";
+@import "./styles/agent-panel.css";
+@import "./styles/site-detail.css";
+@import "./styles/motion.css";
+
+/* 设计令牌取自设计稿 1f 规范板
+   （Arts/handoff/untitled/project/WebHub 效果图.dc.html）。
+   青柠绿仅用于：Logo 底、Agent 发送/收录按钮、来源徽标、置顶标记、聚焦边框。
+   禁止蓝/紫及蓝紫渐变；网站 favicon 保留自身品牌色。 */
 :root {
   color-scheme: light;
-  --canvas: #f9f9fe;
+
+  /* 表面 */
+  --canvas: #f5f6f7;
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-subtle: #f2f3f7;
-  --surface-hover: #eceef2;
-  --text: #191b1f;
-  --text-secondary: #50555d;
-  --text-muted: #777d87;
-  --line: #e4e6ec;
-  --line-strong: #cbd0d8;
-  --accent: #c5f000;
-  --accent-strong: #4e6000;
-  --accent-soft: #f2facf;
-  --focus: #758f00;
-  --action: #252a29;
-  --action-hover: #3a4140;
+  --surface-subtle: #f1f3f4;
+  --surface-hover: #eef1f2;
+  --surface-input: #fbfcfc;
+
+  /* 文字五级：主 / 次 / 辅助 / 元信息 / 占位 */
+  --text: #16181a;
+  --text-secondary: #3d444b;
+  --text-muted: #5e666e;
+  --text-subtle: #8b939b;
+  --text-faint: #b0b7bd;
+
+  /* 线条 */
+  --line: #e3e6e8;
+  --line-soft: #f0f2f4;
+  --line-strong: #c6cdd2;
+  --line-header: #e7eaec;
+
+  /* 青柠强调 */
+  --accent: #b4e534;
+  --accent-hover: #a8d42c;
+  --accent-mid: #6ca80f;
+  --accent-strong: #4f7a0b;
+  --accent-soft: #edf6d4;
+  --accent-tint: #fbfdf5;
+  --on-accent: #1a2005;
+  --focus: #a8d42c;
+
+  /* 主按钮与状态 */
+  --action: #16181a;
+  --action-hover: #2b2f33;
   --on-action: #ffffff;
-  --success: #27805a;
+  --text-disabled: #b0b7bd;
+  --success: #4f7a0b;
   --warning: #aa6a14;
   --danger: #c64c44;
-  --shadow-panel: 0 14px 34px rgb(24 27 31 / 10%);
+
+  /* 阴影：默认 4% · hover 7% · Agent 面板带青柠色相 10% */
+  --shadow-card: 0 1px 2px rgb(20 24 28 / 4%);
+  --shadow-card-hover: 0 2px 8px rgb(20 24 28 / 7%);
+  --shadow-agent: 0 2px 12px rgb(122 168 30 / 10%);
+  --shadow-panel: 0 8px 28px rgb(20 24 28 / 10%);
+
+  /* 栅格：页边距 40 · 侧栏 216 + 间距 28 · 内容自适应 · 间距基数 4/8 */
+  --header-height: 64px;
+  --page-gutter: 40px;
+  --sidebar-width: 216px;
+  --sidebar-gap: 28px;
   --content-max: 1180px;
   --reading-max: 800px;
+
+  /* 圆角：卡片与浮层 8 · 按钮/输入 7 · 徽标 4–5（全站 ≤8） */
+  --radius-xs: 4px;
   --radius-sm: 5px;
-  --radius-md: 8px;
+  --radius-md: 7px;
+  --radius-lg: 8px;
+
+  /* 动效 */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-hover: 120ms;
+  --duration-panel: 160ms;
+  --duration-focus: 180ms;
+  --duration-pop: 240ms;
+  --duration-celebrate: 320ms;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --canvas: #111214;
-  --surface: #17191c;
-  --surface-raised: #1d2024;
-  --surface-subtle: #23262b;
-  --surface-hover: #2b2f34;
+  --canvas: #0e1012;
+  --surface: #16181b;
+  --surface-raised: #1b1e21;
+  --surface-subtle: #202327;
+  --surface-hover: #24272b;
+  --surface-input: #131518;
   --text: #f2f3f5;
-  --text-secondary: #c2c6cc;
-  --text-muted: #9298a1;
-  --line: #2d3137;
-  --line-strong: #454a52;
-  --accent: #c5f000;
-  --accent-strong: #d3f54d;
-  --accent-soft: #303b0c;
-  --focus: #c5f000;
+  --text-secondary: #c6cbd1;
+  --text-muted: #9aa1a9;
+  --text-subtle: #7d858d;
+  --text-faint: #656d75;
+  --line: #26292d;
+  --line-soft: #1f2225;
+  --line-strong: #3a3e43;
+  --line-header: #22252a;
+  --accent: #b9e845;
+  --accent-hover: #c8f05c;
+  --accent-mid: #a3d63a;
+  --accent-strong: #b9e845;
+  --accent-soft: #24300c;
+  --accent-tint: #171d10;
+  --on-accent: #14190a;
+  --focus: #b9e845;
   --action: #f0f2f4;
   --action-hover: #dce0e4;
-  --on-action: #181a1d;
-  --success: #62c895;
+  --on-action: #16181a;
+  --text-disabled: #656d75;
+  --success: #a3d63a;
   --warning: #e3a44e;
   --danger: #ea827a;
-  --shadow-panel: 0 18px 42px rgb(0 0 0 / 28%);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-card-hover: 0 2px 8px rgb(0 0 0 / 40%);
+  --shadow-agent: 0 2px 12px rgb(185 232 69 / 10%);
+  --shadow-panel: 0 18px 42px rgb(0 0 0 / 45%);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --canvas: #111214;
-    --surface: #17191c;
-    --surface-raised: #1d2024;
-    --surface-subtle: #23262b;
-    --surface-hover: #2b2f34;
+    --canvas: #0e1012;
+    --surface: #16181b;
+    --surface-raised: #1b1e21;
+    --surface-subtle: #202327;
+    --surface-hover: #24272b;
+    --surface-input: #131518;
     --text: #f2f3f5;
-    --text-secondary: #c2c6cc;
-    --text-muted: #9298a1;
-    --line: #2d3137;
-    --line-strong: #454a52;
-    --accent: #c5f000;
-    --accent-strong: #d3f54d;
-    --accent-soft: #303b0c;
-    --focus: #c5f000;
+    --text-secondary: #c6cbd1;
+    --text-muted: #9aa1a9;
+    --text-subtle: #7d858d;
+    --text-faint: #656d75;
+    --line: #26292d;
+    --line-soft: #1f2225;
+    --line-strong: #3a3e43;
+    --line-header: #22252a;
+    --accent: #b9e845;
+    --accent-hover: #c8f05c;
+    --accent-mid: #a3d63a;
+    --accent-strong: #b9e845;
+    --accent-soft: #24300c;
+    --accent-tint: #171d10;
+    --on-accent: #14190a;
+    --focus: #b9e845;
     --action: #f0f2f4;
     --action-hover: #dce0e4;
-    --on-action: #181a1d;
-    --success: #62c895;
+    --on-action: #16181a;
+    --text-disabled: #656d75;
+    --success: #a3d63a;
     --warning: #e3a44e;
     --danger: #ea827a;
-    --shadow-panel: 0 18px 42px rgb(0 0 0 / 28%);
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 30%);
+    --shadow-card-hover: 0 2px 8px rgb(0 0 0 / 40%);
+    --shadow-agent: 0 2px 12px rgb(185 232 69 / 10%);
+    --shadow-panel: 0 18px 42px rgb(0 0 0 / 45%);
   }
 }
 
@@ -100,7 +181,9 @@ html {
 body {
   background: var(--canvas);
   color: var(--text);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* 设计稿字体栈；不引外部 webfont，缺字时按同一链路回落到系统中文字体 */
+  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
   letter-spacing: 0;
   text-rendering: optimizeLegibility;
