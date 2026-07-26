@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import io
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -7,7 +8,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from webhub.auth.cli import reset_local_password
+from webhub.auth.cli import _read_new_password, create_local_account, reset_local_password
+from webhub.auth.service import UsernameTakenError
 from webhub.config import Settings
 from webhub.db.migrations import upgrade_database
 from webhub.main import create_app
@@ -380,3 +382,60 @@ def test_local_password_reset_revokes_every_existing_session(tmp_path: Path) -> 
 
     assert old_login.status_code == 401
     assert new_login.status_code == 200
+
+
+def test_cli_creates_a_usable_local_account(tmp_path: Path) -> None:
+    """The seeded fixture account must be a normal account, not a special case."""
+
+    settings = _settings(tmp_path)
+    asyncio.run(
+        create_local_account(
+            settings.database_url,
+            "Admin",
+            "admin123",
+            display_name="管理员",
+        )
+    )
+
+    with TestClient(create_app(settings=settings)) as client:
+        logged_in = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "admin123"},
+            headers=SAME_ORIGIN_HEADERS,
+        )
+        assert logged_in.status_code == 200, logged_in.text
+        # Username normalisation applies to seeding exactly as it does to the
+        # register endpoint, so "Admin" and "admin" are the same account.
+        me = client.get("/api/auth/me")
+        assert me.status_code == 200
+        assert me.json()["user"]["username"] == "admin"
+        assert me.json()["user"]["display_name"] == "管理员"
+
+
+def test_cli_refuses_to_create_a_duplicate_account(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    asyncio.run(create_local_account(settings.database_url, "admin", "admin123"))
+    with pytest.raises(UsernameTakenError):
+        asyncio.run(create_local_account(settings.database_url, "admin", "another password"))
+
+
+def test_cli_password_rules_are_enforced_before_touching_the_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("short\n"))
+    with pytest.raises(ValueError):
+        _read_new_password(from_stdin=True)
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("x" * 129 + "\n"))
+    with pytest.raises(ValueError):
+        _read_new_password(from_stdin=True)
+
+
+def test_cli_stdin_password_keeps_surrounding_spaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Only the line ending is stripped: a password may legitimately start or
+    # end with a space, and silently trimming it would lock the user out.
+    monkeypatch.setattr("sys.stdin", io.StringIO("  spaced pw  \r\n"))
+    assert _read_new_password(from_stdin=True) == "  spaced pw  "

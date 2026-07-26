@@ -9,6 +9,10 @@ Agent 主导的个人网址导航站。任何新会话（换账号、换机器�
 2. 读 `IMPLEMENTATION_PLAN.md` 第 10 节 —— 当前状态快照（哪些 Phase 完成、断层在哪）。
 3. `git log --oneline -15` —— 每个 commit 都有详细中文说明，是最可靠的历史。
 
+**动手前先读 `LOCAL_DEV.md`**（本机专用，已 gitignore，不进仓库）：本地唯一账号是
+`admin` / `admin123`，**不要另外新建测试账号**；里面还有库位置、重新播种的命令、
+测试素材位置，以及「内嵌 Browser 面板与用户真实 Chrome 是两套 cookie」这个坑。
+
 需求原文在 `F:\AI\AgentMake\AgentProjects\00_Todolist\WebHub_Todolist\todolist.md`；
 最新设计稿（唯一视觉真源）在 `Arts/handoff/untitled/project/WebHub 效果图.dc.html`（6 块画板 1a–1f，
 1f 是规范板：色彩/字阶/圆角/图标映射/动效，全部设计令牌都从它来）。
