@@ -12,7 +12,7 @@ from webhub.auth.dependencies import (
     require_trusted_origin,
 )
 from webhub.ingestion import service as ingestion_service
-from webhub.library import service
+from webhub.library import batch, service
 from webhub.library.schemas import (
     CategoryCreateRequest,
     CategoryDeletePreviewResponse,
@@ -20,6 +20,9 @@ from webhub.library.schemas import (
     CategoryListResponse,
     CategoryResponse,
     CategoryUpdateRequest,
+    SiteBatchItemResponse,
+    SiteBatchRequest,
+    SiteBatchResponse,
     SiteCreateRequest,
     SiteDeleteResponse,
     SiteListResponse,
@@ -263,3 +266,54 @@ async def analyze_site(
             detail={"code": "not_found", "message": "网站不存在"},
         )
     return await _call(service.get_site(session, identity.user.id, site_id))
+
+
+@router.post("/sites/batch", response_model=SiteBatchResponse)
+async def batch_sites(
+    payload: SiteBatchRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> SiteBatchResponse:
+    """Preview or commit a batch of URLs.
+
+    ``confirm=false`` is read-only: it classifies every URL and touches nothing,
+    which is what makes "确认前主数据无变化" a property of the endpoint rather
+    than a promise.  ``confirm=true`` creates the importable ones, each item
+    independently, so one failure cannot take the rest down with it.
+    """
+
+    urls = payload.urls if payload.urls is not None else batch.extract_urls(payload.text or "")
+    if not urls:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "no_urls", "message": "没有解析到任何 http(s) 网址"},
+        )
+
+    items = (
+        await batch.create_batch(session, identity.user.id, urls)
+        if payload.confirm
+        else await batch.preview_batch(session, identity.user.id, urls)
+    )
+    names = ("ready", "duplicate", "invalid", "created", "failed")
+    counts = dict.fromkeys(names, 0)
+    for item in items:
+        counts[item.status] = counts.get(item.status, 0) + 1
+    return SiteBatchResponse(
+        confirmed=payload.confirm,
+        total=len(items),
+        ready=counts["ready"],
+        duplicate=counts["duplicate"],
+        invalid=counts["invalid"],
+        created=counts["created"],
+        failed=counts["failed"],
+        items=[
+            SiteBatchItemResponse(
+                url=item.url,
+                status=item.status,
+                reason=item.reason,
+                site_id=item.site_id,
+            )
+            for item in items
+        ],
+    )

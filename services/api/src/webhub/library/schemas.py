@@ -4,6 +4,10 @@ from typing import Annotated, Literal
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from pydantic.functional_validators import BeforeValidator
 
+# 定义在这里而不是 batch.py：schemas 不依赖任何 library 内部模块，
+# 反过来让 batch 引用它才不会形成 schemas → batch → service → schemas 的环。
+MAX_BATCH_URLS = 50
+
 _HTTP_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 
@@ -141,3 +145,29 @@ class SiteListResponse(BaseModel):
 class SiteDeleteResponse(BaseModel):
     message: str
     site_id: str
+
+
+class SiteBatchRequest(StrictRequest):
+    """批量入库。urls 与 text 二选一：前端给已抽好的列表，Agent/命令行给原文。"""
+
+    urls: list[str] | None = Field(default=None, max_length=MAX_BATCH_URLS)
+    text: str | None = Field(default=None, max_length=20_000)
+    confirm: bool = False
+
+
+class SiteBatchItemResponse(BaseModel):
+    url: str
+    status: str
+    reason: str | None = None
+    site_id: str | None = None
+
+
+class SiteBatchResponse(BaseModel):
+    confirmed: bool
+    total: int
+    ready: int
+    duplicate: int
+    invalid: int
+    created: int
+    failed: int
+    items: list[SiteBatchItemResponse]
