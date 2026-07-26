@@ -26,9 +26,14 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
+from webhub.bookmarks import persistence
+from webhub.bookmarks import queries as bookmark_queries
+from webhub.bookmarks.apply import category_distribution
 from webhub.config import Settings
 from webhub.db.database import Database
+from webhub.db.models import BookmarkImportJob
 from webhub.library import service as library_service
 from webhub.library.service import LibraryError
 from webhub.spaces import service as spaces_service
@@ -428,6 +433,133 @@ async def _propose_space_membership(
     }
 
 
+class BookmarkImportIdArgs(BaseModel):
+    job_id: str = Field(min_length=1, max_length=36, description="书签导入任务 ID")
+
+
+async def _list_bookmark_imports(context: AgentToolContext, _: EmptyArgs) -> dict[str, Any]:
+    """List the account's recent bookmark import jobs and their state."""
+
+    async with context.database.sessions() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(
+                        BookmarkImportJob.id,
+                        BookmarkImportJob.state,
+                        BookmarkImportJob.version,
+                        BookmarkImportJob.created_at,
+                    )
+                    .where(BookmarkImportJob.user_id == context.user_id)
+                    .order_by(BookmarkImportJob.created_at.desc())
+                    .limit(MAX_TOOL_LIMIT)
+                )
+            ).all()
+        )
+    return {
+        "source": SOURCE_LIBRARY,
+        "items": [
+            {
+                "job_id": row[0],
+                "state": row[1],
+                "job_version": row[2],
+                "created_at": row[3].isoformat(),
+            }
+            for row in rows
+        ],
+        # Uploading a file is something only the browser can do; say so rather
+        # than letting the model imply it could start an import itself.
+        "note": "Agent 无法上传文件；书签文件需要用户在界面上传后，这里才会出现任务。",
+    }
+
+
+async def _get_bookmark_import_preview(
+    context: AgentToolContext,
+    args: BookmarkImportIdArgs,
+) -> dict[str, Any]:
+    """Return aggregate counts for one import job.
+
+    Deliberately aggregates only.  A 2000-bookmark export has 2000 candidate
+    rows; putting them in the model's context would cost hundreds of thousands
+    of tokens and tell it nothing these dozen numbers do not.  The per-row data
+    stays in the database, where apply reads it directly.
+    """
+
+    async with context.database.sessions() as session:
+        try:
+            summary = await bookmark_queries.get_preview_summary(
+                session,
+                context.user_id,
+                args.job_id,
+            )
+        except persistence.BookmarkPersistenceError as error:
+            return {"source": SOURCE_LIBRARY, "error": error.message}
+        distribution = await category_distribution(session, context.user_id, summary.run_id)
+
+    actions = summary.candidate_action_counts
+    return {
+        "source": SOURCE_LIBRARY,
+        "job_id": summary.job_id,
+        "job_version": summary.job_version,
+        "counts": {
+            "folders": summary.folder_count,
+            "bookmarks": summary.occurrence_count,
+            "unique_candidates": summary.candidate_count,
+            "duplicates_merged": summary.duplicate_occurrence_count,
+            "sensitive_urls": summary.sensitive_candidate_count,
+        },
+        "proposed_actions": {
+            "create": actions.create,
+            "skip_existing": actions.skip_existing,
+            "merge_missing_metadata": actions.merge_missing_metadata,
+            "reject": actions.reject,
+            "needs_review": actions.needs_review,
+        },
+        "category_distribution": distribution,
+    }
+
+
+async def _propose_bookmark_import(
+    context: AgentToolContext,
+    args: BookmarkImportIdArgs,
+) -> dict[str, Any]:
+    """Return a draft for importing one staged job; never writes."""
+
+    async with context.database.sessions() as session:
+        try:
+            summary = await bookmark_queries.get_preview_summary(
+                session,
+                context.user_id,
+                args.job_id,
+            )
+        except persistence.BookmarkPersistenceError as error:
+            return {"status": "rejected", "reason": error.message}
+        distribution = await category_distribution(session, context.user_id, summary.run_id)
+
+    actions = summary.candidate_action_counts
+    will_create = actions.create + actions.merge_missing_metadata + actions.skip_existing
+    if will_create == 0:
+        return {
+            "status": "noop",
+            "message": "这份书签里没有可以导入的条目。",
+        }
+
+    return {
+        "status": "awaiting_confirmation",
+        "message": "导入草稿已生成，等待用户在界面上确认后才会写入资料库。",
+        "draft": {
+            "kind": "bookmark_import",
+            "job_id": summary.job_id,
+            "expected_job_version": summary.job_version,
+            "candidate_count": summary.candidate_count,
+            "will_import": will_create,
+            "will_skip": actions.reject + actions.needs_review,
+            "duplicates_merged": summary.duplicate_occurrence_count,
+            "category_distribution": distribution,
+        },
+    }
+
+
 def build_tools(context: AgentToolContext) -> Sequence[Any]:
     """Build the LangChain tool list for one account-scoped turn."""
 
@@ -494,6 +626,28 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
             "它同样不会写库，调用后必须说“请确认后生效”，不能声称已经改好。",
             ProposeSiteUpdateArgs,
             _propose_site_update,
+        ),
+        structured(
+            "list_bookmark_imports",
+            "列出当前账号最近的书签导入任务及其状态。用户提到「导入书签」时先看这里有没有已上传的任务。"
+            "Agent 无法上传文件，文件必须由用户在界面上传。",
+            EmptyArgs,
+            _list_bookmark_imports,
+        ),
+        structured(
+            "get_bookmark_import_preview",
+            "读取一个书签导入任务的**汇总统计**：文件夹数、书签数、去重后候选数、重复数、"
+            "各 proposed_action 的数量、以及按分类的分布。只返回聚合数字，不返回逐条书签——"
+            "一份两千条的导出逐条读会白白烧掉几十万 token，而这十几个数字足够做判断。",
+            BookmarkImportIdArgs,
+            _get_bookmark_import_preview,
+        ),
+        structured(
+            "propose_bookmark_import",
+            "为一个已解析完成的书签导入任务生成确认草稿。它不会写库，"
+            "调用后必须告诉用户「请确认后导入」，不能声称已经导入成功。",
+            BookmarkImportIdArgs,
+            _propose_bookmark_import,
         ),
         structured(
             "propose_space_membership",

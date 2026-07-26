@@ -190,10 +190,13 @@ def test_web_search_tool_is_absent_without_a_search_provider(tmp_path: Path) -> 
 
     assert "web_search" not in names
     assert names == [
+        "get_bookmark_import_preview",
         "get_site_detail",
+        "list_bookmark_imports",
         "list_categories",
         "list_spaces",
         "list_tags",
+        "propose_bookmark_import",
         "propose_site",
         "propose_site_update",
         "propose_space_membership",

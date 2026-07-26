@@ -346,4 +346,71 @@ __all__ = [
     "ApplyOutcome",
     "BookmarkApplyError",
     "apply_candidates",
+    "category_distribution",
 ]
+
+
+async def category_distribution(
+    session: AsyncSession,
+    user_id: str,
+    run_id: str,
+    *,
+    batch_size: int = BATCH_SIZE,
+) -> dict[str, int]:
+    """Count how the staged candidates would fall across categories.
+
+    This exists so an Agent can reason about a 2000-bookmark import without the
+    2000 rows entering its context: it returns roughly a dozen counts computed
+    entirely server-side, using the same classifier apply will use.  Shipping the
+    candidate list to a model instead would cost hundreds of thousands of tokens
+    and tell it nothing the aggregate does not.
+    """
+
+    counts: dict[str, int] = {}
+    cursor: tuple[int, str] | None = None
+    while True:
+        conditions: list[Any] = [
+            BookmarkStagingCandidate.user_id == user_id,
+            BookmarkStagingCandidate.run_id == run_id,
+            BookmarkStagingCandidate.proposed_action.not_in(tuple(_SKIPPED_ACTIONS)),
+        ]
+        if cursor is not None:
+            sequence, item_id = cursor
+            conditions.append(
+                (BookmarkStagingCandidate.first_source_sequence > sequence)
+                | (
+                    (BookmarkStagingCandidate.first_source_sequence == sequence)
+                    & (BookmarkStagingCandidate.id > item_id)
+                )
+            )
+        batch = list(
+            (
+                await session.scalars(
+                    select(BookmarkStagingCandidate)
+                    .where(*conditions)
+                    .order_by(
+                        BookmarkStagingCandidate.first_source_sequence,
+                        BookmarkStagingCandidate.id,
+                    )
+                    .limit(batch_size)
+                )
+            ).all()
+        )
+        if not batch:
+            break
+        cursor = (batch[-1].first_source_sequence, batch[-1].id)
+        folder_paths = await _candidate_folder_paths(
+            session,
+            user_id,
+            run_id,
+            [row.id for row in batch],
+        )
+        for row in batch:
+            suggestion = suggest_category(
+                folder_paths.get(row.id, ()),
+                row.display_title,
+                row.host,
+            )
+            name = suggestion.category or DEFAULT_CATEGORY_NAME
+            counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))

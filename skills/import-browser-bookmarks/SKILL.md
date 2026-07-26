@@ -24,6 +24,32 @@ or write directly to Site, Category, Tag, or Space records.
   a Provider SDK's structured-output success flag as sufficient validation.
 - For persistence, API, state, or recovery work, read `references/import-contract.md`.
 
+## Runtime Tools (available since 2026-07-26)
+
+Three account-scoped tools cover the whole runtime path. They are the only supported way to touch
+an import from inside a conversation.
+
+| Tool | Returns | Use it when |
+| --- | --- | --- |
+| `list_bookmark_imports` | recent jobs with `state` and `job_version` | the user mentions importing bookmarks |
+| `get_bookmark_import_preview` | **aggregate counts only** | a job reached `parse_preview_ready` |
+| `propose_bookmark_import` | a draft awaiting user confirmation | the user agreed to import |
+
+Three rules that matter more than the table:
+
+1. **You cannot upload.** No tool accepts a file. If no job exists, ask the user to upload the
+   export in the browser. Never claim you can read a local path.
+2. **Never iterate the candidates.** A typical export is 2000+ rows. No tool returns them, and that
+   is deliberate — `get_bookmark_import_preview` answers with about a dozen numbers plus a category
+   distribution, all computed server-side. Those numbers are enough to decide. Pulling per-row data
+   into context would cost hundreds of thousands of tokens and improve no decision.
+3. **`propose_bookmark_import` does not write.** It returns a draft; the browser's confirmation is
+   what calls `POST /api/bookmark-imports/{job_id}/apply`. After calling it, say "请确认后导入" —
+   never "已导入".
+
+Applying is idempotent by construction: `sites` carries `UNIQUE (user_id, identity_url)`, so a
+repeated apply reports every candidate as `skipped_existing` instead of duplicating anything.
+
 ## Run A Local Dry Run
 
 From the WebHub repository root:
