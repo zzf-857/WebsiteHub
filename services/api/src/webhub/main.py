@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from webhub.agent.access import DatabaseConversationAccess
 from webhub.auth.rate_limit import LoginRateLimiter
 from webhub.bookmarks.admission import BookmarkUploadAdmissionManager
 from webhub.config import Settings, get_settings
@@ -36,6 +37,7 @@ def create_app(
     )
     application.state.settings = selected_settings
     application.state.database = selected_database
+    application.state.agent_conversation_access = DatabaseConversationAccess(selected_database)
     application.state.login_rate_limiter = LoginRateLimiter()
     application.state.bookmark_upload_admission = BookmarkUploadAdmissionManager(
         data_directory=selected_settings.data_directory,

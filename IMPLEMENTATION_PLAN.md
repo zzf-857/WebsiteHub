@@ -4,7 +4,7 @@
 > 更新日期：2026-07-26
 > 需求基线：`PRD.md v0.8 Draft`
 > 产品形态：局域网部署的跨平台 Web 网站系统
-> 当前阶段：Phase 2A/2B/2C 后端 checkpoint 已完成；账号隔离资料库、Space、书签持久化、两阶段文件 intake、公开上传/状态 API、严格分类输出校验、只读预览 API 与单 worker 上传 admission 已验证。书签上传 POST 已由 custom server 专用流式代理绕过 Next 10 MiB request clone，并通过真实 mock、12 MiB、头部保留和超限测试；网站代理 512 MiB 单请求上限与后端 512 MiB 磁盘保留策略均不代表 512 MiB 文件容量门禁已经实测。Phase 2 整体仍在进行：前端集成、分类执行 worker、真实 LLM、两次确认提交闭环与 100,000 Site 性能门禁未完成
+> 当前阶段：Phase 2A/2B/2C 与 Phase 3 后端 checkpoint 已完成；账号隔离资料库、Space、书签持久化、会话/消息/日期历史、Slash Command 注册表和 AI SDK UI Message Stream v1 合同均已验证。书签上传 POST 已由 custom server 专用流式代理绕过 Next 10 MiB request clone，并通过真实 mock、12 MiB、头部保留和超限测试；网站代理 512 MiB 单请求上限与后端 512 MiB 磁盘保留策略均不代表 512 MiB 文件容量门禁已经实测。下一阶段重点为会话前端接线、真实 Agent Runner/Provider 适配、分类执行 worker、两次确认提交闭环与 100,000 Site 性能门禁
 
 ## 1. 计划目的
 
@@ -300,6 +300,8 @@ WebHub/
 - 刷新或在另一台设备登录后，可恢复并继续账号自己的会话。
 - Python SSE fixture 可由前端 AI SDK 解析。
 - abort、error、部分消息和过期 artifact 状态均可重放。
+
+当前进展（2026-07-26）：账号隔离的 Conversation/Message 表、复合账号外键、CAS、幂等消息、来源与 artifact JSON 边界、按 UTC 偏移的日期分组、重命名/删除和服务端 Slash Command 注册表已完成。Python 已实现 AI SDK v7 UI Message Stream v1 编码、typed data、finish/error/abort、部分消息与 golden fixture，并提供 fail-closed 的 `/api/agent/chat` 路由合同。真实 Agent Runner、Provider 调用、流式消息持久化接线和 `useChat` 前端仍属于下一阶段，不得把安全错误流视为真实回答。
 
 ### Phase 4 - Provider Center
 
