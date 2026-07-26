@@ -100,25 +100,29 @@ registry 新增 `default_base_url`（`agent/provider_binding.py` 的 `DEFAULT_BA
 
 ## Q3 · Agent 的「改」能力（确认制写工具）
 
-状态: 待做
+状态: 已完成 · 4473a02
 对应: Phase 7 · todolist「对话就能增改查」
 
-现状：`agent/tools.py` 7 个工具全是只读 + `propose_site` 出草稿，**没有任何 update / move / pin 工具**。
-Agent 改不了分类、改不了名、置不了顶、移不进 Space。更糟的是
-`components/agent/agent-panel.tsx` 的快捷 chip 写着「把 Figma 移到『设计』并置顶」——
-点了必然做不到，是虚假能力宣传。
+交付：`propose_site_update`（改名/说明/分类/标签/置顶）、`propose_space_membership`（移入移出
+Space）两个确认制写工具；前端三种新视图（site-update / space-membership / noop）、
+改前改后 diff 卡、`confirmAgentSiteUpdate` / `confirmAgentSpaceMembership`。
+后端 308 → 319，前端 110 → 118。快捷 chip「把 Figma 移到『设计』并置顶」不再是虚假宣传。
 
-交付：
-- 新增确认制写工具：`propose_site_update`（改名/描述/分类/标签/置顶）、`propose_space_membership`（移入移出 Space）
-- 严格沿用 propose → 人工确认的模式：工具**只产出草稿**，绝不直接写库
-- 前端确认卡支持「修改类」草稿：并排展示改前/改后 diff，确认后走普通 library PATCH 接口
-- 写库授权始终来自用户会话，不来自 Agent
+几处刻意的设计：
+- 每个可编辑字段都是 `X | None = None`，None = 别动。**None 与「清空」保持可区分**：
+  省略 `description` 保留原文，传 `""` 才是清空。合并这两者会让一次改名悄悄抹掉说明。
+- 草稿只包含**真正发生变化**的字段；一个变化都没有时返回 `status="noop"` 而不是生成草稿
+  ——一张点了等于没点的确认卡，用户没法和真的修改区分开。
+- 草稿携带该行当时的 `version`，确认时原样回传；中途被别处改过就 409 而不是覆盖。
+  有测试完整走这条路：propose → 别处先改 → 用陈旧版本确认 → 409 且原修改完好。
+- `propose_space_membership` **不会新建 Space**（建 Space 本身就是写操作），
+  目标不存在时如实拒绝并列出已有的 Space。
+- Space 按名称解析时的归一化与 `spaces/service._space_name` 写入时完全一致
+  （NFKC + 折叠空白 + casefold），否则从界面建的 Space 在这里查不到。
+- 前端解析 `changes` 用 `typeof` 而不是真值判断，否则 `description:""` 与 `pinned:false`
+  这两个合法改动会被当成「没改」；缺乏乐观锁版本或改动集合的草稿降级为 raw，绝不半渲染。
 
-完成标准：
-- 「把 Figma 移到设计分类并置顶」这句话真的能走通，且必须点确认才生效
-- 未确认时数据库无任何变化（要有测试断言，比对操作前后的行数与字段）
-- 跨账号 site_id 一律拒绝
-- 乐观并发：草稿生成后网站被别处改动，确认时应报冲突而不是覆盖
+同样**未做浏览器端到端验证**（需要登录与可用的模型 Provider）；静态门禁全绿。
 
 ---
 
@@ -254,7 +258,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 110 测试 / 后端 308 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 118 测试 / 后端 319 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 
