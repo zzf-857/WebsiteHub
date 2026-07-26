@@ -17,7 +17,7 @@
 
 ## Q1a · Provider 前端契约层与 HTTP 客户端
 
-状态: 已完成 · 见下方 commit
+状态: 已完成 · 444c024
 对应: Phase 4（前端部分，第一半）
 
 交付已落地：`lib/provider-contract.ts`（类型 + 归一化 + 三种 secret action 的请求体构造）、
