@@ -7,7 +7,7 @@
 - 本机环境看 `LOCAL_DEV.md`（不进 Git：固定账号、库位置、测试素材）
 - 设计与架构决策看 `IMPLEMENTATION_PLAN.md`（第 10 节只指向本文件，不再重复状态）
 
-最后更新：2026-07-27 · 对应 commit `e13d03f`
+最后更新：2026-07-27 · 对应 commit `0ffbe30`
 
 ---
 
@@ -49,6 +49,7 @@ Provider 配置、Agent 增改查、书签导入三条链路**已端到端跑通
 | Space 一键全开（Q7） | 只在首页且只覆盖最近 8 个，重试会重复开标签 |
 | 检索与 RAG（Q8） | LlamaIndex 依赖都没装，`embedding` Provider 槽位是死预留 |
 | 视觉收尾（Q9） | 1c 紧凑态 3 处偏差、`globals.css` 有死代码 |
+| 结构收尾（Q10） | `persistence.py` 1864 行、两个 >1000 行的组件待拆 |
 
 ---
 
@@ -69,6 +70,27 @@ Provider 配置、Agent 增改查、书签导入三条链路**已端到端跑通
 5. **向量服务分区文案写「检索链路尚未接入」**——`langgraph_runner` 确实只解析
    model 与 search。Q8 接入后再改文案，别提前吹。
 6. **预览截图不做**（需要无头浏览器，成本与安全面不成比例）。
+7. **`space-contract` 的 `identifier` 不并入 `contract-guards`。**
+   它带长度上限且拒绝数字，共享版为兼容历史整数主键会把数字转成字符串。
+   同名不等于同一件事，合并会悄悄放宽 Space 成员 id 的约束。
+
+## 架构约定（2026-07-27 自查后确立）
+
+模块依赖是**无环 DAG**，加新 import 前先确认方向：
+
+```
+auth →（无）        底座
+bookmarks → auth
+library / spaces / chat → auth (+library)
+providers → auth
+agent → 全部        顶层编排，只有它可以依赖所有模块
+```
+
+低层模块需要高层的类型时，**声明 Protocol 描述所需，而不是反向 import**
+（见 `bookmarks/classifier.py` 的 `ModelEndpoint`）。
+
+前端契约层的校验原语统一在 `lib/contract-guards.ts`，
+各模块传入自己的错误工厂。**合并任何"看起来一样"的函数前必须先证明逐字节相同。**
 
 ---
 

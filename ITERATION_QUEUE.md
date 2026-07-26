@@ -335,11 +335,44 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 - `.agent-result-label` 缺 `letter-spacing: 1px`；`.agent-panel .chat-text` 缺 900px 行长上限
 - `PopCheck` 未完成态圆环应 13px（现 14）
 - `globals.css` 里 `.site-header` / `.brand` / `.icon-button` / `.site-detail-*` 等已成死代码
+  （2026-07-27 自查实测：`globals.css` 4321 行，是前端最大的文件，需逐类核对 tsx 引用）
 - `home.css` 的 `.home-recent-favicon` 裁切 hack 已冗余
 - `agent-help-card.tsx` 三个「让 Agent 帮你」快捷入口 `href="/"`，不带预填提问
 - SiteHeader 的 IntersectionObserver 缺 `rootMargin`，紧凑态触发略迟滞
 
 完成标准：设计稿 1a–1f 逐屏比对无可见偏差；`globals.css` 无未被任何 tsx 引用的类。
+
+---
+
+## Q10 · 结构自查收尾（大文件拆分与第二批去重）
+
+状态: 待做
+对应: 2026-07-27 结构自查发现
+插入位置: 放在 Q9 之后而不是插队。这些是健康度问题，不阻塞任何用户可见能力；
+队列既有顺序是按用户价值排的，先把功能补完再统一收尾。
+**但如果 Q4–Q8 期间要动到下列文件，就地拆比事后拆便宜，届时可提前处理。**
+
+已在 `0ffbe30` 修掉的（不必重做）：
+- `agent ⇄ bookmarks`、`library ⇄ bookmarks` 两处循环依赖 → 依赖图现在是干净 DAG
+- 四个 `*-contract.ts` 里约 30 份逐字节相同的校验原语 → 抽成 `lib/contract-guards.ts`
+- 注意：`space-contract` 的 `identifier` **刻意保留在本地**（带长度上限且拒绝数字，
+  与共享版语义不同）。别再"顺手"把它合并进去。
+
+本条要做的：
+
+1. **`bookmarks/persistence.py` 1864 行**，占后端代码近 10%，是全仓库最大的文件。
+   里面混着 job / run / checkpoint / staging 四类关注点。按这四类拆成子模块，
+   公开 API 保持不变（`queries.py`、`routes.py`、`worker.py` 都依赖它）。
+2. **`space-workspace.tsx` 1071 行 / `agent-panel.tsx` 1038 行**：
+   两个组件各自塞了列表 + 详情 + 多种弹层。至少把弹层与列表拆出去。
+3. **三个 workspace 组件（library / space / provider）的加载、分页、错误处理是同构的**，
+   疑似存在第二批可抽取的重复。先测量再动手——像契约层那样先确认逐字节相同，
+   不要凭"看起来像"就合并。
+
+完成标准：
+- 单文件行数：后端无 >1000 行，前端组件无 >700 行
+- 拆分不改变任何公开 API，测试基线只涨不降
+- 合并任何重复前，必须先证明语义相同（`0ffbe30` 里 `identifier` 的教训）
 
 ---
 
