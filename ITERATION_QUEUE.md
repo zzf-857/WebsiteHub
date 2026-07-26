@@ -126,6 +126,49 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 
 ---
 
+## Q3b · 书签导入的落库与前端入口
+
+状态: 待做
+对应: todolist「导入浏览器书签」· 用户 2026-07-26 实测请求
+插入原因: 用户提供 `MockData/bookmarks_2026_7_26.html` 要求「跑通自动导入流程」，
+实测发现流程只建了前一半。按队列规则插在当前条目之后、不打乱后面的优先级。
+
+**已经能用的部分（本轮实测确认）**：
+`skills/import-browser-bookmarks/scripts/preview_bookmarks.py` 对真实文件跑通，1.68 秒、
+峰值内存 1.3MB：2541 条书签 / 368 个文件夹 / 最深 8 层 → 2024 个去重候选、511 条重复被聚合、
+6 条被拒（`chrome:` 2 / `file:` 3 / `note:` 1）、1325 个内联 favicon（占源文件 70.6%）被丢弃、
+7 个疑似含敏感参数的 URL 被标记、14 组仅 fragment 不同的疑似重复只标记不自动合并。
+规则分类给出 9 个建议分类（未分类 537、学习与文档 447、效率工具 394…）。
+
+**断层（跑不通的原因）**：
+1. **没有落库端点。** 线上 OpenAPI 里 `bookmark-imports` 只有 6 个：`POST` 上传 +
+   5 个 `GET` 预览。`bookmarks/persistence.py` 只**读** `Site`（算 `identity_url` 命中），
+   全模块没有任何一处创建 `Site`。暂存层已经算好了每个候选的 `proposed_action`
+   （create / skip_existing / merge_missing_metadata / reject / needs_review），
+   缺的只是执行这一步。
+2. **前端零入口。** `apps/web` 下没有任何 `.tsx`/`.ts` 提到 bookmark，
+   上传、看预览、确认导入都没有界面。
+3. LLM 分类（`classification.py` / `classification_batches.py` /
+   `classification_contract.py`）只被 `preview.py` 的规则分类用到，没有接 Provider，
+   也没有路由或 worker 调用它。
+
+交付：
+- 落库端点：`POST /api/bookmark-imports/{job_id}/apply`，按候选的 `proposed_action` 执行，
+  账号作用域，幂等键防重放，分批提交（2000+ 条不能一个事务吞下）
+- `skip_existing` / `merge_missing_metadata` 必须真的按 `identity_url` 命中来走，不能盲插
+- 文件夹路径 → 分类/标签的映射沿用暂存层已算好的结果，不在落库时重新发明一套
+- 前端：设置页下的导入入口（上传 → 预览摘要 → 确认导入 → 结果），
+  预览要显示「将新建 N 条 / 跳过 M 条已存在 / 拒绝 K 条」
+
+完成标准：
+- 用 `MockData/bookmarks_2026_7_26.html` 走完整流程，资料库真的多出对应数量的网站
+- 确认前资料库无任何变化（测试断言比对 Site 行数）
+- 同一个 job 重复 apply 不会写入两份
+- 跨账号 job_id 一律 404
+- 已存在的 `identity_url` 走 skip/merge，不产生重复网站
+
+---
+
 ## Q4 · 网站抓取与元数据提取
 
 状态: 待做
