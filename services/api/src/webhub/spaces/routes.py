@@ -33,7 +33,10 @@ async def _call[T](operation: Awaitable[T]) -> T:
     try:
         return await operation
     except service.SpaceError as error:
-        raise HTTPException(error.status_code, error.message) from error
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "message": error.message},
+        ) from error
 
 
 @router.get("", response_model=SpaceListResponse)

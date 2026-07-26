@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.db.models import Site, Space, SpaceMember, utc_now
+from webhub.library.schemas import normalize_favicon_url
 from webhub.spaces.schemas import (
     SpaceCreateRequest,
     SpaceDeletePreviewResponse,
@@ -37,22 +38,27 @@ _REORDER_UPDATE_CHUNK = 200
 
 class SpaceError(Exception):
     status_code = 400
+    code = "space_error"
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, code: str | None = None) -> None:
         self.message = message
+        self.code = code or type(self).code
         super().__init__(message)
 
 
 class SpaceNotFoundError(SpaceError):
     status_code = 404
+    code = "not_found"
 
 
 class SpaceConflictError(SpaceError):
     status_code = 409
+    code = "conflict"
 
 
 class SpaceValidationError(SpaceError):
     status_code = 422
+    code = "validation_error"
 
 
 def _space_name(value: str) -> tuple[str, str]:
@@ -94,7 +100,7 @@ async def _owned_member(
         )
     )
     if member is None:
-        raise SpaceNotFoundError("Space 成员不存在")
+        raise SpaceNotFoundError("Space 成员不存在", code="member_not_found")
     return member
 
 
@@ -121,6 +127,14 @@ def _space_response(space: Space, member_count: int) -> SpaceResponse:
     )
 
 
+def _safe_favicon_url(value: str | None) -> str | None:
+    try:
+        normalized = normalize_favicon_url(value)
+    except ValueError:
+        return None
+    return normalized if isinstance(normalized, str) else None
+
+
 def _member_response(member: SpaceMember, site: Site) -> SpaceMemberResponse:
     return SpaceMemberResponse(
         site=SpaceSiteReference(
@@ -129,7 +143,7 @@ def _member_response(member: SpaceMember, site: Site) -> SpaceMemberResponse:
             original_url=site.original_url,
             identity_url=site.identity_url,
             description=site.description,
-            favicon_url=site.favicon_url,
+            favicon_url=_safe_favicon_url(site.favicon_url),
             pinned=site.pinned,
             version=site.version,
         ),
@@ -144,7 +158,10 @@ async def _claim_version(
     expected_version: int,
 ) -> None:
     if space.version != expected_version:
-        raise SpaceConflictError("Space 已被修改，请刷新后重试")
+        raise SpaceConflictError(
+            "Space 已被修改，请刷新后重试",
+            code="version_conflict",
+        )
     result = await session.execute(
         update(Space)
         .where(
@@ -157,7 +174,10 @@ async def _claim_version(
     )
     if result.rowcount != 1:  # type: ignore[attr-defined]
         await session.rollback()
-        raise SpaceConflictError("Space 已被修改，请刷新后重试")
+        raise SpaceConflictError(
+            "Space 已被修改，请刷新后重试",
+            code="version_conflict",
+        )
     await session.refresh(space)
 
 
@@ -294,7 +314,7 @@ async def create_space(
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
-        raise SpaceConflictError("Space 名称已存在") from error
+        raise SpaceConflictError("Space 名称已存在", code="duplicate_name") from error
     return _space_response(space, 0)
 
 
@@ -376,7 +396,7 @@ async def update_space(
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
-        raise SpaceConflictError("Space 名称已存在") from error
+        raise SpaceConflictError("Space 名称已存在", code="duplicate_name") from error
     return _space_response(space, await _member_count(session, user_id, space_id))
 
 
@@ -396,7 +416,7 @@ async def add_member(
         )
     )
     if existing is not None:
-        raise SpaceConflictError("网站已在该 Space 中")
+        raise SpaceConflictError("网站已在该 Space 中", code="member_exists")
 
     try:
         await _claim_version(session, space, payload.expected_version)
@@ -419,7 +439,10 @@ async def add_member(
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
-        raise SpaceConflictError("Space 成员关系已发生变化，请刷新后重试") from error
+        raise SpaceConflictError(
+            "Space 成员关系已发生变化，请刷新后重试",
+            code="member_conflict",
+        ) from error
 
     member_count = await _member_count(session, user_id, space_id)
     return SpaceMemberAddResponse(
@@ -458,7 +481,10 @@ async def reorder_members(
 ) -> SpaceResponse:
     space = await _owned_space(session, user_id, space_id)
     if space.version != payload.expected_version:
-        raise SpaceConflictError("Space 已被修改，请刷新后重试")
+        raise SpaceConflictError(
+            "Space 已被修改，请刷新后重试",
+            code="version_conflict",
+        )
 
     current_rows = (
         await session.execute(
@@ -473,9 +499,9 @@ async def reorder_members(
     current_ids = [site_id for site_id, _ in current_rows]
     current_set = set(current_ids)
     if any(site_id not in current_set for site_id in payload.ordered_site_ids):
-        raise SpaceNotFoundError("Space 成员不存在")
+        raise SpaceNotFoundError("Space 成员不存在", code="member_not_found")
     if payload.before_site_id is not None and payload.before_site_id not in current_set:
-        raise SpaceNotFoundError("排序定位成员不存在")
+        raise SpaceNotFoundError("排序定位成员不存在", code="member_not_found")
 
     moved = set(payload.ordered_site_ids)
     remaining = [site_id for site_id in current_ids if site_id not in moved]
@@ -516,7 +542,10 @@ async def reorder_members(
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
-        raise SpaceConflictError("Space 成员顺序已发生变化，请刷新后重试") from error
+        raise SpaceConflictError(
+            "Space 成员顺序已发生变化，请刷新后重试",
+            code="member_order_conflict",
+        ) from error
     return _space_response(space, len(reordered))
 
 
@@ -543,7 +572,10 @@ async def delete_space(
 ) -> SpaceDeleteResponse:
     space = await _owned_space(session, user_id, space_id)
     if space.version != expected_version:
-        raise SpaceConflictError("Space 已被修改，请刷新后重试")
+        raise SpaceConflictError(
+            "Space 已被修改，请刷新后重试",
+            code="version_conflict",
+        )
     member_count = await _member_count(session, user_id, space_id)
     result = await session.execute(
         delete(Space)
@@ -556,7 +588,10 @@ async def delete_space(
     )
     if result.rowcount != 1:  # type: ignore[attr-defined]
         await session.rollback()
-        raise SpaceConflictError("Space 已被修改，请刷新后重试")
+        raise SpaceConflictError(
+            "Space 已被修改，请刷新后重试",
+            code="version_conflict",
+        )
     await session.commit()
     return SpaceDeleteResponse(
         message="Space 已删除，网站仍保留在资料库中",

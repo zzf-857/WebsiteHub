@@ -108,13 +108,32 @@ def test_space_crud_uses_bounded_stable_pagination_and_versions(
     )
     assert [item["name"] for item in second_page.json()["items"]] == ["Charlie"]
     assert second_page.json()["next_cursor"] is None
-    assert client.get("/api/spaces", params={"cursor": "bad"}).status_code == 422
+    invalid_cursor = client.get("/api/spaces", params={"cursor": "bad"})
+    assert invalid_cursor.status_code == 422
+    assert invalid_cursor.json()["detail"]["code"] == "validation_error"
+    for mismatched_scope in (
+        {"sort": "name", "direction": "desc"},
+        {"sort": "updated", "direction": "asc"},
+    ):
+        response = client.get(
+            "/api/spaces",
+            params={
+                **mismatched_scope,
+                "limit": 2,
+                "cursor": first_payload["next_cursor"],
+            },
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "validation_error"
     assert client.get("/api/spaces", params={"limit": 101}).status_code == 422
     assert client.get(f"/api/spaces/{alpha['id']}", params={"limit": 101}).status_code == 422
 
     duplicate = client.post("/api/spaces", json={"name": "  Ａｌｐｈａ  "}, headers=ORIGIN)
     assert duplicate.status_code == 409
-    assert duplicate.json()["detail"] == "Space 名称已存在"
+    assert duplicate.json()["detail"] == {
+        "code": "duplicate_name",
+        "message": "Space 名称已存在",
+    }
 
     renamed = client.patch(
         f"/api/spaces/{alpha['id']}",
@@ -131,7 +150,28 @@ def test_space_crud_uses_bounded_stable_pagination_and_versions(
         headers=ORIGIN,
     )
     assert stale.status_code == 409
-    assert stale.json()["detail"] == "Space 已被修改，请刷新后重试"
+    assert stale.json()["detail"] == {
+        "code": "version_conflict",
+        "message": "Space 已被修改，请刷新后重试",
+    }
+
+    duplicate_rename = client.patch(
+        f"/api/spaces/{bravo['id']}",
+        json={"expected_version": 1, "name": "Product launch"},
+        headers=ORIGIN,
+    )
+    assert duplicate_rename.status_code == 409
+    assert duplicate_rename.json()["detail"]["code"] == "duplicate_name"
+    unchanged = client.get(f"/api/spaces/{bravo['id']}").json()
+    assert unchanged["name"] == "Bravo"
+    assert unchanged["version"] == 1
+
+    missing = client.get("/api/spaces/missing-space")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == {
+        "code": "not_found",
+        "message": "Space 不存在",
+    }
     assert (
         client.patch(
             f"/api/spaces/{alpha['id']}",
@@ -149,6 +189,7 @@ def test_members_support_multi_space_paging_reorder_and_non_destructive_delete(
     alpha = _site(client, "Alpha")
     bravo = _site(client, "Bravo")
     charlie = _site(client, "Charlie")
+    delta = _site(client, "Delta")
     primary = _space(client, "Primary")
     secondary = _space(client, "Secondary")
 
@@ -198,7 +239,18 @@ def test_members_support_multi_space_paging_reorder_and_non_destructive_delete(
         headers=ORIGIN,
     )
     assert duplicate.status_code == 409
-    assert duplicate.json()["detail"] == "网站已在该 Space 中"
+    assert duplicate.json()["detail"] == {
+        "code": "member_exists",
+        "message": "网站已在该 Space 中",
+    }
+
+    stale_add = client.post(
+        f"/api/spaces/{primary['id']}/members",
+        json={"expected_version": 3, "site_id": delta["id"]},
+        headers=ORIGIN,
+    )
+    assert stale_add.status_code == 409
+    assert stale_add.json()["detail"]["code"] == "version_conflict"
 
     first_page = client.get(f"/api/spaces/{primary['id']}", params={"limit": 2}).json()
     assert [member["site"]["name"] for member in first_page["members"]] == [
@@ -214,6 +266,12 @@ def test_members_support_multi_space_paging_reorder_and_non_destructive_delete(
         params={"limit": 2, "cursor": old_cursor},
     ).json()
     assert [member["site"]["name"] for member in second_page["members"]] == ["Charlie"]
+    wrong_space_cursor = client.get(
+        f"/api/spaces/{secondary['id']}",
+        params={"limit": 2, "cursor": old_cursor},
+    )
+    assert wrong_space_cursor.status_code == 422
+    assert wrong_space_cursor.json()["detail"]["code"] == "validation_error"
 
     no_origin = client.patch(
         f"/api/spaces/{primary['id']}/members/order",
@@ -253,6 +311,7 @@ def test_members_support_multi_space_paging_reorder_and_non_destructive_delete(
         params={"limit": 2, "cursor": old_cursor},
     )
     assert invalidated_page.status_code == 422
+    assert invalidated_page.json()["detail"]["code"] == "validation_error"
     ordered = client.get(f"/api/spaces/{primary['id']}").json()
     assert [member["site"]["name"] for member in ordered["members"]] == [
         "Charlie",
@@ -271,6 +330,7 @@ def test_members_support_multi_space_paging_reorder_and_non_destructive_delete(
         headers=ORIGIN,
     )
     assert invalid_anchor.status_code == 404
+    assert invalid_anchor.json()["detail"]["code"] == "member_not_found"
     duplicate_move = client.patch(
         f"/api/spaces/{primary['id']}/members/order",
         json={
@@ -281,6 +341,14 @@ def test_members_support_multi_space_paging_reorder_and_non_destructive_delete(
     )
     assert duplicate_move.status_code == 422
 
+    stale_remove = client.delete(
+        f"/api/spaces/{primary['id']}/members/{bravo['id']}",
+        params={"expected_version": 4},
+        headers=ORIGIN,
+    )
+    assert stale_remove.status_code == 409
+    assert stale_remove.json()["detail"]["code"] == "version_conflict"
+
     removed = client.delete(
         f"/api/spaces/{primary['id']}/members/{alpha['id']}",
         params={"expected_version": 5},
@@ -289,6 +357,13 @@ def test_members_support_multi_space_paging_reorder_and_non_destructive_delete(
     assert removed.status_code == 200, removed.text
     assert removed.json()["version"] == 6
     assert removed.json()["member_count"] == 2
+    missing_member = client.delete(
+        f"/api/spaces/{primary['id']}/members/{alpha['id']}",
+        params={"expected_version": 6},
+        headers=ORIGIN,
+    )
+    assert missing_member.status_code == 404
+    assert missing_member.json()["detail"]["code"] == "member_not_found"
     assert [
         member["site"]["id"]
         for member in client.get(f"/api/spaces/{secondary['id']}").json()["members"]
@@ -304,6 +379,7 @@ def test_members_support_multi_space_paging_reorder_and_non_destructive_delete(
         headers=ORIGIN,
     )
     assert stale_delete.status_code == 409
+    assert stale_delete.json()["detail"]["code"] == "version_conflict"
 
     deleted = client.delete(
         f"/api/spaces/{primary['id']}",
