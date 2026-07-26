@@ -598,3 +598,52 @@ async def delete_space(
         space_id=space_id,
         unlinked_site_count=member_count,
     )
+
+
+async def resolve_space_reference(
+    session: AsyncSession,
+    user_id: str,
+    reference: str,
+) -> Space | None:
+    """Find one of the account's Spaces by id or by exact name.
+
+    The Agent talks in names ("设计"), never ids, so a lookup by name is what
+    makes "把 Figma 移到设计" resolvable at all.  The name is normalised exactly
+    the way ``_space_name`` normalises it on write (NFKC + whitespace collapse +
+    casefold), otherwise a Space created through the UI would be unfindable
+    here.  The query is account-scoped like every other read in this module.
+    """
+
+    display = " ".join(unicodedata.normalize("NFKC", reference).split())
+    if not display:
+        return None
+    by_id = await session.scalar(
+        select(Space).where(Space.user_id == user_id, Space.id == display)
+    )
+    if by_id is not None:
+        return by_id
+    return await session.scalar(
+        select(Space).where(
+            Space.user_id == user_id,
+            Space.normalized_name == display.casefold(),
+        )
+    )
+
+
+async def is_member(
+    session: AsyncSession,
+    user_id: str,
+    space_id: str,
+    site_id: str,
+) -> bool:
+    """Whether a site currently belongs to a Space, within this account."""
+
+    return (
+        await session.scalar(
+            select(SpaceMember.site_id).where(
+                SpaceMember.user_id == user_id,
+                SpaceMember.space_id == space_id,
+                SpaceMember.site_id == site_id,
+            )
+        )
+    ) is not None

@@ -1,11 +1,13 @@
 "use client";
 
 import {
+  ArrowRight,
   Bookmark,
   Check,
   CircleAlert,
   ExternalLink,
   Loader,
+  PencilLine,
   Sparkles,
   User,
   Wrench,
@@ -20,7 +22,10 @@ import {
   agentToolLabel,
   describeAgentToolResult,
   normalizeAgentToolResult,
+  type AgentDraftAction,
   type AgentSiteDraft,
+  type AgentSiteUpdateDraft,
+  type AgentSpaceMembershipDraft,
   type AgentToolCall,
   type AgentToolLink,
   type AgentToolResult,
@@ -39,7 +44,7 @@ type ConversationThreadProps = {
   status: "submitted" | "streaming" | "ready" | "error";
   activeToolCalls: readonly AgentToolCall[];
   draftStates: Readonly<Record<string, AgentDraftState>>;
-  onConfirmDraft: (toolCallId: string, draft: AgentSiteDraft) => void;
+  onConfirmDraft: (toolCallId: string, action: AgentDraftAction) => void;
   errorText: string | null;
   errorCode: string | null;
 };
@@ -95,6 +100,50 @@ function ToolLinkList({ items }: Readonly<{ items: readonly AgentToolLink[] }>) 
   );
 }
 
+/** 三类草稿共用的确认区：待确认 / 保存中 / 已生效 / 失败四态都在这里。 */
+function DraftActions({
+  state,
+  icon,
+  idleLabel,
+  busyLabel,
+  doneLabel,
+  onConfirm,
+}: Readonly<{
+  state: AgentDraftState;
+  icon: React.ReactNode;
+  idleLabel: string;
+  busyLabel: string;
+  doneLabel: string;
+  onConfirm: () => void;
+}>) {
+  return (
+    <>
+      <div className="draft-card-actions">
+        {state.status === "saved" ? (
+          <span className="draft-card-done">
+            <Check aria-hidden="true" />
+            {doneLabel}
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="draft-confirm-button"
+            disabled={state.status === "saving"}
+            onClick={onConfirm}
+          >
+            {state.status === "saving" ? <Loader className="spin" aria-hidden="true" /> : icon}
+            {state.status === "saving" ? busyLabel : idleLabel}
+          </button>
+        )}
+        <span className="draft-card-hint">Agent 不会自行写入，需要你确认。</span>
+      </div>
+      {state.status === "error" && state.message && (
+        <p className="draft-card-error">{state.message}</p>
+      )}
+    </>
+  );
+}
+
 function DraftCard({
   toolCallId,
   draft,
@@ -106,7 +155,7 @@ function DraftCard({
   draft: AgentSiteDraft;
   duplicate: AgentToolLink | null;
   state: AgentDraftState;
-  onConfirm: (toolCallId: string, draft: AgentSiteDraft) => void;
+  onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
 }>) {
   return (
     <div className="draft-card">
@@ -125,32 +174,117 @@ function DraftCard({
           资料库里已有相似记录「{duplicate.name}」，确认后会新增一条。
         </p>
       )}
-      <div className="draft-card-actions">
-        {state.status === "saved" ? (
-          <span className="draft-card-done">
-            <Check aria-hidden="true" />
-            已保存到资料库
-          </span>
-        ) : (
-          <button
-            type="button"
-            className="draft-confirm-button"
-            disabled={state.status === "saving"}
-            onClick={() => onConfirm(toolCallId, draft)}
-          >
-            {state.status === "saving" ? (
-              <Loader className="spin" aria-hidden="true" />
-            ) : (
-              <Bookmark aria-hidden="true" />
-            )}
-            {state.status === "saving" ? "保存中…" : "确认保存"}
-          </button>
+      <DraftActions
+        state={state}
+        icon={<Bookmark aria-hidden="true" />}
+        idleLabel="确认保存"
+        busyLabel="保存中…"
+        doneLabel="已保存到资料库"
+        onConfirm={() => onConfirm(toolCallId, { kind: "site", draft })}
+      />
+    </div>
+  );
+}
+
+const UPDATE_FIELD_LABELS = {
+  name: "名称",
+  description: "说明",
+  category: "分类",
+  tags: "标签",
+  pinned: "置顶",
+} as const;
+
+function updateFieldText(
+  field: keyof typeof UPDATE_FIELD_LABELS,
+  site: AgentToolLink,
+): string {
+  if (field === "name") return site.name;
+  if (field === "description") return site.description || "（空）";
+  if (field === "category") return site.category || "（无）";
+  if (field === "tags") return site.tags.length > 0 ? site.tags.join("、") : "（无）";
+  return site.pinned ? "是" : "否";
+}
+
+function SiteUpdateCard({
+  toolCallId,
+  draft,
+  state,
+  onConfirm,
+}: Readonly<{
+  toolCallId: string;
+  draft: AgentSiteUpdateDraft;
+  state: AgentDraftState;
+  onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
+}>) {
+  // 只列出草稿真的要改的字段：把没变的字段也排进 diff 只会淹没重点。
+  const fields = (Object.keys(UPDATE_FIELD_LABELS) as (keyof typeof UPDATE_FIELD_LABELS)[]).filter(
+    (field) => draft.changes[field] !== undefined,
+  );
+
+  return (
+    <div className="draft-card" data-variant="update">
+      <div className="draft-card-main">
+        <strong>{draft.before.name}</strong>
+        {draft.before.url && (
+          <a href={draft.before.url} target="_blank" rel="noreferrer noopener">
+            {hostOf(draft.before.url)}
+            <ExternalLink aria-hidden="true" />
+          </a>
         )}
-        <span className="draft-card-hint">Agent 不会自行写入，需要你确认。</span>
       </div>
-      {state.status === "error" && state.message && (
-        <p className="draft-card-error">{state.message}</p>
-      )}
+      <dl className="draft-diff">
+        {fields.map((field) => (
+          <div className="draft-diff-row" key={field}>
+            <dt>{UPDATE_FIELD_LABELS[field]}</dt>
+            <dd>
+              <span className="draft-diff-before">{updateFieldText(field, draft.before)}</span>
+              <ArrowRight aria-hidden="true" />
+              <span className="draft-diff-after">{updateFieldText(field, draft.after)}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <DraftActions
+        state={state}
+        icon={<PencilLine aria-hidden="true" />}
+        idleLabel="确认修改"
+        busyLabel="修改中…"
+        doneLabel="修改已生效"
+        onConfirm={() => onConfirm(toolCallId, { kind: "site_update", draft })}
+      />
+    </div>
+  );
+}
+
+function SpaceMembershipCard({
+  toolCallId,
+  draft,
+  state,
+  onConfirm,
+}: Readonly<{
+  toolCallId: string;
+  draft: AgentSpaceMembershipDraft;
+  state: AgentDraftState;
+  onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
+}>) {
+  const adding = draft.action === "add";
+  return (
+    <div className="draft-card" data-variant="membership">
+      <div className="draft-card-main">
+        <strong>{draft.siteName}</strong>
+      </div>
+      <p className="draft-card-description">
+        {adding ? "将加入 Space" : "将移出 Space"}「{draft.spaceName}」
+        {adding ? "。" : "，网站本身仍保留在资料库中。"}
+      </p>
+      <DraftActions
+        state={state}
+        icon={<PencilLine aria-hidden="true" />}
+        idleLabel={adding ? "确认加入" : "确认移出"}
+        busyLabel="处理中…"
+        doneLabel={adding ? "已加入 Space" : "已移出 Space"}
+        onConfirm={() => onConfirm(toolCallId, { kind: "space_membership", draft })}
+      />
     </div>
   );
 }
@@ -162,7 +296,7 @@ function ToolCard({
 }: Readonly<{
   result: AgentToolResult;
   draftState: AgentDraftState;
-  onConfirmDraft: (toolCallId: string, draft: AgentSiteDraft) => void;
+  onConfirmDraft: (toolCallId: string, action: AgentDraftAction) => void;
 }>) {
   const view = describeAgentToolResult(result.name, result.result);
   const source = "source" in view ? view.source : null;
@@ -209,6 +343,23 @@ function ToolCard({
           onConfirm={onConfirmDraft}
         />
       )}
+      {view.kind === "site-update" && (
+        <SiteUpdateCard
+          toolCallId={result.toolCallId}
+          draft={view.draft}
+          state={draftState}
+          onConfirm={onConfirmDraft}
+        />
+      )}
+      {view.kind === "space-membership" && (
+        <SpaceMembershipCard
+          toolCallId={result.toolCallId}
+          draft={view.draft}
+          state={draftState}
+          onConfirm={onConfirmDraft}
+        />
+      )}
+      {view.kind === "noop" && <p className="tool-card-note">{view.message}</p>}
       {view.kind === "rejected" && <p className="tool-card-note">{view.reason}</p>}
       {view.kind === "error" && (
         <p className="tool-card-note" data-tone="danger">

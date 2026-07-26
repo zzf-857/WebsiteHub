@@ -23,6 +23,8 @@ import { StaggerList } from "@/components/react-bits/stagger-list";
 import { SiteFavicon } from "@/components/site-favicon";
 import {
   confirmAgentSiteDraft,
+  confirmAgentSiteUpdate,
+  confirmAgentSpaceMembership,
   listAgentConversations,
   loadAgentConversation,
 } from "@/lib/agent-client";
@@ -36,7 +38,7 @@ import {
   normalizeAgentToolResult,
   toAgentUIMessages,
   type AgentConversationGroup,
-  type AgentSiteDraft,
+  type AgentDraftAction,
   type AgentStreamError,
   type AgentToolCall,
   type AgentToolLink,
@@ -486,10 +488,18 @@ export function AgentPanel() {
     submit();
   };
 
-  const handleConfirmDraft = useCallback(async (toolCallId: string, draft: AgentSiteDraft) => {
+  // 收录 / 修改 / Space 变更三类草稿共用一条确认链路：都在这里落到普通的
+  // library / spaces 接口上，写入授权始终来自用户会话，而不是 Agent。
+  const handleConfirmDraft = useCallback(async (toolCallId: string, action: AgentDraftAction) => {
     setDraftStates((current) => ({ ...current, [toolCallId]: { status: "saving" } }));
     try {
-      await confirmAgentSiteDraft(draft);
+      if (action.kind === "site") {
+        await confirmAgentSiteDraft(action.draft);
+      } else if (action.kind === "site_update") {
+        await confirmAgentSiteUpdate(action.draft);
+      } else {
+        await confirmAgentSpaceMembership(action.draft);
+      }
       setDraftStates((current) => ({ ...current, [toolCallId]: { status: "saved" } }));
     } catch (failure: unknown) {
       setDraftStates((current) => ({

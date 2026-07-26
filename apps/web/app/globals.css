@@ -4216,6 +4216,66 @@ textarea:focus-visible {
   line-height: 1.6;
 }
 
+/* 阶段C：修改类草稿的改前/改后 diff。
+   只列出草稿真的要改的字段，未变字段不进这张表。 */
+
+.draft-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+}
+
+.draft-diff-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.draft-diff-row dt {
+  flex: 0 0 40px;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.draft-diff-row dd {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.draft-diff-row dd svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  align-self: center;
+  color: var(--text-faint);
+  stroke-width: 1.8;
+}
+
+/* 改前弱化并加删除线，改后用青柠强调色——一眼就能看出方向 */
+.draft-diff-before {
+  color: var(--text-subtle);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.draft-diff-after {
+  color: var(--accent-strong);
+  font-weight: 550;
+}
+
 /* 阶段B：等待动画（时长由组件 inline style 覆盖） */
 
 .spin {

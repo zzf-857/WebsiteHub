@@ -5,6 +5,7 @@ import {
   AgentContractError,
   agentErrorDetails,
   agentSourceLabels,
+  agentToolLabel,
   describeAgentToolResult,
   latestAgentUserText,
   MAX_AGENT_MESSAGE_LENGTH,
@@ -416,4 +417,136 @@ test("extracts structured error details and falls back to readable messages", ()
   assert.equal(agentErrorDetails(401, "not-json").message, "登录状态已失效，请重新登录");
   assert.deepEqual(agentErrorDetails(503, {}), { message: "Agent 服务暂时不可用，请稍后重试" });
   assert.deepEqual(agentErrorDetails(500, null), { message: "Agent 服务暂时不可用，请稍后重试" });
+});
+
+
+function siteUpdateResult(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    status: "awaiting_confirmation",
+    message: "修改草稿已生成，等待用户在界面上确认后才会写入。",
+    draft: {
+      kind: "site_update",
+      site_id: "site-1",
+      expected_version: 4,
+      before: {
+        site_id: "site-1",
+        name: "Figma",
+        url: "https://figma.com",
+        description: "界面设计工具",
+        category: "未分类",
+        tags: [],
+        pinned: false,
+      },
+      changes: { category: "设计", pinned: true },
+      after: {
+        site_id: "site-1",
+        name: "Figma",
+        url: "https://figma.com",
+        description: "界面设计工具",
+        category: "设计",
+        tags: [],
+        pinned: true,
+      },
+      ...overrides,
+    },
+  };
+}
+
+test("修改草稿被投影成带改前/改后的 site-update 视图", () => {
+  const view = describeAgentToolResult("propose_site_update", siteUpdateResult());
+  assert.equal(view.kind, "site-update");
+  if (view.kind !== "site-update") return;
+  assert.equal(view.draft.siteId, "site-1");
+  // 乐观锁令牌必须原样带到前端，否则确认时无法检测冲突。
+  assert.equal(view.draft.expectedVersion, 4);
+  assert.deepEqual(view.draft.changes, { category: "设计", pinned: true });
+  assert.equal(view.draft.before.pinned, false);
+  assert.equal(view.draft.after.category, "设计");
+});
+
+test("changes 里的空字符串与 false 是合法改动，不能被当成未改", () => {
+  const view = describeAgentToolResult(
+    "propose_site_update",
+    siteUpdateResult({ changes: { description: "", pinned: false } }),
+  );
+  assert.equal(view.kind, "site-update");
+  if (view.kind !== "site-update") return;
+  // 用 typeof 判断而不是真值判断：清空说明、取消置顶都必须能表达。
+  assert.deepEqual(view.draft.changes, { description: "", pinned: false });
+});
+
+test("缺少乐观锁版本或改动集合的修改草稿降级为 raw，绝不半渲染", () => {
+  const noVersion = describeAgentToolResult(
+    "propose_site_update",
+    siteUpdateResult({ expected_version: 0 }),
+  );
+  assert.equal(noVersion.kind, "raw");
+
+  const noChanges = describeAgentToolResult(
+    "propose_site_update",
+    siteUpdateResult({ changes: {} }),
+  );
+  assert.equal(noChanges.kind, "raw");
+});
+
+test("无需修改时给出 noop 而不是一张点了没用的确认卡", () => {
+  const view = describeAgentToolResult("propose_site_update", {
+    status: "noop",
+    message: "该网站当前已经是这个状态，没有需要修改的内容。",
+    site: { name: "Figma" },
+  });
+  assert.equal(view.kind, "noop");
+  if (view.kind !== "noop") return;
+  assert.match(view.message, /没有需要修改/u);
+});
+
+test("Space 变更草稿被投影成 space-membership 视图", () => {
+  const view = describeAgentToolResult("propose_space_membership", {
+    status: "awaiting_confirmation",
+    draft: {
+      kind: "space_membership",
+      action: "add",
+      site_id: "site-1",
+      site_name: "Figma",
+      space_id: "space-1",
+      space_name: "设计",
+      expected_version: 2,
+    },
+  });
+  assert.equal(view.kind, "space-membership");
+  if (view.kind !== "space-membership") return;
+  assert.equal(view.draft.action, "add");
+  assert.equal(view.draft.spaceName, "设计");
+  assert.equal(view.draft.expectedVersion, 2);
+});
+
+test("非法 action 的 Space 草稿降级为 raw", () => {
+  const view = describeAgentToolResult("propose_space_membership", {
+    status: "awaiting_confirmation",
+    draft: {
+      action: "delete_everything",
+      site_id: "site-1",
+      site_name: "Figma",
+      space_id: "space-1",
+      space_name: "设计",
+      expected_version: 2,
+    },
+  });
+  assert.equal(view.kind, "raw");
+});
+
+test("找不到 Space 时把已有 Space 一并说清楚", () => {
+  const view = describeAgentToolResult("propose_space_membership", {
+    status: "rejected",
+    reason: "没有找到名为“不存在”的 Space。",
+    available_spaces: ["设计", "阅读"],
+  });
+  assert.equal(view.kind, "rejected");
+  if (view.kind !== "rejected") return;
+  assert.match(view.reason, /设计、阅读/u);
+});
+
+test("两个新工具都有中文标签，不会在界面上露出裸函数名", () => {
+  assert.equal(agentToolLabel("propose_site_update"), "生成修改草稿");
+  assert.equal(agentToolLabel("propose_space_membership"), "生成 Space 变更草稿");
 });

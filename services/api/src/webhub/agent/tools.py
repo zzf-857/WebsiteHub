@@ -9,17 +9,21 @@ goes through the existing library/spaces services, which already enforce
 per-account ownership.
 
 **Reads are free, writes are proposals.**  The Agent may look at anything the
-account owns, but it cannot create or modify a Site on its own: ``propose_site``
-returns a draft that the browser must confirm.  That keeps the
-human-in-the-loop confirmation from Implementation Plan §5.4 honest even if the
-model is talked into "just saving it".
+account owns, but it cannot create or modify anything on its own: every
+``propose_*`` tool returns a draft that the browser must confirm, and the write
+that follows goes through the ordinary library/spaces endpoints authorised by
+the user's own session.  That keeps the human-in-the-loop confirmation from
+Implementation Plan §5.4 honest even if the model is talked into "just saving
+it".  Modifying drafts additionally carry the row's current ``version``, so a
+change made elsewhere between proposal and click surfaces as a conflict rather
+than silently overwriting.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -71,6 +75,40 @@ class ProposeSiteArgs(BaseModel):
     description: str = Field(default="", max_length=1_000, description="一句话说明网站做什么")
     category: str = Field(default="", max_length=80, description="分类，每个网站只能有一个")
     tags: list[str] = Field(default_factory=list, max_length=12, description="细粒度标签")
+
+
+class ProposeSiteUpdateArgs(BaseModel):
+    """Every editable field is optional and defaults to ``None`` = "leave alone".
+
+    ``None`` and "cleared" must stay distinguishable: omitting ``description``
+    keeps the current text, while passing ``""`` clears it.  Collapsing the two
+    would let a rename silently wipe a description the user never mentioned.
+    """
+
+    site_id: str = Field(min_length=1, max_length=36, description="要修改的站内网站 ID")
+    name: str | None = Field(default=None, max_length=160, description="新的网站名称，不改就不要传")
+    description: str | None = Field(
+        default=None,
+        max_length=1_000,
+        description="新的一句话说明；传空字符串表示清空，不改就不要传",
+    )
+    category: str | None = Field(
+        default=None,
+        max_length=80,
+        description="新的分类名（每个网站只能有一个），不改就不要传",
+    )
+    tags: list[str] | None = Field(
+        default=None,
+        max_length=12,
+        description="新的标签集合，会整体替换原有标签；不改就不要传",
+    )
+    pinned: bool | None = Field(default=None, description="是否置顶（星标），不改就不要传")
+
+
+class ProposeSpaceMembershipArgs(BaseModel):
+    site_id: str = Field(min_length=1, max_length=36, description="站内网站 ID")
+    space: str = Field(min_length=1, max_length=120, description="Space 的名称或 ID")
+    action: Literal["add", "remove"] = Field(description="add=移入该 Space，remove=移出该 Space")
 
 
 def _site_summary(site: Any) -> dict[str, Any]:
@@ -247,6 +285,149 @@ async def _propose_site(context: AgentToolContext, args: ProposeSiteArgs) -> dic
     }
 
 
+def _normalized_tags(values: list[str]) -> list[str]:
+    """Trim, drop blanks, de-duplicate case-insensitively, keep first spelling."""
+
+    seen: dict[str, str] = {}
+    for value in values:
+        tag = " ".join(value.split())
+        if tag:
+            seen.setdefault(tag.casefold(), tag)
+    return list(seen.values())[:12]
+
+
+async def _propose_site_update(
+    context: AgentToolContext,
+    args: ProposeSiteUpdateArgs,
+) -> dict[str, Any]:
+    """Return a before/after diff for the user to confirm; never writes.
+
+    The draft carries the site's current ``version``.  The browser sends it back
+    on confirmation, so a site edited elsewhere between proposal and click makes
+    the write fail with a conflict instead of silently overwriting that edit.
+    """
+
+    async with context.database.sessions() as session:
+        try:
+            # Account-scoped by construction: a site_id belonging to another
+            # account simply does not resolve.
+            site = await library_service.get_site(session, context.user_id, args.site_id)
+        except LibraryError as error:
+            return {"status": "rejected", "reason": error.message}
+
+    before = _site_summary(site)
+    changes: dict[str, Any] = {}
+
+    if args.name is not None:
+        name = " ".join(args.name.split())
+        if not name:
+            return {"status": "rejected", "reason": "网站名称不能为空"}
+        if name != site.name:
+            changes["name"] = name
+    if args.description is not None:
+        description = args.description.strip()
+        if description != (site.description or ""):
+            changes["description"] = description
+    if args.category is not None:
+        category = " ".join(args.category.split())
+        if not category:
+            return {"status": "rejected", "reason": "分类不能为空，每个网站必须有一个分类"}
+        if category != site.category.name:
+            changes["category"] = category
+    if args.tags is not None:
+        tags = _normalized_tags(args.tags)
+        if sorted(tags) != sorted(tag.name for tag in site.tags):
+            changes["tags"] = tags
+    if args.pinned is not None and args.pinned != site.pinned:
+        changes["pinned"] = args.pinned
+
+    if not changes:
+        # Saying "nothing to change" beats generating a draft whose confirm
+        # button would be a no-op the user cannot tell apart from a real edit.
+        return {
+            "status": "noop",
+            "message": "该网站当前已经是这个状态，没有需要修改的内容。",
+            "site": before,
+        }
+
+    return {
+        "status": "awaiting_confirmation",
+        "message": "修改草稿已生成，等待用户在界面上确认后才会写入。",
+        "draft": {
+            "kind": "site_update",
+            "site_id": site.id,
+            "expected_version": site.version,
+            "before": before,
+            "changes": changes,
+            # ``after`` is ``before`` with ``changes`` applied, so the card can
+            # render a diff without re-implementing the merge in the browser.
+            "after": {**before, **changes},
+        },
+    }
+
+
+async def _propose_space_membership(
+    context: AgentToolContext,
+    args: ProposeSpaceMembershipArgs,
+) -> dict[str, Any]:
+    """Return a draft for moving a site into or out of a Space; never writes."""
+
+    async with context.database.sessions() as session:
+        try:
+            site = await library_service.get_site(session, context.user_id, args.site_id)
+        except LibraryError as error:
+            return {"status": "rejected", "reason": error.message}
+
+        space = await spaces_service.resolve_space_reference(session, context.user_id, args.space)
+        if space is None:
+            # Creating a Space is itself a write; propose nothing and let the
+            # user (or a later turn) decide, listing what does exist.
+            try:
+                listing = await spaces_service.list_spaces(
+                    session,
+                    context.user_id,
+                    sort="updated",
+                    direction="desc",
+                    cursor=None,
+                    limit=MAX_TOOL_LIMIT,
+                )
+                available = [item.name for item in listing.items]
+            except SpaceError:
+                available = []
+            return {
+                "status": "rejected",
+                "reason": f"没有找到名为“{args.space}”的 Space。",
+                "available_spaces": available,
+            }
+
+        member = await spaces_service.is_member(session, context.user_id, space.id, site.id)
+
+    if (args.action == "add") == member:
+        return {
+            "status": "noop",
+            "message": (
+                f"“{site.name}”已经在 Space“{space.name}”里了。"
+                if member
+                else f"“{site.name}”本来就不在 Space“{space.name}”里。"
+            ),
+            "site": _site_summary(site),
+        }
+
+    return {
+        "status": "awaiting_confirmation",
+        "message": "Space 变更草稿已生成，等待用户在界面上确认后才会写入。",
+        "draft": {
+            "kind": "space_membership",
+            "action": args.action,
+            "site_id": site.id,
+            "site_name": site.name,
+            "space_id": space.id,
+            "space_name": space.name,
+            "expected_version": space.version,
+        },
+    }
+
+
 def build_tools(context: AgentToolContext) -> Sequence[Any]:
     """Build the LangChain tool list for one account-scoped turn."""
 
@@ -306,6 +487,22 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
             ProposeSiteArgs,
             _propose_site,
         ),
+        structured(
+            "propose_site_update",
+            "修改一个**已经收藏**的网站：改名、改说明、换分类、换标签、置顶或取消置顶。"
+            "需要先用 search_library 拿到 site_id。只传要改的字段，不改的字段一律省略。"
+            "它同样不会写库，调用后必须说“请确认后生效”，不能声称已经改好。",
+            ProposeSiteUpdateArgs,
+            _propose_site_update,
+        ),
+        structured(
+            "propose_space_membership",
+            "把一个已收藏的网站移入或移出某个 Space。需要先用 search_library 拿到 site_id，"
+            "用 list_spaces 确认 Space 名称。它不会写库，也不会新建 Space，"
+            "调用后必须说“请确认后生效”。",
+            ProposeSpaceMembershipArgs,
+            _propose_space_membership,
+        ),
     ]
     if context.search_binding is not None:
         tools.append(
@@ -325,6 +522,8 @@ __all__ = [
     "SOURCE_WEB",
     "AgentToolContext",
     "ProposeSiteArgs",
+    "ProposeSiteUpdateArgs",
+    "ProposeSpaceMembershipArgs",
     "SearchLibraryArgs",
     "build_tools",
 ]

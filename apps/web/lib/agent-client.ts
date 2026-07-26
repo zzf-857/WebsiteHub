@@ -7,6 +7,8 @@ import {
   type AgentConversationDetail,
   type AgentConversationHistory,
   type AgentSiteDraft,
+  type AgentSiteUpdateDraft,
+  type AgentSpaceMembershipDraft,
 } from "./agent-contract.ts";
 import {
   createLibraryCategory,
@@ -14,8 +16,10 @@ import {
   createLibraryTag,
   listLibraryCategories,
   listLibraryTags,
+  updateLibrarySite,
 } from "./library-client.ts";
-import type { LibrarySite } from "./library-contract.ts";
+import type { LibrarySite, LibrarySiteUpdateInput } from "./library-contract.ts";
+import { addSpaceMember, removeSpaceMember } from "./space-client.ts";
 
 const CONVERSATION_BASE = "/api/backend/conversations";
 export const AGENT_CHAT_API = "/api/backend/agent/chat";
@@ -165,4 +169,62 @@ export async function confirmAgentSiteDraft(draft: AgentSiteDraft): Promise<Libr
     ...(categoryId ? { categoryId } : {}),
     ...(tagIds.length > 0 ? { tagIds } : {}),
   });
+}
+
+/** 把标签名解析成 id，缺失的现建。顺序保持草稿里的顺序。 */
+async function resolveTagIds(names: readonly string[]): Promise<string[]> {
+  if (names.length === 0) return [];
+  const existing = await listLibraryTags();
+  const ids: string[] = [];
+  for (const name of names) {
+    const found = findByName(existing, name);
+    ids.push((found ?? (await createLibraryTag(name))).id);
+  }
+  return ids;
+}
+
+/**
+ * Apply a confirmed `propose_site_update` draft.
+ *
+ * Only the fields the draft actually proposes are sent, so confirming a rename
+ * cannot quietly reset a description or a category the user never mentioned.
+ * `expectedVersion` comes from the moment the draft was generated: if the site
+ * changed in between, the backend answers 409 and this throws rather than
+ * clobbering that change.
+ */
+export async function confirmAgentSiteUpdate(draft: AgentSiteUpdateDraft): Promise<LibrarySite> {
+  const { changes } = draft;
+  const input: LibrarySiteUpdateInput = { expectedVersion: draft.expectedVersion };
+
+  if (changes.name !== undefined) input.name = changes.name;
+  // 空字符串在这里的语义是「清空说明」，对应后端的 null。
+  if (changes.description !== undefined) input.description = changes.description || null;
+  if (changes.pinned !== undefined) input.pinned = changes.pinned;
+  if (changes.category !== undefined) {
+    const categories = await listLibraryCategories();
+    const existing = findByName(categories, changes.category);
+    input.categoryId = (existing ?? (await createLibraryCategory(changes.category))).id;
+  }
+  if (changes.tags !== undefined) input.tagIds = await resolveTagIds(changes.tags);
+
+  return updateLibrarySite(draft.siteId, input);
+}
+
+/**
+ * Apply a confirmed `propose_space_membership` draft.
+ *
+ * The write goes through the ordinary Space endpoints, authorised by the user's
+ * own session — the Agent only ever produced the proposal.
+ */
+export async function confirmAgentSpaceMembership(
+  draft: AgentSpaceMembershipDraft,
+): Promise<void> {
+  if (draft.action === "add") {
+    await addSpaceMember(draft.spaceId, {
+      expectedVersion: draft.expectedVersion,
+      siteId: draft.siteId,
+    });
+    return;
+  }
+  await removeSpaceMember(draft.spaceId, draft.siteId, draft.expectedVersion);
 }

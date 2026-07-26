@@ -28,7 +28,9 @@ export type AgentToolName =
   | "list_tags"
   | "list_spaces"
   | "web_search"
-  | "propose_site";
+  | "propose_site"
+  | "propose_site_update"
+  | "propose_space_membership";
 
 const AGENT_TOOL_LABELS: Record<string, string> = {
   search_library: "检索资料库",
@@ -38,6 +40,8 @@ const AGENT_TOOL_LABELS: Record<string, string> = {
   list_spaces: "读取 Space",
   web_search: "联网搜索",
   propose_site: "生成收录草稿",
+  propose_site_update: "生成修改草稿",
+  propose_space_membership: "生成 Space 变更草稿",
 };
 
 export function agentToolLabel(name: string): string {
@@ -175,6 +179,39 @@ export type AgentSiteDraft = {
   tags: string[];
 };
 
+/** 只包含用户明确要改的字段；缺席 = 保持原样。 */
+export type AgentSiteUpdateChanges = {
+  name?: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  pinned?: boolean;
+};
+
+export type AgentSiteUpdateDraft = {
+  siteId: string;
+  // 草稿生成那一刻的行版本。确认时原样回传，中途被别处改过就报冲突而不是覆盖。
+  expectedVersion: number;
+  before: AgentToolLink;
+  changes: AgentSiteUpdateChanges;
+  after: AgentToolLink;
+};
+
+export type AgentSpaceMembershipDraft = {
+  action: "add" | "remove";
+  siteId: string;
+  siteName: string;
+  spaceId: string;
+  spaceName: string;
+  expectedVersion: number;
+};
+
+/** 确认按钮回传给面板的东西：三类草稿共用一个入口，避免三套并行的状态管道。 */
+export type AgentDraftAction =
+  | { kind: "site"; draft: AgentSiteDraft }
+  | { kind: "site_update"; draft: AgentSiteUpdateDraft }
+  | { kind: "space_membership"; draft: AgentSpaceMembershipDraft };
+
 export type AgentToolFacet = {
   id: string;
   name: string;
@@ -186,6 +223,9 @@ export type AgentToolView =
   | { kind: "links"; source: string | null; items: AgentToolLink[]; matchedCount: number | null }
   | { kind: "facets"; source: string | null; items: AgentToolFacet[] }
   | { kind: "draft"; draft: AgentSiteDraft; duplicate: AgentToolLink | null }
+  | { kind: "site-update"; draft: AgentSiteUpdateDraft }
+  | { kind: "space-membership"; draft: AgentSpaceMembershipDraft }
+  | { kind: "noop"; message: string }
   | { kind: "rejected"; reason: string }
   | { kind: "error"; source: string | null; message: string }
   | { kind: "raw"; text: string };
@@ -234,6 +274,69 @@ function toDraft(value: unknown): AgentSiteDraft | null {
   };
 }
 
+function asVersion(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 1 ? (value as number) : null;
+}
+
+// before/after 复用 AgentToolLink 的形状（工具返回的就是 _site_summary），
+// 但这里的条目没有 url 时也要能渲染，所以缺 url 只让它变成 null，不整体判废。
+function toSiteFields(value: unknown): AgentToolLink | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const name = asTrimmed(candidate.name);
+  if (name === null) return null;
+  return {
+    siteId: asTrimmed(candidate.site_id),
+    name,
+    url: asWebUrl(candidate.url),
+    description: asTrimmed(candidate.description),
+    category: asTrimmed(candidate.category),
+    tags: asStringList(candidate.tags),
+    pinned: candidate.pinned === true,
+  };
+}
+
+// 只挑出后端真正给了的键。用 `in` 判断而不是真值判断，
+// 否则 description: "" 与 pinned: false 这两个合法的改动会被当成没改。
+function toSiteUpdateChanges(value: unknown): AgentSiteUpdateChanges | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const changes: AgentSiteUpdateChanges = {};
+  if (typeof candidate.name === "string") changes.name = candidate.name;
+  if (typeof candidate.description === "string") changes.description = candidate.description;
+  if (typeof candidate.category === "string") changes.category = candidate.category;
+  if (Array.isArray(candidate.tags)) changes.tags = asStringList(candidate.tags);
+  if (typeof candidate.pinned === "boolean") changes.pinned = candidate.pinned;
+  return Object.keys(changes).length > 0 ? changes : null;
+}
+
+function toSiteUpdateDraft(value: unknown): AgentSiteUpdateDraft | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const siteId = asTrimmed(candidate.site_id);
+  const expectedVersion = asVersion(candidate.expected_version);
+  const before = toSiteFields(candidate.before);
+  const after = toSiteFields(candidate.after);
+  const changes = toSiteUpdateChanges(candidate.changes);
+  if (siteId === null || expectedVersion === null || before === null || after === null) return null;
+  if (changes === null) return null;
+  return { siteId, expectedVersion, before, changes, after };
+}
+
+function toSpaceMembershipDraft(value: unknown): AgentSpaceMembershipDraft | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const action = candidate.action === "add" || candidate.action === "remove" ? candidate.action : null;
+  const siteId = asTrimmed(candidate.site_id);
+  const siteName = asTrimmed(candidate.site_name);
+  const spaceId = asTrimmed(candidate.space_id);
+  const spaceName = asTrimmed(candidate.space_name);
+  const expectedVersion = asVersion(candidate.expected_version);
+  if (action === null || siteId === null || spaceId === null || expectedVersion === null) return null;
+  if (siteName === null || spaceName === null) return null;
+  return { action, siteId, siteName, spaceId, spaceName, expectedVersion };
+}
+
 const FACET_TOOLS = new Set(["list_categories", "list_tags", "list_spaces"]);
 
 /**
@@ -254,13 +357,39 @@ export function describeAgentToolResult(name: string, result: unknown): AgentToo
   const error = asTrimmed(payload.error);
   if (error !== null) return { kind: "error", source, message: error };
 
+  const status = asTrimmed(payload.status);
+
   if (name === "propose_site") {
-    if (asTrimmed(payload.status) === "rejected") {
+    if (status === "rejected") {
       return { kind: "rejected", reason: asTrimmed(payload.reason) ?? "该网址无法收录" };
     }
     const draft = toDraft(payload.draft);
     if (draft !== null) {
       return { kind: "draft", draft, duplicate: toLink(payload.duplicate) };
+    }
+  }
+
+  if (name === "propose_site_update" || name === "propose_space_membership") {
+    if (status === "rejected") {
+      const reason = asTrimmed(payload.reason) ?? "无法生成修改草稿";
+      const available = asStringList(payload.available_spaces);
+      // 目标 Space 不存在时把现有 Space 列出来，比只说一句「找不到」有用。
+      return {
+        kind: "rejected",
+        reason: available.length > 0 ? `${reason}已有的 Space：${available.join("、")}。` : reason,
+      };
+    }
+    if (status === "noop") {
+      return { kind: "noop", message: asTrimmed(payload.message) ?? "当前已经是这个状态，无需修改。" };
+    }
+    const draft =
+      name === "propose_site_update"
+        ? toSiteUpdateDraft(payload.draft)
+        : toSpaceMembershipDraft(payload.draft);
+    if (draft !== null) {
+      return name === "propose_site_update"
+        ? { kind: "site-update", draft: draft as AgentSiteUpdateDraft }
+        : { kind: "space-membership", draft: draft as AgentSpaceMembershipDraft };
     }
   }
 
