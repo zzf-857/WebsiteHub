@@ -807,3 +807,24 @@
     transition-duration: 0ms;
   }
 }
+
+/* 「全部打开」弹层的取消按钮：抽成共享组件后新增，样式与既有次要按钮一致 */
+.home-open-close {
+  align-self: flex-end;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  color: var(--text-subtle);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.home-open-close:hover {
+  color: var(--text);
+}
+
+.home-open-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

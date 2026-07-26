@@ -32,6 +32,7 @@ import {
 // 全站统一使用共享版网站图标（size 为像素值）；
 // 旧枚举尺寸按 small=20 / medium=24 / large=32 迁移
 import { SiteFavicon } from "@/components/site-favicon";
+import { OpenAllDialog, type OpenAllTarget } from "@/components/spaces/open-all-dialog";
 import { SpaceDialog } from "@/components/spaces/space-dialog";
 import {
   createSpace,
@@ -180,11 +181,13 @@ function SpaceNameForm({
 function SpaceCard({
   space,
   onOpen,
+  onOpenAll,
   onRename,
   onDelete,
 }: Readonly<{
   space: Space;
   onOpen: () => void;
+  onOpenAll: () => void;
   onRename: () => void;
   onDelete: () => void;
 }>) {
@@ -207,6 +210,16 @@ function SpaceCard({
           </button>
           <button className="icon-button space-danger-action" type="button" onClick={onDelete} aria-label={`删除 ${space.name}`} title="删除">
             <Trash2 aria-hidden="true" />
+          </button>
+          <button
+            className="space-button secondary"
+            type="button"
+            disabled={space.memberCount === 0}
+            onClick={onOpenAll}
+            title={space.memberCount === 0 ? "这个 Space 还没有网站" : "一次打开其中全部网站"}
+          >
+            <ExternalLink aria-hidden="true" />
+            全部打开
           </button>
           <button className="space-button secondary" type="button" onClick={onOpen}>
             <FolderOpen aria-hidden="true" />
@@ -307,6 +320,8 @@ export function SpaceWorkspace({
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [memberBusyId, setMemberBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 队列 Q7：入口此前只在首页且只覆盖最近 8 个 Space，第 9 个起全站无入口。
+  const [openAllTarget, setOpenAllTarget] = useState<OpenAllTarget | null>(null);
 
   useEffect(() => {
     if (initialSpaceId && !selectedSpaceId) {
@@ -781,6 +796,16 @@ export function SpaceWorkspace({
               <p>{detail.memberCount} 个网站，按自定义顺序排列。</p>
             </div>
             <div className="space-page-actions">
+              <button
+                className="space-button secondary"
+                type="button"
+                disabled={detail.memberCount === 0}
+                onClick={() => setOpenAllTarget(detail)}
+                title={detail.memberCount === 0 ? "这个 Space 还没有网站" : "一次打开其中全部网站"}
+              >
+                <ExternalLink aria-hidden="true" />
+                全部打开
+              </button>
               <button className="space-button secondary" type="button" onClick={() => openDialog({ kind: "rename", space: detail })}>
                 <Pencil aria-hidden="true" />
                 重命名
@@ -935,6 +960,7 @@ export function SpaceWorkspace({
                   setSelectedSpaceId(space.id);
                   router.push(`/spaces/${encodeURIComponent(space.id)}`);
                 }}
+                onOpenAll={() => setOpenAllTarget(space)}
                 onRename={() => openDialog({ kind: "rename", space })}
                 onDelete={() => void loadDeletePreview(space)}
               />
@@ -954,6 +980,10 @@ export function SpaceWorkspace({
   return (
     <>
       {selectedSpaceId ? renderDetail() : renderList()}
+
+      {openAllTarget && (
+        <OpenAllDialog space={openAllTarget} onClose={() => setOpenAllTarget(null)} />
+      )}
 
       <SpaceDialog
         open={dialog?.kind === "create"}
