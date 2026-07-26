@@ -25,6 +25,7 @@ import {
   confirmAgentSiteDraft,
   confirmAgentSiteUpdate,
   confirmAgentSpaceMembership,
+  recordAgentDraftConfirmation,
   listAgentConversations,
   loadAgentConversation,
 } from "@/lib/agent-client";
@@ -493,14 +494,35 @@ export function AgentPanel() {
   const handleConfirmDraft = useCallback(async (toolCallId: string, action: AgentDraftAction) => {
     setDraftStates((current) => ({ ...current, [toolCallId]: { status: "saving" } }));
     try {
+      let confirmation: Parameters<typeof recordAgentDraftConfirmation>[1];
       if (action.kind === "site") {
-        await confirmAgentSiteDraft(action.draft);
+        const created = await confirmAgentSiteDraft(action.draft);
+        confirmation = { toolCallId, kind: "site_created", siteId: created.id };
       } else if (action.kind === "site_update") {
-        await confirmAgentSiteUpdate(action.draft);
+        const updated = await confirmAgentSiteUpdate(action.draft);
+        confirmation = { toolCallId, kind: "site_updated", siteId: updated.id };
       } else {
         await confirmAgentSpaceMembership(action.draft);
+        confirmation = {
+          toolCallId,
+          kind: action.draft.action === "add" ? "space_member_added" : "space_member_removed",
+          siteId: action.draft.siteId,
+          spaceId: action.draft.spaceId,
+        };
       }
       setDraftStates((current) => ({ ...current, [toolCallId]: { status: "saved" } }));
+
+      // 把「已确认」写回会话，否则下一轮回放到的历史仍然说这张草稿没生效，
+      // Agent 会否认它自己刚存过的东西。这一步失败不能让已经成功的写入显示成失败：
+      // 用户的数据已经落库了，丢的只是一条转录记录。
+      const conversationId = conversationIdRef.current;
+      if (conversationId) {
+        try {
+          await recordAgentDraftConfirmation(conversationId, confirmation);
+        } catch {
+          // 有意吞掉：见上。
+        }
+      }
     } catch (failure: unknown) {
       setDraftStates((current) => ({
         ...current,

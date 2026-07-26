@@ -19,6 +19,8 @@ from .schemas import (
     ConversationHistoryResponse,
     ConversationRenameRequest,
     ConversationResponse,
+    DraftConfirmationRequest,
+    DraftConfirmationResponse,
     MessageAppendResponse,
     MessageListResponse,
     SlashCommandListResponse,
@@ -203,4 +205,36 @@ async def add_message(
         conversation=result.conversation,
         message=result.message,
         replayed=result.replayed,
+    )
+
+
+@router.post(
+    "/{conversation_id}/draft-confirmations",
+    response_model=DraftConfirmationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def confirm_draft(
+    conversation_id: str,
+    payload: DraftConfirmationRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> DraftConfirmationResponse:
+    """Record that the user confirmed one Agent draft.
+
+    The browser performs the actual write through the ordinary library/spaces
+    endpoints; this only tells the transcript it happened, so the next turn
+    does not replay a history claiming the draft is still pending.
+    """
+
+    return await _call(
+        service.record_draft_confirmation(
+            session,
+            identity.user.id,
+            conversation_id,
+            tool_call_id=payload.tool_call_id,
+            kind=payload.kind,
+            site_id=payload.site_id,
+            space_id=payload.space_id,
+        )
     )

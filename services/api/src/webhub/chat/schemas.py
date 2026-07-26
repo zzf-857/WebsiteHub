@@ -46,6 +46,35 @@ class UserMessageAppendRequest(StrictRequest):
     expected_version: int | None = Field(default=None, ge=1)
 
 
+DraftConfirmationKind = Literal[
+    "site_created",
+    "site_updated",
+    "space_member_added",
+    "space_member_removed",
+]
+
+
+class DraftConfirmationRequest(StrictRequest):
+    """Record that the user confirmed one Agent draft.
+
+    Deliberately carries only identifiers, never prose.  The sentence written
+    into the transcript is composed server-side from the rows themselves, so a
+    client cannot inject a claim about the library that is not true.
+    """
+
+    tool_call_id: str = Field(min_length=1, max_length=200)
+    kind: DraftConfirmationKind
+    site_id: str = Field(min_length=1, max_length=36)
+    space_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+
+class DraftConfirmationResponse(BaseModel):
+    message_id: str
+    conversation_id: str
+    recorded: bool
+    content: str
+
+
 class ConversationMessageResponse(BaseModel):
     id: str
     conversation_id: str

@@ -314,9 +314,16 @@ class LangGraphAgentRunner:
 
 
 def _history_messages(items: Sequence[Any]) -> list[Any]:
-    """Convert persisted conversation rows into LangChain messages."""
+    """Convert persisted conversation rows into LangChain messages.
 
-    from langchain_core.messages import AIMessage, HumanMessage
+    Only message *content* is replayed — tool calls and their results are not.
+    That is why confirmed drafts have to be written back as their own ``system``
+    row (see ``chat.service.record_draft_confirmation``): a tool result frozen
+    at ``awaiting_confirmation`` would otherwise be invisible here, and the
+    assistant's own prose ("请确认后保存") is the only thing the next turn sees.
+    """
+
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
     messages: list[Any] = []
     for item in items:
@@ -326,6 +333,10 @@ def _history_messages(items: Sequence[Any]) -> list[Any]:
             messages.append(HumanMessage(content=item.content))
         elif item.role == "assistant" and item.status == "complete":
             messages.append(AIMessage(content=item.content))
+        elif item.role == "system":
+            # Server-composed facts about what the user confirmed.  These are
+            # never authored by the model or the browser.
+            messages.append(SystemMessage(content=item.content))
     return messages
 
 

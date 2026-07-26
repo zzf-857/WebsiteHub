@@ -171,6 +171,47 @@ export async function confirmAgentSiteDraft(draft: AgentSiteDraft): Promise<Libr
   });
 }
 
+export type AgentDraftConfirmationKind =
+  | "site_created"
+  | "site_updated"
+  | "space_member_added"
+  | "space_member_removed";
+
+/**
+ * Tell the transcript that a draft was confirmed.
+ *
+ * The write itself already happened through the library/spaces endpoints; this
+ * only records the fact, because history replay reads message text and would
+ * otherwise keep showing the draft as still pending — which is how the Agent
+ * ended up insisting a site "was never saved" right after saving it.
+ *
+ * Deliberately sends identifiers only: the server composes the recorded
+ * sentence from the rows themselves, so the browser cannot write a claim about
+ * the library into history.
+ *
+ * Failures here are swallowed by the caller: losing a transcript note must not
+ * make a write the user already completed look like it failed.
+ */
+export async function recordAgentDraftConfirmation(
+  conversationId: string,
+  input: {
+    toolCallId: string;
+    kind: AgentDraftConfirmationKind;
+    siteId: string;
+    spaceId?: string;
+  },
+): Promise<void> {
+  await request(`/${encodeId(conversationId)}/draft-confirmations`, {
+    method: "POST",
+    body: JSON.stringify({
+      tool_call_id: input.toolCallId,
+      kind: input.kind,
+      site_id: input.siteId,
+      ...(input.spaceId ? { space_id: input.spaceId } : {}),
+    }),
+  });
+}
+
 /** 把标签名解析成 id，缺失的现建。顺序保持草稿里的顺序。 */
 async function resolveTagIds(names: readonly string[]): Promise<string[]> {
   if (names.length === 0) return [];
