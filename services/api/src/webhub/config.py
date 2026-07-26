@@ -112,6 +112,22 @@ class Settings:
             "WEBHUB_PROVIDER_TEST_TIMEOUT_SECONDS", 3
         )
     )
+    agent_request_timeout_seconds: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_AGENT_REQUEST_TIMEOUT_SECONDS", 60
+        )
+    )
+    agent_max_steps: int = field(
+        default_factory=lambda: _positive_environment_integer("WEBHUB_AGENT_MAX_STEPS", 12)
+    )
+    agent_history_messages: int = field(
+        default_factory=lambda: _positive_environment_integer(
+            "WEBHUB_AGENT_HISTORY_MESSAGES", 20
+        )
+    )
+    agent_tool_result_limit: int = field(
+        default_factory=lambda: _positive_environment_integer("WEBHUB_AGENT_TOOL_RESULT_LIMIT", 8)
+    )
     bookmark_upload_global_concurrency: int = field(
         default_factory=lambda: _positive_environment_integer(
             "WEBHUB_BOOKMARK_UPLOAD_GLOBAL_CONCURRENCY", 4
@@ -159,6 +175,10 @@ class Settings:
                 self.provider_test_max_tracked_accounts
             ),
             "provider_test_timeout_seconds": self.provider_test_timeout_seconds,
+            "agent_request_timeout_seconds": self.agent_request_timeout_seconds,
+            "agent_max_steps": self.agent_max_steps,
+            "agent_history_messages": self.agent_history_messages,
+            "agent_tool_result_limit": self.agent_tool_result_limit,
             "bookmark_upload_global_concurrency": self.bookmark_upload_global_concurrency,
             "bookmark_upload_rate_limit_attempts": self.bookmark_upload_rate_limit_attempts,
             "bookmark_upload_rate_limit_window_seconds": (
