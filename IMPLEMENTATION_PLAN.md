@@ -502,4 +502,21 @@ Phase 5B 是跨依赖的独立纵向轨道：各里程碑随前置阶段落地�
 
 ## 10. 当前迭代
 
+> **调度依据已外移到 `ITERATION_QUEUE.md`**：那份文件按优先级排好 Q1–Q9，
+> 每轮迭代只取第一个未完成条目，是自运行迭代的唯一入口。本节只保留状态快照。
+>
+> 2026-07-26 需求审计（5 路并行 + 反向核查，判据是「调用链是否活的」而非「文件是否存在」）：
+> **15 done / 10 partial / 4 missing**。
+>
+> - Phase 0–3 已完成；Phase 7 的对话骨架已通（LangGraph 内核 + 前端流式渲染 + 来源标注 + 草稿确认）。
+> - **Phase 4 是当前最大阻塞**：后端 Provider 模块已全功能（CRUD、AES-GCM、SSRF、registry 预设），
+>   但前端零消费——`/settings/providers` 是全站唯一纯占位页，`lib/` 下没有 provider 客户端。
+>   用户无法通过 UI 填 API Key，**整条 Agent 链路对普通用户不可达**。用户实测报告的「空白页」即此页。
+> - Phase 5 未开工：后端无任何 HTML 解析库，`analysis_status` 与 `favicon_url` 是零写入的死预留字段。
+> - Phase 6 未开工：LlamaIndex 依赖都没装；站内检索是 FTS5 + 中文 LIKE 兜底的关键词匹配，无语义召回。
+> - Phase 7 缺「改」：Agent 工具集全只读 + 单条草稿，无 update/move/pin 工具。
+> - 视觉体系已按 claude.ai 设计稿 6 块画板重建（令牌层、首页 1a/1b/1c、详情页 1d、深色 1e）。
+
+### Phase 0–2C 历史快照
+
 Phase 0 网站与 API Foundation 已完成，Phase 1 账号闭环已稳定支撑真实业务资源。Phase 2A/2B 的 Category、Tag、Site、Space CRUD、FTS5、版本游标、CAS 和跨账号拒绝已经接通；Phase 2C 已完成账号隔离 snapshot/job/run/checkpoint/staging 内核、可恢复的两阶段文件 intake、公开 raw-body 上传/状态 API、严格分类输出合同，以及 summary/folders/candidates/occurrences 只读 keyset API。公开 POST/GET 的安全合同与 1.6 MB Chrome/Edge mock 已通过 FastAPI API 测试；单 worker 进程内上传 admission 已按全局并发 4、同账号并发 1、同账号 6 次/60 秒、账号累计 2 GiB、磁盘保留 512 MiB 和每 8 MiB 复查落地。网站 custom server 只对上传 POST 使用专用流式代理，绕过 Next 10 MiB request clone，并通过真实 mock、12 MiB、头部保留和超限测试；其他 `/api/backend/*` 路径仍走 Next rewrite。网站代理 512 MiB 单请求上限与后端 512 MiB 磁盘保留策略不是同一限制，512 MiB 文件容量门禁仍未实测。此后仍需实现解析/分类 worker、真实 LLM、取消、两次确认与永久 source/Site 提交，并继续完成资料库网站集成和 100,000 Site 性能门禁。`import-browser-bookmarks` Skill 当前仍是合同和 dry-run 编排，不代表 Agent 运行时闭环。
