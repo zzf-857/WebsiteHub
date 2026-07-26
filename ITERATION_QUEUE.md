@@ -301,7 +301,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 118 测试 / 后端 319 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 118 测试 / 后端 323 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 
