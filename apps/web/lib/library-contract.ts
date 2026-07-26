@@ -1,3 +1,5 @@
+import { createContractGuards } from "./contract-guards.ts";
+
 export type LibrarySort = "created" | "updated" | "name";
 export type LibraryDirection = "asc" | "desc";
 
@@ -102,27 +104,22 @@ export class LibraryContractError extends Error {
   }
 }
 
-function record(value: unknown, path: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new LibraryContractError(`${path} 必须是对象`);
-  }
-  return value as JsonRecord;
-}
-
-function text(value: unknown, path: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new LibraryContractError(`${path} 必须是非空字符串`);
-  }
-  return value.trim();
-}
-
-function boundedText(value: unknown, path: string, maximum: number): string {
-  const candidate = text(value, path);
-  if (Array.from(candidate).length > maximum) {
-    throw new LibraryContractError(`${path} 不能超过 ${maximum} 个字符`);
-  }
-  return candidate;
-}
+// 校验原语与其他契约模块完全一致，统一放在 contract-guards；
+// 这里只绑定本模块自己的错误类型，便于调用方按类型区分来源。
+const {
+  record,
+  text,
+  boundedText,
+  nullableText,
+  identifier,
+  boolean,
+  count,
+  version,
+  absoluteWebUrl,
+  nullableWebUrl,
+  isoDate,
+  listPayload,
+} = createContractGuards((message) => new LibraryContractError(message));
 
 function literal<const Values extends readonly string[]>(
   value: unknown,
@@ -133,59 +130,6 @@ function literal<const Values extends readonly string[]>(
     throw new LibraryContractError(`${path} 不是受支持的值`);
   }
   return value as Values[number];
-}
-
-function nullableText(value: unknown, path: string): string | null {
-  if (value === null) return null;
-  if (typeof value !== "string") throw new LibraryContractError(`${path} 必须是字符串或 null`);
-  return value.trim() || null;
-}
-
-function identifier(value: unknown, path: string): string {
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
-  throw new LibraryContractError(`${path} 必须是有效标识符`);
-}
-
-function boolean(value: unknown, path: string): boolean {
-  if (typeof value !== "boolean") throw new LibraryContractError(`${path} 必须是布尔值`);
-  return value;
-}
-
-function count(value: unknown, path: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new LibraryContractError(`${path} 必须是非负整数`);
-  }
-  return value as number;
-}
-
-function version(value: unknown, path: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) {
-    throw new LibraryContractError(`${path} 必须是正整数`);
-  }
-  return value as number;
-}
-
-function absoluteWebUrl(value: unknown, path: string): string {
-  const candidate = text(value, path);
-  try {
-    const parsed = new URL(candidate);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("protocol");
-  } catch {
-    throw new LibraryContractError(`${path} 必须是 HTTP(S) URL`);
-  }
-  return candidate;
-}
-
-function nullableWebUrl(value: unknown, path: string): string | null {
-  if (value === null) return null;
-  return absoluteWebUrl(value, path);
-}
-
-function isoDate(value: unknown, path: string): string {
-  const candidate = text(value, path);
-  if (Number.isNaN(Date.parse(candidate))) throw new LibraryContractError(`${path} 必须是有效日期`);
-  return candidate;
 }
 
 function normalizeCategoryRefAt(value: unknown, path: string): LibraryCategoryRef {
@@ -241,13 +185,6 @@ export function normalizeLibrarySite(value: unknown): LibrarySite {
     createdAt: isoDate(candidate.created_at, "site.created_at"),
     updatedAt: isoDate(candidate.updated_at, "site.updated_at"),
   };
-}
-
-function listPayload(value: unknown, path: string): unknown[] {
-  if (Array.isArray(value)) return value;
-  const candidate = record(value, path);
-  if (!Array.isArray(candidate.items)) throw new LibraryContractError(`${path}.items 必须是数组`);
-  return candidate.items;
 }
 
 export function normalizeLibraryCategories(value: unknown): LibraryCategory[] {

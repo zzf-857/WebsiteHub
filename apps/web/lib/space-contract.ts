@@ -1,3 +1,5 @@
+import { createContractGuards } from "./contract-guards.ts";
+
 export type SpaceSort = "created" | "updated" | "name";
 export type SpaceDirection = "asc" | "desc";
 
@@ -115,32 +117,23 @@ export class SpaceContractError extends Error {
   }
 }
 
-function record(value: unknown, path: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new SpaceContractError(`${path} 必须是对象`);
-  }
-  return value as JsonRecord;
-}
+// 校验原语与其他契约模块完全一致，统一放在 contract-guards；
+// 这里只绑定本模块自己的错误类型，便于调用方按类型区分来源。
+const {
+  record,
+  text,
+  boundedText,
+  boolean,
+  count,
+  version,
+  absoluteWebUrl,
+  nullableWebUrl,
+  isoDate,
+} = createContractGuards((message) => new SpaceContractError(message));
 
-function stringValue(value: unknown, path: string): string {
-  if (typeof value !== "string") throw new SpaceContractError(`${path} 必须是字符串`);
-  return value;
-}
-
-function text(value: unknown, path: string): string {
-  const candidate = stringValue(value, path).trim();
-  if (!candidate) throw new SpaceContractError(`${path} 必须是非空字符串`);
-  return candidate;
-}
-
-function boundedText(value: unknown, path: string, maximum: number): string {
-  const candidate = text(value, path);
-  if (Array.from(candidate).length > maximum) {
-    throw new SpaceContractError(`${path} 不能超过 ${maximum} 个字符`);
-  }
-  return candidate;
-}
-
+// identifier 刻意不用共享版：Space 的成员 id 有长度上限，且**不接受数字**
+// （library/provider 的共享版为兼容历史整数主键会把数字转成字符串）。
+// 同名不等于同一件事，强行合并会悄悄放宽这里的约束。
 function identifier(value: unknown, path: string, maximum?: number): string {
   const candidate = text(value, path);
   if (maximum !== undefined && Array.from(candidate).length > maximum) {
@@ -149,47 +142,9 @@ function identifier(value: unknown, path: string, maximum?: number): string {
   return candidate;
 }
 
-function boolean(value: unknown, path: string): boolean {
-  if (typeof value !== "boolean") throw new SpaceContractError(`${path} 必须是布尔值`);
+function stringValue(value: unknown, path: string): string {
+  if (typeof value !== "string") throw new SpaceContractError(`${path} 必须是字符串`);
   return value;
-}
-
-function count(value: unknown, path: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new SpaceContractError(`${path} 必须是非负整数`);
-  }
-  return value as number;
-}
-
-function version(value: unknown, path: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) {
-    throw new SpaceContractError(`${path} 必须是正整数`);
-  }
-  return value as number;
-}
-
-function absoluteWebUrl(value: unknown, path: string): string {
-  const candidate = text(value, path);
-  try {
-    const parsed = new URL(candidate);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("protocol");
-  } catch {
-    throw new SpaceContractError(`${path} 必须是 HTTP(S) URL`);
-  }
-  return candidate;
-}
-
-function nullableWebUrl(value: unknown, path: string): string | null {
-  if (value === null) return null;
-  return absoluteWebUrl(value, path);
-}
-
-function isoDate(value: unknown, path: string): string {
-  const candidate = text(value, path);
-  if (Number.isNaN(Date.parse(candidate))) {
-    throw new SpaceContractError(`${path} 必须是有效日期`);
-  }
-  return candidate;
 }
 
 function cursor(value: unknown, path: string): string | null {

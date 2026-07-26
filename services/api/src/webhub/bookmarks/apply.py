@@ -45,10 +45,10 @@ from webhub.db.models import (
     new_id,
     utc_now,
 )
-from webhub.library.service import LibraryError
-from webhub.library.service import _site_url as normalize_site_url
 
 from .classification import suggest_category
+from .models import NormalizationStatus
+from .normalization import normalize_bookmark_url
 
 # Rows per transaction.  Small enough that a failure loses little work, large
 # enough that a 2000-bookmark import is not 2000 fsyncs.
@@ -277,11 +277,18 @@ async def apply_candidates(
             if row.identity_url in present or row.identity_url in claimed:
                 skipped_existing += 1
                 continue
-            try:
-                original_url, identity_url = normalize_site_url(row.identity_url)
-            except LibraryError:
+            # 直接用本模块家族的规范化器。此前这里走的是 library.service._site_url，
+            # 那既是导入别的模块的私有函数，也让 bookmarks 与 library 形成了循环依赖
+            # ——而 _site_url 包的恰恰就是下面这个 bookmarks 自己的函数。
+            normalized = normalize_bookmark_url(row.identity_url)
+            if (
+                normalized.status is not NormalizationStatus.ACCEPTED
+                or not normalized.normalized_url
+            ):
                 failed += 1
                 continue
+            original_url = row.identity_url.strip()
+            identity_url = normalized.normalized_url
             if identity_url in present or identity_url in claimed:
                 skipped_existing += 1
                 continue

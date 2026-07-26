@@ -32,8 +32,8 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Protocol
 
-from webhub.agent.provider_binding import ProviderBinding
 from webhub.bookmarks.classification_batches import (
     ClassificationBatch,
     ClassificationBatchPlan,
@@ -44,6 +44,29 @@ from webhub.bookmarks.classification_contract import ClassificationOutputError
 # The response is a bounded JSON object; anything much larger than this is a
 # model that has stopped following the schema.
 MAX_RESPONSE_CHARS = 60_000
+
+
+class ModelEndpoint(Protocol):
+    """The four things this module needs from a resolved model Provider.
+
+    Declared here rather than importing ``agent.provider_binding.ProviderBinding``:
+    ``agent`` already imports ``bookmarks``, so depending on it in this direction
+    would close an import cycle between two top-level packages.  A low-level
+    module should state what it needs and let the caller satisfy it —
+    ``ProviderBinding`` does, structurally, with no changes on its side.
+    """
+
+    @property
+    def base_url(self) -> str: ...
+
+    @property
+    def model_name(self) -> str | None: ...
+
+    @property
+    def timeout_seconds(self) -> int: ...
+
+    @property
+    def client_api_key(self) -> str: ...
 
 
 class ClassificationUnavailableError(RuntimeError):
@@ -130,7 +153,7 @@ def _stripped_json(text: str) -> str:
     return candidate.strip()
 
 
-async def _ask_model(binding: ProviderBinding, payload: Mapping[str, object]) -> str:
+async def _ask_model(binding: ModelEndpoint, payload: Mapping[str, object]) -> str:
     import httpx
 
     if binding.model_name is None:
@@ -175,7 +198,7 @@ async def _ask_model(binding: ProviderBinding, payload: Mapping[str, object]) ->
     return _stripped_json(content)
 
 
-async def run_batch(binding: ProviderBinding, batch: ClassificationBatch) -> BatchRunResult:
+async def run_batch(binding: ModelEndpoint, batch: ClassificationBatch) -> BatchRunResult:
     """Classify one bounded batch and bind the answer back to local ids.
 
     The model only ever sees opaque subject ids, so a wrong or hostile answer
@@ -196,7 +219,7 @@ async def run_batch(binding: ProviderBinding, batch: ClassificationBatch) -> Bat
 
 
 async def run_plan(
-    binding: ProviderBinding,
+    binding: ModelEndpoint,
     plan: ClassificationBatchPlan,
 ) -> list[BatchRunResult]:
     """Run every batch in a plan sequentially.
@@ -229,6 +252,7 @@ def estimated_input_characters(plan: ClassificationBatchPlan) -> int:
 
 __all__ = [
     "BatchRunResult",
+    "ModelEndpoint",
     "ClassificationUnavailableError",
     "estimated_input_characters",
     "estimated_request_count",

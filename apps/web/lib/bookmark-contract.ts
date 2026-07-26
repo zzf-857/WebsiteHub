@@ -1,3 +1,5 @@
+import { createContractGuards } from "./contract-guards.ts";
+
 // 书签导入的前端契约层。与 provider-contract 同一套约定：
 // 归一化失败就抛错，绝不把半截数据放进 state。
 
@@ -94,33 +96,14 @@ export class BookmarkContractError extends Error {
   }
 }
 
-function record(value: unknown, path: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new BookmarkContractError(`${path} 必须是对象`);
-  }
-  return value as JsonRecord;
-}
-
-function text(value: unknown, path: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new BookmarkContractError(`${path} 必须是非空字符串`);
-  }
-  return value.trim();
-}
-
-function count(value: unknown, path: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new BookmarkContractError(`${path} 必须是非负整数`);
-  }
-  return value as number;
-}
-
-function version(value: unknown, path: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) {
-    throw new BookmarkContractError(`${path} 必须是正整数`);
-  }
-  return value as number;
-}
+// 校验原语与其他契约模块完全一致，统一放在 contract-guards；
+// 这里只绑定本模块自己的错误类型，便于调用方按类型区分来源。
+const {
+  record,
+  text,
+  count,
+  version,
+} = createContractGuards((message) => new BookmarkContractError(message));
 
 export function normalizeBookmarkImportUpload(value: unknown): BookmarkImportUpload {
   const candidate = record(value, "bookmark_upload");
