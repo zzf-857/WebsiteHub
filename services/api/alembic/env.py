@@ -8,6 +8,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from webhub.chat import models as chat_models  # noqa: F401
 from webhub.config import get_settings
 from webhub.db import models  # noqa: F401
 from webhub.db.base import Base
