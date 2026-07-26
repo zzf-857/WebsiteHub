@@ -6,12 +6,72 @@
 
 /* ============ 页面骨架 ============ */
 
+/* 页头标题下的一段说明（.workspace-page-header 只定义了 h1，段落样式在这里补） */
+.provider-page-lead {
+  width: min(100%, var(--reading-max));
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 /* 标题下方的内容区：kind 分区纵向堆叠，满宽自适应 */
 .provider-page {
   display: flex;
   flex-direction: column;
   gap: 36px;
   margin-top: 24px;
+}
+
+/* 操作成功后的行内提示条（与 .provider-error 同结构，中性色，可手动关闭） */
+.provider-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.provider-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.provider-notice button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-subtle);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.provider-notice button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.provider-notice button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.provider-notice button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 /* 页级加载 / 出错时的占位行：Spinner 组件 + 一句说明 */
@@ -509,6 +569,18 @@
   flex-shrink: 0;
   /* 图标与首行文字对齐 */
   margin-top: 2px;
+}
+
+.provider-error > span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 提示条里内嵌的按钮（如「重新加载」）保持 .provider-btn 的图标规格 */
+.provider-error .provider-btn svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 0;
 }
 
 /* 测试连接结果条：按 data-status 换色。
