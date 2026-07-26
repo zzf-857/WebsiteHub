@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import errno
 import re
 from collections.abc import Awaitable
@@ -26,7 +27,7 @@ from webhub.auth.dependencies import (
     SettingsDependency,
     require_trusted_origin,
 )
-from webhub.bookmarks import intake, persistence, queries
+from webhub.bookmarks import intake, persistence, queries, worker
 from webhub.bookmarks.admission import (
     BookmarkUploadQuotaExceededError,
     BookmarkUploadRateLimitError,
@@ -52,6 +53,32 @@ from webhub.bookmarks.uploads import (
 )
 
 router = APIRouter(prefix="/bookmark-imports", tags=["bookmark-imports"])
+
+# Keeps a strong reference to every detached parse task: asyncio only holds a
+# weak one, so without this a task can be garbage collected mid-parse.
+_PARSE_TASKS: set[asyncio.Task[str]] = set()
+
+
+def _schedule_parse(
+    request: Request,
+    *,
+    user_id: str,
+    job_id: str,
+    snapshot_id: str,
+    expected_job_version: int,
+) -> None:
+    task = asyncio.create_task(
+        worker.run_parse(
+            request.app.state.database,
+            request.app.state.settings.data_directory,
+            user_id=user_id,
+            job_id=job_id,
+            snapshot_id=snapshot_id,
+            expected_job_version=expected_job_version,
+        )
+    )
+    _PARSE_TASKS.add(task)
+    task.add_done_callback(_PARSE_TASKS.discard)
 JobId = Annotated[str, Path(max_length=128)]
 OptionalIdentifier = Annotated[str | None, Query(max_length=128)]
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]
@@ -236,6 +263,20 @@ async def upload_bookmarks(
                 status.HTTP_200_OK if import_job.replayed else status.HTTP_201_CREATED
             )
             response.headers["Location"] = f"/api/bookmark-imports/{import_job.job_id}"
+
+            # Nothing else in the process drives queued_parse forward, so kick
+            # the parse off here.  Detached on purpose: the caller gets a job id
+            # immediately and polls status, exactly as it would with a real
+            # worker.  A replayed upload already has its run.
+            if not import_job.replayed and import_job.state == "queued_parse":
+                _schedule_parse(
+                    request,
+                    user_id=account_id,
+                    job_id=import_job.job_id,
+                    snapshot_id=import_job.snapshot_id,
+                    expected_job_version=import_job.job_version,
+                )
+
             return BookmarkImportUploadResponse(
                 job_id=import_job.job_id,
                 state=import_job.state,
