@@ -4371,3 +4371,48 @@ textarea:focus-visible {
 .draft-batch-list li[data-status="invalid"] .draft-batch-url {
   color: var(--text-subtle);
 }
+
+/* 阶段C：分类内自定义排序的操作列。
+   拖拽只是叠加在这组按钮之上——键盘用户永远有一条完整路径，
+   而不是先做拖拽再想办法补键盘（那样通常补不干净）。 */
+
+.library-site-reorder {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  border-right: 1px solid var(--line-soft);
+}
+
+.library-site-reorder .icon-button {
+  width: 24px;
+  height: 24px;
+}
+
+.library-site-reorder .icon-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.library-reorder-grip {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  cursor: grab;
+}
+
+.library-reorder-grip svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* 拖动中的卡片弱化，落点靠 hover 边框提示 */
+.library-site-card[draggable="true"]:active {
+  opacity: 0.65;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-site-card[draggable="true"]:active {
+    opacity: 1;
+  }
+}

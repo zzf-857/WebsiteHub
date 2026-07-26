@@ -236,3 +236,24 @@ export async function createLibrarySiteBatch(urls: string[]): Promise<LibrarySit
     failed: count("failed"),
   };
 }
+
+/**
+ * Move sites within one category.
+ *
+ * Takes a list plus an anchor rather than an absolute index: an index computed
+ * from the list the user was looking at is stale the moment anything else
+ * changes, while "put these before that one" stays true. `beforeSiteId: null`
+ * means "send them to the end".
+ */
+export async function reorderLibrarySites(
+  categoryId: string,
+  input: { orderedSiteIds: string[]; beforeSiteId: string | null },
+): Promise<void> {
+  await request(`/categories/${encodeId(categoryId)}/reorder`, {
+    method: "POST",
+    body: JSON.stringify({
+      ordered_site_ids: input.orderedSiteIds,
+      before_site_id: input.beforeSiteId,
+    }),
+  });
+}

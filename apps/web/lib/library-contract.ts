@@ -1,6 +1,6 @@
 import { createContractGuards } from "./contract-guards.ts";
 
-export type LibrarySort = "created" | "updated" | "name";
+export type LibrarySort = "created" | "updated" | "name" | "custom";
 export type LibraryDirection = "asc" | "desc";
 
 const LIBRARY_SITE_SOURCES = ["manual", "agent", "browser_import", "backup"] as const;

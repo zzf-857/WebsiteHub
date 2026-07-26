@@ -4,9 +4,12 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
+  ChevronsDown,
+  ChevronsUp,
   ExternalLink,
   FolderCog,
   FolderTree,
+  GripVertical,
   LayoutGrid,
   List,
   LoaderCircle,
@@ -44,6 +47,7 @@ import {
   listLibraryCategories,
   listLibrarySites,
   listLibraryTags,
+  reorderLibrarySites,
   updateLibrarySite,
 } from "@/lib/library-client";
 import type {
@@ -122,6 +126,11 @@ type SiteCollectionProps = {
   onEdit: (site: LibrarySite) => void;
   onDelete: (site: LibrarySite) => void;
   onTogglePinned: (site: LibrarySite) => void;
+  /** 仅在「自定义顺序 + 选中单个分类」时可用；否则拖动/移动没有明确语义 */
+  reorderable: boolean;
+  reorderBusy: boolean;
+  onMove: (site: LibrarySite, to: "top" | "up" | "down" | "bottom") => void;
+  onDropBefore: (draggedId: string, beforeSiteId: string | null) => void;
 };
 
 function SiteCollection({
@@ -131,13 +140,90 @@ function SiteCollection({
   onEdit,
   onDelete,
   onTogglePinned,
+  reorderable,
+  reorderBusy,
+  onMove,
+  onDropBefore,
 }: Readonly<SiteCollectionProps>) {
   return (
     <div className="library-site-collection" data-view={viewMode}>
-      {sites.map((site) => {
+      {sites.map((site, index) => {
         const isBusy = quickActionId === site.id;
+        const isFirst = index === 0;
+        const isLast = index === sites.length - 1;
         return (
-          <article className="library-site-card" key={site.id}>
+          <article
+            className="library-site-card"
+            key={site.id}
+            draggable={reorderable && !reorderBusy}
+            onDragStart={(event) => {
+              event.dataTransfer.setData("text/plain", site.id);
+              event.dataTransfer.effectAllowed = "move";
+            }}
+            onDragOver={(event) => {
+              if (!reorderable) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(event) => {
+              if (!reorderable) return;
+              event.preventDefault();
+              const dragged = event.dataTransfer.getData("text/plain");
+              if (dragged && dragged !== site.id) onDropBefore(dragged, site.id);
+            }}
+          >
+            {reorderable && (
+              <div
+                className="library-site-reorder"
+                role="group"
+                aria-label={`调整 ${site.name} 的顺序`}
+              >
+                {/* 拖拽只是叠加在这组按钮之上：键盘用户永远有一条完整路径。 */}
+                <span className="library-reorder-grip" aria-hidden="true">
+                  <GripVertical />
+                </span>
+                <button
+                  className="icon-button"
+                  type="button"
+                  disabled={reorderBusy || isFirst}
+                  onClick={() => onMove(site, "top")}
+                  aria-label={`把 ${site.name} 移到最前`}
+                  title="移到最前"
+                >
+                  <ChevronsUp aria-hidden="true" />
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  disabled={reorderBusy || isFirst}
+                  onClick={() => onMove(site, "up")}
+                  aria-label={`把 ${site.name} 上移`}
+                  title="上移"
+                >
+                  <ArrowUp aria-hidden="true" />
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  disabled={reorderBusy || isLast}
+                  onClick={() => onMove(site, "down")}
+                  aria-label={`把 ${site.name} 下移`}
+                  title="下移"
+                >
+                  <ArrowDown aria-hidden="true" />
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  disabled={reorderBusy || isLast}
+                  onClick={() => onMove(site, "bottom")}
+                  aria-label={`把 ${site.name} 移到最后`}
+                  title="移到最后"
+                >
+                  <ChevronsDown aria-hidden="true" />
+                </button>
+              </div>
+            )}
             <div className="library-site-card-main">
               <SiteFavicon url={site.faviconUrl} name={site.name} size={viewMode === "grid" ? 32 : 24} />
               <div className="library-site-copy">
@@ -231,7 +317,7 @@ function SiteCollection({
   );
 }
 
-const LIBRARY_SORTS: readonly LibrarySort[] = ["created", "updated", "name"];
+const LIBRARY_SORTS: readonly LibrarySort[] = ["created", "updated", "name", "custom"];
 
 /**
  * 首页与顶栏用 query 参数把筛选意图带过来（?category= / ?pinned=1 / ?sort= / ?focus=search）。
@@ -291,6 +377,7 @@ export function LibraryWorkspace() {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [quickActionId, setQuickActionId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [reorderBusy, setReorderBusy] = useState(false);
 
   const loadTaxonomies = useCallback(async (signal?: AbortSignal) => {
     const generation = taxonomyRequestGeneration.current + 1;
@@ -568,12 +655,57 @@ export function LibraryWorkspace() {
   const totalLibrarySites = categories.reduce((total, category) => total + category.siteCount, 0);
   const hasSites = pinnedPage.items.length > 0 || regularPage.items.length > 0;
   const hasActiveFilters = Boolean(searchQuery || categoryId || tagId || pinnedOnly);
+  // 只有「自定义顺序 + 选中单个分类」时才允许重排：跨分类或按名称排序时，
+  // 「上移一位」没有可以落库的含义——写进哪个分类的哪个位置？说不清就不给按钮。
+  const reorderable = sort === "custom" && Boolean(categoryId);
+
+  const handleReorder = useCallback(
+    async (orderedSiteIds: string[], beforeSiteId: string | null) => {
+      if (!categoryId || reorderBusy) return;
+      setReorderBusy(true);
+      try {
+        await reorderLibrarySites(categoryId, { orderedSiteIds, beforeSiteId });
+        // 重拉而不是就地挪动本地数组：位置由服务端唯一索引裁决，
+        // 本地乐观更新一旦与它不一致，用户会看到刷新后顺序又变回去。
+        refreshSites();
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "调整顺序失败，请重试。");
+      } finally {
+        setReorderBusy(false);
+      }
+    },
+    [categoryId, refreshSites, reorderBusy],
+  );
+
+  const handleMove = useCallback(
+    async (site: LibrarySite, to: "top" | "up" | "down" | "bottom") => {
+      const items = regularPage.items;
+      const index = items.findIndex((entry) => entry.id === site.id);
+      if (index < 0) return;
+      // 换算成锚点：上移 = 落在前一个之前；下移 = 落在后一个的后一个之前。
+      let anchor: string | null;
+      if (to === "top") anchor = items[0]?.id ?? null;
+      else if (to === "up") anchor = items[index - 1]?.id ?? null;
+      else if (to === "down") anchor = items[index + 2]?.id ?? null;
+      else anchor = null;
+      if (to === "down" && !items[index + 1]) return;
+      await handleReorder([site.id], anchor);
+    },
+    [handleReorder, regularPage.items],
+  );
+
   const collectionProps = {
     viewMode,
     quickActionId,
     onEdit: (site: LibrarySite) => openDialog({ kind: "edit", site }),
     onDelete: (site: LibrarySite) => openDialog({ kind: "delete", site }),
     onTogglePinned: (site: LibrarySite) => void handleTogglePinned(site),
+    reorderable,
+    reorderBusy,
+    onMove: (site: LibrarySite, to: "top" | "up" | "down" | "bottom") =>
+      void handleMove(site, to),
+    onDropBefore: (draggedId: string, beforeSiteId: string | null) =>
+      void handleReorder([draggedId], beforeSiteId),
   };
 
   return (
@@ -678,6 +810,7 @@ export function LibraryWorkspace() {
                 <option value="updated">最近更新</option>
                 <option value="created">创建时间</option>
                 <option value="name">网站名称</option>
+                <option value="custom">自定义顺序</option>
               </select>
             </label>
             <button
