@@ -171,7 +171,7 @@ Space）两个确认制写工具；前端三种新视图（site-update / space-m
 
 ## Q3c · 确认结果回写会话历史（Agent 会否认自己刚存过的东西）
 
-状态: 待做
+状态: 已完成 · 0b34f16
 对应: Phase 7 收尾 · 2026-07-26 全流程实测发现
 插入原因: 实测 Q3 时发现的缺陷，属于已交付功能的正确性问题。
 **建议先于 Q3b 做**——它会让 Agent 对用户的数据说假话，比缺一个导入界面严重。
@@ -343,7 +343,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 118 测试 / 后端 325 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 118 测试 / 后端 332 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 

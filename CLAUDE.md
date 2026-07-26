@@ -23,7 +23,7 @@ Agent 主导的个人网址导航站。任何新会话（换账号、换机器�
 pnpm dev          # web 3100 + api 8100（concurrently）
 ```
 
-全量门禁（每次提交前必须全绿；基线只能涨不能降，当前前端 118 / 后端 325）：
+全量门禁（每次提交前必须全绿；基线只能涨不能降，当前前端 118 / 后端 332）：
 
 ```bash
 cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
