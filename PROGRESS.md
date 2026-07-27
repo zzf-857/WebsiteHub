@@ -7,16 +7,16 @@
 - 本机环境看 `LOCAL_DEV.md`（不进 Git：固定账号、库位置、测试素材）
 - 设计与架构决策看 `IMPLEMENTATION_PLAN.md`（第 10 节只指向本文件，不再重复状态）
 
-最后更新：2026-07-27 · 对应 commit `4146a2f`
+最后更新：2026-07-27 · 对应 commit `9c0b004`（Q9 完成）
 
 ---
 
 ## 一句话状态
 
-Provider 配置、Agent 增改查、书签导入、网页抓取、批量入库、自定义排序六条链路**已建成**；
-RAG、视觉收尾尚未开工。
+Provider 配置、Agent 增改查、书签导入、网页抓取、批量入库、自定义排序、Space 一键全开、
+混合检索八条链路**已建成**。Q1–Q9 全部完成，队列只剩 **Q10（结构收尾）**。
 
-测试基线：**前端 128 / 后端 389**。只能涨不能降。
+测试基线：**前端 135 / 后端 417**。只能涨不能降。
 
 ---
 
@@ -46,10 +46,9 @@ RAG、视觉收尾尚未开工。
 | 缺口 | 说明 |
 | --- | --- |
 | LLM 分类**未接线** | `bookmarks/classifier.py` 已完成且有测试，但没有入口把结果落到 Site 上 |
-| Space 一键全开（Q7） | 只在首页且只覆盖最近 8 个，重试会重复开标签 |
-| 检索与 RAG（Q8） | LlamaIndex 依赖都没装，`embedding` Provider 槽位是死预留 |
-| 视觉收尾（Q9） | 1c 紧凑态 3 处偏差、`globals.css` 有死代码 |
-| 结构收尾（Q10） | `persistence.py` 1864 行、两个 >1000 行的组件待拆 |
+| 语义索引无回填入口 | Q8 的 `search/vectors.py` 能存能查，但没有定时/触发任务去调 `stale_sites` 补向量 |
+| 结构收尾（Q10） | `persistence.py` 1864 行、`space-workspace.tsx` 1071 行、`agent-panel.tsx` 1038 行待拆 |
+| 两处 observer 未在浏览器验证 | Q6 拖拽持久化 / Q9 的 `data-stuck`·`data-compact` 触发时机，见下方「环境陷阱」 |
 
 ---
 
@@ -94,7 +93,7 @@ agent → 全部        顶层编排，只有它可以依赖所有模块
 
 ---
 
-## 环境上必须知道的三件事
+## 环境上必须知道的四件事
 
 1. **Provider 主密钥**：开发环境首次使用自动生成，落在 `.data/provider-master.key`。
    **弄丢它，所有已存的 API Key 永久无法解密。** 生产环境仍要求显式设
@@ -103,15 +102,29 @@ agent → 全部        顶层编排，只有它可以依赖所有模块
    在此之前 `.env.example` 里每一项都是哑弹——查配置问题时别再假设它没生效。
 3. **内嵌 Browser 面板与用户真实 Chrome 是两套 cookie。**
    「我明明登录了你怎么看不见」十有八九是这个。
+4. **内嵌 Browser 面板里 IntersectionObserver 和 CSS transition 都不工作。**
+   面板 `visibilityState` 恒为 `hidden`、不合成帧，所以 IO 回调不投递、过渡停在起始值。
+   复现：新建一个 IO 观察 `document.body`，1.5s 内零回调；给 `.app-header` 加
+   `data-compact` 后 `height` 仍读到 64px，`style.transition='none'` 后立刻变 56px。
+   **别把这个当代码 bug 去修。** 需要验证吸顶/懒加载/动效的触发时机，只能：
+   手动置位属性验证样式那一半，或者请用户在真实浏览器里跑一遍。
+   同理，`api` 挂了时页面停在「正在加载账号...」——先 `curl 127.0.0.1:8100/api/health`。
+   端口被上一轮的僵死进程占住时，`Get-NetTCPConnection -LocalPort 8100` 找 pid 再杀。
 
 ---
 
 ## 下一步
 
-1. 给 LLM 分类接线：做成对整个资料库通用的重分类（用户要的是「所有网站」，
+1. **Q10 · 结构收尾**（队列里唯一剩的待做项）：拆 `bookmarks/persistence.py`（1864 行）
+   为 job/run/checkpoint/staging；拆 `space-workspace.tsx`（1071）与 `agent-panel.tsx`（1038）；
+   量一遍三个 workspace 组件的重复度。**合并前必须先证明字节级相同**——
+   上一轮就因为想当然合并 `space-contract` 的 `identifier` 被 tsc 拦下（它有可选长度上限、
+   且拒绝纯数字，和看起来一样的那个并不同）。
+2. 给 LLM 分类接线：做成对整个资料库通用的重分类（用户要的是「所有网站」，
    不只是导入的），`propose_reclassify` → 带成本预估的确认草稿 → 确认后才花 token。
    `estimated_request_count` / `estimated_input_characters` 已备好。
-2. 之后按 `ITERATION_QUEUE.md` 顺序走 Q7 → Q10。
+3. 语义索引回填：`stale_sites` 能算出待补的站点，但还没有任何东西去调它。
+4. 补两处浏览器验证缺口（见上方第 4 条环境陷阱），需要真实浏览器。
 
 ### 花钱的决策（需要用户点头，别自作主张）
 

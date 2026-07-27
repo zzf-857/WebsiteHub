@@ -340,7 +340,7 @@ Provider，失败一律降级）。
 
 ## Q9 · 视觉收尾与死代码清理
 
-状态: 待做
+状态: 已完成（9c0b004）
 对应: 阶段F 收尾
 
 - 1c 紧凑态还差 3 处：吸顶底色不透明度、字标 16px、导航 padding 5px
@@ -354,6 +354,15 @@ Provider，失败一律降级）。
 - SiteHeader 的 IntersectionObserver 缺 `rootMargin`，紧凑态触发略迟滞
 
 完成标准：设计稿 1a–1f 逐屏比对无可见偏差；`globals.css` 无未被任何 tsx 引用的类。
+
+实测结果：`globals.css` 4418 → 3807 行，残留死类 0（扫 258 个类，39 个死类，
+分整条规则 / 混写选择器 / 死祖先后代三轮删）。上面 8 条视觉项全部改完。
+
+遗留验证缺口（不阻塞，但别当成已验证）：内嵌 Browser 面板 `visibilityState` 恒为
+hidden、不合成帧，**IntersectionObserver 回调与 CSS transition 都不推进**
+（新建 IO 观察 `document.body` 1.5s 零回调可复现）。所以只验证了「置位 data-stuck /
+data-compact → 计算样式正确」，两个 observer 的实际触发时机没在浏览器里跑通。
+和 Q6 拖拽那条是同一类缺口，一起在真实浏览器里补。
 
 ---
 
