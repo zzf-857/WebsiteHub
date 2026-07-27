@@ -7,14 +7,15 @@
 - 本机环境看 `LOCAL_DEV.md`（不进 Git：固定账号、库位置、测试素材）
 - 设计与架构决策看 `IMPLEMENTATION_PLAN.md`（第 10 节只指向本文件，不再重复状态）
 
-最后更新：2026-07-27 · 对应 commit `469ca1c`（Q10 后端达标，前端待抽 hook）
+最后更新：2026-07-27 · 对应 commit `cd9054a`（**Q1–Q10 全部完成，队列已清空**）
 
 ---
 
 ## 一句话状态
 
 Provider 配置、Agent 增改查、书签导入、网页抓取、批量入库、自定义排序、Space 一键全开、
-混合检索八条链路**已建成**。Q1–Q9 全部完成，**Q10 只剩前端抽 hook 一件事**（后端已达标）。
+混合检索八条链路**已建成**。**Q1–Q10 全部完成，`ITERATION_QUEUE.md` 已清空**——按队列规则，自运行迭代到此为止，
+下一批做什么需要用户排期。
 
 测试基线：**前端 135 / 后端 417**。只能涨不能降。
 
@@ -47,7 +48,7 @@ Provider 配置、Agent 增改查、书签导入、网页抓取、批量入库�
 | --- | --- |
 | LLM 分类**未接线** | `bookmarks/classifier.py` 已完成且有测试，但没有入口把结果落到 Site 上 |
 | 语义索引无回填入口 | Q8 的 `search/vectors.py` 能存能查，但没有定时/触发任务去调 `stale_sites` 补向量 |
-| 结构收尾（Q10） | 后端已达标（最大 1864→749）。前端三个组件 879/783/901 仍超 700，需抽 `useXxxWorkspace` hook |
+
 | 两处 observer 未在浏览器验证 | Q6 拖拽持久化 / Q9 的 `data-stuck`·`data-compact` 触发时机，见下方「环境陷阱」 |
 
 ---
@@ -115,10 +116,16 @@ agent → 全部        顶层编排，只有它可以依赖所有模块
 
 ## 下一步
 
-1. **Q10 收尾**：把 `space-workspace`（879）/ `library-workspace`（783）/
-   `agent-panel`（901）里的有状态逻辑抽成 `useXxxWorkspace` 自定义 hook，降到 700 以下。
-   无状态部分已经抽走了，剩下的全是 useState/useEffect/useCallback。
-   **第二批去重已测量过：不存在**（逐字节相同的只有 6 行的 `closeDialog`），别再查一遍。
+**队列已清空，以下是没人排期但确实存在的缺口，按影响排序：**
+
+1. **语义索引没有回填入口**。`search/vectors.py` 的 `stale_sites` 能算出待补向量的
+   站点，但没有任何定时/触发任务去调它——Q8 的检索链路目前只有骨架能跑。
+2. **LLM 分类没接线**。`bookmarks/classifier.py` 完成且有测试，但没有入口把结果
+   落到 `Site` 上。做法已想好（见下方「花钱的决策」），缺的是那个 propose 端点。
+3. **两处 observer 未在真实浏览器验证**（Q6 拖拽持久化、Q9 的 `data-stuck`/
+   `data-compact` 触发时机）。原因见「环境上必须知道的四件事」第 4 条，不是代码问题。
+4. `lib/agent-contract.ts` 734 行超过前端 700 行约定，但它是契约模块不是组件，
+   Q10 的 criterion 没覆盖到。要不要拆需要单独判断。
 2. 给 LLM 分类接线：做成对整个资料库通用的重分类（用户要的是「所有网站」，
    不只是导入的），`propose_reclassify` → 带成本预估的确认草稿 → 确认后才花 token。
    `estimated_request_count` / `estimated_input_characters` 已备好。
