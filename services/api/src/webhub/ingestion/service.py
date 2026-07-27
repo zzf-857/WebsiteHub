@@ -97,11 +97,11 @@ async def not_analyzed_site_ids(
     limit: int,
     excluded_site_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[str], int]:
-    """Select new or crash-interrupted work without re-queueing active tasks."""
+    """Select incomplete or retryable work without re-queueing active tasks."""
 
     conditions = [
         Site.user_id == user_id,
-        Site.analysis_status.in_(("not_analyzed", "pending")),
+        Site.analysis_status.in_(("not_analyzed", "pending", "failed", "limited")),
     ]
     if excluded_site_ids:
         conditions.append(Site.id.not_in(excluded_site_ids))

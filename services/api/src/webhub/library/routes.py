@@ -26,6 +26,8 @@ from webhub.library.schemas import (
     SiteBatchItemResponse,
     SiteBatchRequest,
     SiteBatchResponse,
+    SiteBulkDeleteRequest,
+    SiteBulkDeleteResponse,
     SiteCreateRequest,
     SiteDeleteResponse,
     SiteListResponse,
@@ -220,6 +222,16 @@ async def add_site(
     # 脱钩执行：保存一个网站不该等在别人家的慢服务器上，更不该因为对方宕机而失败。
     _schedule_analysis(request, user_id=identity.user.id, site_id=created.id)
     return created
+
+
+@router.post("/sites/bulk-delete", response_model=SiteBulkDeleteResponse)
+async def bulk_delete_sites(
+    payload: SiteBulkDeleteRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> SiteBulkDeleteResponse:
+    return await _call(service.bulk_delete_sites(session, identity.user.id, payload))
 
 
 @router.get("/sites/{site_id}", response_model=SiteResponse)

@@ -7,6 +7,7 @@ import {
   createLibraryCategory,
   createLibrarySite,
   confirmAgentReclassify,
+  deleteLibrarySites,
   deleteLibrarySite,
   LibraryApiError,
   listLibrarySites,
@@ -143,6 +144,51 @@ test("metadata backfill is an explicit bounded request", async (context) => {
   assert.equal(capturedInput, "/api/backend/library/sites/analyze-missing?limit=100");
   assert.equal(capturedInit?.method, "POST");
   await assert.rejects(backfillLibrarySiteMetadata(5_001), /1 到 5000/);
+});
+
+test("bulk delete sends one versioned request and normalizes deleted ids", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  let capturedInput: string | URL | Request | undefined;
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = async (input, init) => {
+    capturedInput = input;
+    capturedInit = init;
+    return new Response(JSON.stringify({
+      message: "已删除 2 个网站",
+      deleted_site_ids: ["site-1", "site-2"],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  assert.deepEqual(await deleteLibrarySites([
+    { siteId: "site-1", expectedVersion: 2 },
+    { siteId: "site-2", expectedVersion: 7 },
+  ]), { deletedSiteIds: ["site-1", "site-2"] });
+  assert.equal(capturedInput, "/api/backend/library/sites/bulk-delete");
+  assert.equal(capturedInit?.method, "POST");
+  assert.deepEqual(JSON.parse(String(capturedInit?.body)), {
+    items: [
+      { site_id: "site-1", expected_version: 2 },
+      { site_id: "site-2", expected_version: 7 },
+    ],
+  });
+});
+
+test("bulk delete rejects duplicate or empty selections before fetching", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return new Response(null, { status: 204 });
+  };
+
+  await assert.rejects(deleteLibrarySites([]), /至少需要一个/);
+  await assert.rejects(deleteLibrarySites([
+    { siteId: "site-1", expectedVersion: 1 },
+    { siteId: "site-1", expectedVersion: 1 },
+  ]), /重复网站/);
+  assert.equal(fetchCount, 0);
 });
 
 test("reclassification confirmation sends both immutable snapshots", async (context) => {

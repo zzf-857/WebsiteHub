@@ -12,6 +12,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -21,6 +22,7 @@ import {
   backfillLibrarySiteMetadata,
   createLibrarySite,
   DEFAULT_LIBRARY_PAGE_SIZE,
+  deleteLibrarySites,
   deleteLibrarySite,
   getLibrarySite,
   listLibraryCategories,
@@ -39,6 +41,7 @@ import type {
   LibrarySort,
   LibraryTag,
 } from "@/lib/library-contract";
+import { canStartLibraryPageLoad } from "@/lib/library-pagination";
 import {
   DialogState,
   EMPTY_PAGE,
@@ -51,11 +54,14 @@ import {
   isLibraryErrorCode,
   isLibraryNotFound,
 } from "@/components/library/library-workspace-parts";
+import { useLibrarySelection } from "@/components/library/use-library-selection";
 
 // 全站统一使用共享版网站图标（size 为像素值）；
 // 旧枚举尺寸按 small=20 / medium=24 / large=32 迁移
 
 const ANALYSIS_REFRESH_DELAYS_MS = [1_000, 2_000, 3_000, 5_000, 8_000, 13_000] as const;
+
+type PageKind = "pinned" | "regular";
 
 export function useLibraryWorkspace() {
   const [intent] = useState(initialIntent);
@@ -85,6 +91,18 @@ export function useLibraryWorkspace() {
   const [sitesError, setSitesError] = useState<string | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const requestGeneration = useRef(0);
+  const paginationControllers = useRef<Record<PageKind, AbortController | null>>({
+    pinned: null,
+    regular: null,
+  });
+  const paginationInFlight = useRef<Record<PageKind, boolean>>({
+    pinned: false,
+    regular: false,
+  });
+  const paginationFailedCursor = useRef<Record<PageKind, string | null>>({
+    pinned: null,
+    regular: null,
+  });
   const taxonomyRequestGeneration = useRef(0);
 
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -149,8 +167,43 @@ export function useLibraryWorkspace() {
     direction,
     limit: DEFAULT_LIBRARY_PAGE_SIZE,
   }), [categoryId, direction, searchQuery, sort, tagId]);
+  const selectionScope = useMemo(
+    () => JSON.stringify({ pinnedOnly, ...siteQuery }),
+    [pinnedOnly, siteQuery],
+  );
+  const activeSiteQueryScope = useRef(selectionScope);
+  useLayoutEffect(() => {
+    activeSiteQueryScope.current = selectionScope;
+  }, [selectionScope]);
+  const {
+    allLoadedSelected,
+    clearSelection,
+    loadedSiteCount,
+    retainVisibleSelection,
+    selectedSiteIds,
+    selectedSites,
+    selectionMode,
+    setSelectionMode,
+    toggleAllLoadedSites,
+    toggleSiteSelection,
+  } = useLibrarySelection({
+    scope: selectionScope,
+    pinnedSites: pinnedPage.items,
+    regularSites: regularPage.items,
+    onNotice: setNotice,
+  });
+
+  const cancelPaginationRequests = useCallback((clearFailedCursors = false) => {
+    for (const kind of ["pinned", "regular"] as const) {
+      paginationControllers.current[kind]?.abort();
+      paginationControllers.current[kind] = null;
+      paginationInFlight.current[kind] = false;
+      if (clearFailedCursors) paginationFailedCursor.current[kind] = null;
+    }
+  }, []);
 
   useEffect(() => {
+    cancelPaginationRequests(true);
     const controller = new AbortController();
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
@@ -180,6 +233,8 @@ export function useLibraryWorkspace() {
           matchedCount: regular.aggregate.matchedCount,
           loadingMore: false,
         } : EMPTY_PAGE);
+        const refreshedSites = [...pinned.items, ...(regular?.items ?? [])];
+        retainVisibleSelection(refreshedSites);
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) return;
         if (requestGeneration.current === generation) {
@@ -194,11 +249,22 @@ export function useLibraryWorkspace() {
 
     void load();
     return () => controller.abort();
-  }, [pinnedOnly, refreshVersion, siteQuery]);
+  }, [
+    cancelPaginationRequests,
+    pinnedOnly,
+    refreshVersion,
+    retainVisibleSelection,
+    selectionScope,
+    siteQuery,
+  ]);
+
+  useEffect(() => () => cancelPaginationRequests(), [cancelPaginationRequests]);
 
   const refreshSites = useCallback(() => {
+    requestGeneration.current += 1;
+    cancelPaginationRequests(true);
     setRefreshVersion((current) => current + 1);
-  }, []);
+  }, [cancelPaginationRequests]);
 
   const stopAnalysisRefresh = useCallback(() => {
     if (analysisRefreshTimer.current !== null) {
@@ -269,20 +335,36 @@ export function useLibraryWorkspace() {
     }
   }, [loadTaxonomies, refreshSites]);
 
-  const loadMore = async (kind: "pinned" | "regular") => {
+  const loadMore = useCallback(async (kind: PageKind) => {
     const page = kind === "pinned" ? pinnedPage : regularPage;
-    if (!page.nextCursor || page.loadingMore) return;
+    const loadState = {
+      nextCursor: page.nextCursor,
+      loading: page.loadingMore,
+      inFlight: paginationInFlight.current[kind],
+      failedCursor: paginationFailedCursor.current[kind],
+    };
+    if (!canStartLibraryPageLoad(loadState)) return;
+
+    const cursor = loadState.nextCursor;
     const generation = requestGeneration.current;
+    const queryScope = selectionScope;
+    const controller = new AbortController();
     const setPage = kind === "pinned" ? setPinnedPage : setRegularPage;
+    paginationInFlight.current[kind] = true;
+    paginationControllers.current[kind] = controller;
     setPage((current) => ({ ...current, loadingMore: true }));
-    setSitesError(null);
     try {
       const result = await listLibrarySites({
         ...siteQuery,
         pinned: kind === "pinned",
-        cursor: page.nextCursor,
-      });
-      if (requestGeneration.current !== generation) return;
+        cursor,
+      }, controller.signal);
+      if (
+        controller.signal.aborted
+        || requestGeneration.current !== generation
+        || activeSiteQueryScope.current !== queryScope
+      ) return;
+      paginationFailedCursor.current[kind] = null;
       setPage((current) => ({
         items: appendUniqueSites(current.items, result.items),
         nextCursor: result.nextCursor,
@@ -290,11 +372,26 @@ export function useLibraryWorkspace() {
         loadingMore: false,
       }));
     } catch (error) {
-      if (requestGeneration.current !== generation) return;
+      if (
+        isAbortError(error)
+        || controller.signal.aborted
+        || requestGeneration.current !== generation
+        || activeSiteQueryScope.current !== queryScope
+      ) return;
+      paginationFailedCursor.current[kind] = cursor;
       setSitesError(errorMessage(error, "更多网站加载失败，请重试"));
-      setPage((current) => ({ ...current, loadingMore: false }));
+    } finally {
+      if (paginationControllers.current[kind] !== controller) return;
+      paginationControllers.current[kind] = null;
+      paginationInFlight.current[kind] = false;
+      if (
+        requestGeneration.current === generation
+        && activeSiteQueryScope.current === queryScope
+      ) {
+        setPage((current) => ({ ...current, loadingMore: false }));
+      }
     }
-  };
+  }, [pinnedPage, regularPage, selectionScope, siteQuery]);
 
   const openDialog = (nextDialog: Exclude<DialogState, null>) => {
     setMutationError(null);
@@ -305,6 +402,12 @@ export function useLibraryWorkspace() {
     if (mutationBusy) return;
     setDialog(null);
     setMutationError(null);
+  };
+
+  const beginBulkDelete = () => {
+    if (selectedSites.length === 0) return;
+    setMutationError(null);
+    setDialog({ kind: "bulk-delete", sites: selectedSites });
   };
 
   const handleCreate = async (input: LibrarySiteCreateInput) => {
@@ -394,6 +497,41 @@ export function useLibraryWorkspace() {
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (dialog?.kind !== "bulk-delete") return;
+    const deletingSites = dialog.sites;
+    setMutationBusy(true);
+    setMutationError(null);
+    try {
+      const requestedIds = deletingSites.map((site) => site.id);
+      const result = await deleteLibrarySites(deletingSites.map((site) => ({
+        siteId: site.id,
+        expectedVersion: site.version,
+      })));
+      if (
+        result.deletedSiteIds.length !== requestedIds.length
+        || result.deletedSiteIds.some((siteId) => !requestedIds.includes(siteId))
+      ) {
+        throw new Error("批量删除响应与所选网站不一致，请刷新后核对");
+      }
+      setDialog(null);
+      clearSelection();
+      setNotice(`已从资料库删除 ${deletingSites.length} 个网站`);
+      refreshAfterMutation();
+    } catch (error) {
+      if (isLibraryErrorCode(error, "bulk_delete_conflict")) {
+        setDialog(null);
+        clearSelection();
+        setNotice("所选网站已发生变化，已清空选择并刷新列表，请重新选择");
+        refreshAfterMutation();
+      } else {
+        setMutationError(errorMessage(error, "批量删除失败，请重试"));
+      }
+    } finally {
+      setMutationBusy(false);
+    }
+  };
+
   const handleTogglePinned = async (site: LibrarySite) => {
     if (quickActionId) return;
     setQuickActionId(site.id);
@@ -421,6 +559,7 @@ export function useLibraryWorkspace() {
   };
 
   const handleSortChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    clearSelection();
     setSort(event.target.value as LibrarySort);
   };
 
@@ -469,11 +608,14 @@ export function useLibraryWorkspace() {
 
   const collectionProps = {
     viewMode,
+    selectionMode,
+    selectedSiteIds,
     quickActionId,
+    onToggleSelected: toggleSiteSelection,
     onEdit: (site: LibrarySite) => openDialog({ kind: "edit", site }),
     onDelete: (site: LibrarySite) => openDialog({ kind: "delete", site }),
     onTogglePinned: (site: LibrarySite) => void handleTogglePinned(site),
-    reorderable,
+    reorderable: reorderable && !selectionMode,
     reorderBusy,
     onMove: (site: LibrarySite, to: "top" | "up" | "down" | "bottom") =>
       void handleMove(site, to),
@@ -482,16 +624,20 @@ export function useLibraryWorkspace() {
   };
 
   return {
+    allLoadedSelected,
     analysisBackfillBusy,
+    beginBulkDelete,
     categories,
     categoryId,
     closeDialog,
+    clearSelection,
     collectionProps,
     dialog,
     direction,
     handleCreate,
     handleAnalysisBackfill,
     handleDelete,
+    handleBulkDelete,
     handleSortChange,
     handleTaxonomyChanged,
     handleUpdate,
@@ -499,6 +645,7 @@ export function useLibraryWorkspace() {
     hasSites,
     loadMore,
     loadTaxonomies,
+    loadedSiteCount,
     mutationBusy,
     mutationError,
     notice,
@@ -509,12 +656,15 @@ export function useLibraryWorkspace() {
     regularPage,
     searchInput,
     searchInputRef,
+    selectedSites,
+    selectionMode,
     setCategoryId,
     setDirection,
     setNotice,
     setPinnedOnly,
     setSearchInput,
     setSearchQuery,
+    setSelectionMode,
     setTagId,
     setViewMode,
     sitesError,
@@ -526,6 +676,7 @@ export function useLibraryWorkspace() {
     taxonomyLoading,
     totalLibrarySites,
     totalMatched,
+    toggleAllLoadedSites,
     viewMode,
   };
 }

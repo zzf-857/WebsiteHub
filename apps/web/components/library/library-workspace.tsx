@@ -8,6 +8,7 @@ import {
   FolderTree,
   LayoutGrid,
   List,
+  ListChecks,
   LoaderCircle,
   Pin,
   Plus,
@@ -16,10 +17,12 @@ import {
   Tags,
   Trash2,
   WandSparkles,
+  X,
 } from "lucide-react";
 import {
   LibraryDialog,
 } from "@/components/library/library-dialog";
+import { LibraryAutoLoad } from "@/components/library/library-auto-load";
 import {
   SiteForm,
 } from "@/components/library/site-form";
@@ -34,19 +37,24 @@ import {
   siteHost,
 } from "@/components/library/library-workspace-parts";
 import { useLibraryWorkspace } from "@/components/library/use-library-workspace";
+import { MAX_LIBRARY_BULK_DELETE_SITES } from "@/lib/library-contract";
 
 export function LibraryWorkspace() {
   const {
+    allLoadedSelected,
     analysisBackfillBusy,
+    beginBulkDelete,
     categories,
     categoryId,
     closeDialog,
+    clearSelection,
     collectionProps,
     dialog,
     direction,
     handleCreate,
     handleAnalysisBackfill,
     handleDelete,
+    handleBulkDelete,
     handleSortChange,
     handleTaxonomyChanged,
     handleUpdate,
@@ -54,6 +62,7 @@ export function LibraryWorkspace() {
     hasSites,
     loadMore,
     loadTaxonomies,
+    loadedSiteCount,
     mutationBusy,
     mutationError,
     notice,
@@ -64,12 +73,15 @@ export function LibraryWorkspace() {
     regularPage,
     searchInput,
     searchInputRef,
+    selectedSites,
+    selectionMode,
     setCategoryId,
     setDirection,
     setNotice,
     setPinnedOnly,
     setSearchInput,
     setSearchQuery,
+    setSelectionMode,
     setTagId,
     setViewMode,
     sitesError,
@@ -81,6 +93,7 @@ export function LibraryWorkspace() {
     taxonomyLoading,
     totalLibrarySites,
     totalMatched,
+    toggleAllLoadedSites,
     viewMode,
   } = useLibraryWorkspace();
 
@@ -98,7 +111,7 @@ export function LibraryWorkspace() {
             type="button"
             onClick={() => void handleAnalysisBackfill()}
             disabled={analysisBackfillBusy || totalLibrarySites === 0}
-            title="补全未分析网站的公开信息"
+            title="补全未分析、部分完成或上次失败的网站公开信息"
           >
             {analysisBackfillBusy ? (
               <LoaderCircle className="loading-spinner" aria-hidden="true" />
@@ -130,7 +143,11 @@ export function LibraryWorkspace() {
               className="library-sidebar-item"
               type="button"
               data-active={!pinnedOnly && !categoryId || undefined}
-              onClick={() => { setPinnedOnly(false); setCategoryId(""); }}
+              onClick={() => {
+                clearSelection();
+                setPinnedOnly(false);
+                setCategoryId("");
+              }}
             >
               <span><LayoutGrid aria-hidden="true" />全部网站</span>
               <small>{totalLibrarySites}</small>
@@ -139,7 +156,10 @@ export function LibraryWorkspace() {
               className="library-sidebar-item"
               type="button"
               data-active={pinnedOnly || undefined}
-              onClick={() => setPinnedOnly(true)}
+              onClick={() => {
+                clearSelection();
+                setPinnedOnly(true);
+              }}
             >
               <span><Pin aria-hidden="true" />置顶网站</span>
               <small>{pinnedPage.matchedCount}</small>
@@ -158,7 +178,10 @@ export function LibraryWorkspace() {
                   type="button"
                   key={category.id}
                   data-active={categoryId === category.id || undefined}
-                  onClick={() => setCategoryId((current) => current === category.id ? "" : category.id)}
+                  onClick={() => {
+                    clearSelection();
+                    setCategoryId((current) => current === category.id ? "" : category.id);
+                  }}
                 >
                   <span><FolderTree aria-hidden="true" />{category.name}</span>
                   <small>{category.siteCount}</small>
@@ -181,13 +204,23 @@ export function LibraryWorkspace() {
                 type="search"
                 placeholder="搜索名称、网址或描述"
                 value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
+                onChange={(event) => {
+                  clearSelection();
+                  setSearchInput(event.target.value);
+                }}
               />
             </label>
             <label className="library-filter-select">
               <Tags aria-hidden="true" />
               <span className="sr-only">按标签筛选</span>
-              <select value={tagId} onChange={(event) => setTagId(event.target.value)} disabled={taxonomyLoading}>
+              <select
+                value={tagId}
+                onChange={(event) => {
+                  clearSelection();
+                  setTagId(event.target.value);
+                }}
+                disabled={taxonomyLoading}
+              >
                 <option value="">全部标签</option>
                 {tags.map((tag) => (
                   <option key={tag.id} value={tag.id}>{tag.name} ({tag.siteCount})</option>
@@ -210,7 +243,10 @@ export function LibraryWorkspace() {
             <button
               className="icon-button library-direction-button"
               type="button"
-              onClick={() => setDirection((current) => current === "asc" ? "desc" : "asc")}
+              onClick={() => {
+                clearSelection();
+                setDirection((current) => current === "asc" ? "desc" : "asc");
+              }}
               aria-label={direction === "asc" ? "当前升序，切换为降序" : "当前降序，切换为升序"}
               title={direction === "asc" ? "升序" : "降序"}
             >
@@ -242,21 +278,62 @@ export function LibraryWorkspace() {
 
           <div className="library-results-heading" aria-live="polite">
             <span>{sitesLoading ? "正在读取资料库" : `共 ${totalMatched} 个结果`}</span>
-            {hasActiveFilters && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchInput("");
-                  setSearchQuery("");
-                  setCategoryId("");
-                  setTagId("");
-                  setPinnedOnly(false);
-                }}
-              >
-                清除筛选
-              </button>
-            )}
+            <div className="library-results-actions">
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearSelection();
+                    setSearchInput("");
+                    setSearchQuery("");
+                    setCategoryId("");
+                    setTagId("");
+                    setPinnedOnly(false);
+                  }}
+                >
+                  清除筛选
+                </button>
+              )}
+              {hasSites && !sitesLoading && !selectionMode && (
+                <button type="button" onClick={() => setSelectionMode(true)}>
+                  <ListChecks aria-hidden="true" />批量选择
+                </button>
+              )}
+            </div>
           </div>
+
+          {selectionMode && (
+            <div className="library-selection-toolbar" role="toolbar" aria-label="批量管理网站">
+              <label className="library-select-all">
+                <input
+                  type="checkbox"
+                  checked={allLoadedSelected}
+                  onChange={toggleAllLoadedSites}
+                />
+                <span>
+                  {loadedSiteCount > MAX_LIBRARY_BULK_DELETE_SITES
+                    ? `选择当前已加载的前 ${MAX_LIBRARY_BULK_DELETE_SITES} 个（共 ${loadedSiteCount} 个）`
+                    : `全选当前已加载（${loadedSiteCount} 个）`}
+                </span>
+              </label>
+              <span className="library-selection-count" aria-live="polite">
+                已选 {selectedSites.length} 个
+              </span>
+              <div className="library-selection-actions">
+                <button className="library-button secondary" type="button" onClick={clearSelection}>
+                  <X aria-hidden="true" />取消选择
+                </button>
+                <button
+                  className="library-button danger"
+                  type="button"
+                  onClick={beginBulkDelete}
+                  disabled={selectedSites.length === 0}
+                >
+                  <Trash2 aria-hidden="true" />删除所选
+                </button>
+              </div>
+            </div>
+          )}
 
           {notice && (
             <div className="library-notice" role="status">
@@ -301,6 +378,7 @@ export function LibraryWorkspace() {
                   className="library-button secondary"
                   type="button"
                   onClick={() => {
+                    clearSelection();
                     setSearchInput("");
                     setSearchQuery("");
                     setCategoryId("");
@@ -328,17 +406,13 @@ export function LibraryWorkspace() {
                     <span>{pinnedPage.matchedCount} 个</span>
                   </div>
                   <SiteCollection sites={pinnedPage.items} {...collectionProps} />
-                  {pinnedPage.nextCursor && (
-                    <button
-                      className="library-load-more"
-                      type="button"
-                      onClick={() => void loadMore("pinned")}
-                      disabled={pinnedPage.loadingMore}
-                    >
-                      {pinnedPage.loadingMore && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
-                      {pinnedPage.loadingMore ? "正在加载" : "加载更多置顶网站"}
-                    </button>
-                  )}
+                  <LibraryAutoLoad
+                    hasMore={Boolean(pinnedPage.nextCursor)}
+                    loading={pinnedPage.loadingMore}
+                    loadingLabel="正在自动加载更多置顶网站"
+                    fallbackLabel="加载更多置顶网站"
+                    onLoadMore={() => loadMore("pinned")}
+                  />
                 </section>
               )}
 
@@ -352,17 +426,13 @@ export function LibraryWorkspace() {
                     <span>{regularPage.matchedCount} 个</span>
                   </div>
                   <SiteCollection sites={regularPage.items} {...collectionProps} />
-                  {regularPage.nextCursor && (
-                    <button
-                      className="library-load-more"
-                      type="button"
-                      onClick={() => void loadMore("regular")}
-                      disabled={regularPage.loadingMore}
-                    >
-                      {regularPage.loadingMore && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
-                      {regularPage.loadingMore ? "正在加载" : "加载更多网站"}
-                    </button>
-                  )}
+                  <LibraryAutoLoad
+                    hasMore={Boolean(regularPage.nextCursor)}
+                    loading={regularPage.loadingMore}
+                    loadingLabel="正在自动加载更多网站"
+                    fallbackLabel="加载更多网站"
+                    onLoadMore={() => loadMore("regular")}
+                  />
                 </section>
               )}
             </div>
@@ -436,7 +506,55 @@ export function LibraryWorkspace() {
         onClose={closeDialog}
       >
         {dialog?.kind === "taxonomy" && (
-          <TaxonomyManager categories={categories} tags={tags} onChanged={handleTaxonomyChanged} />
+          <TaxonomyManager
+            categories={categories}
+            tags={tags}
+            onChanged={async () => {
+              clearSelection();
+              await handleTaxonomyChanged();
+            }}
+          />
+        )}
+      </LibraryDialog>
+
+      <LibraryDialog
+        open={dialog?.kind === "bulk-delete"}
+        title="批量删除网站"
+        description="仅删除本次明确选中的网站；任一网站已被更新时，整批都不会删除。"
+        onClose={closeDialog}
+      >
+        {dialog?.kind === "bulk-delete" && (
+          <div className="library-delete-confirmation library-bulk-delete-confirmation">
+            <div className="library-bulk-delete-heading">
+              <strong>将删除 {dialog.sites.length} 个网站</strong>
+              <span>此操作无法撤销</span>
+            </div>
+            <ul className="library-bulk-delete-list">
+              {dialog.sites.slice(0, 6).map((site) => (
+                <li key={site.id}>
+                  <SiteFavicon url={site.faviconUrl} name={site.name} size={24} />
+                  <span>
+                    <strong>{site.name}</strong>
+                    <small>{siteHost(site)}</small>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {dialog.sites.length > 6 && (
+              <p className="library-bulk-delete-more">以及另外 {dialog.sites.length - 6} 个网站</p>
+            )}
+            <p>网站也会从关联 Space 中移除，但 Space 本身会保留。</p>
+            {mutationError && <p className="library-form-error" role="alert">{mutationError}</p>}
+            <footer className="library-form-actions">
+              <button className="library-button secondary" type="button" onClick={closeDialog} disabled={mutationBusy}>
+                取消
+              </button>
+              <button className="library-button danger" type="button" onClick={() => void handleBulkDelete()} disabled={mutationBusy}>
+                {mutationBusy ? <LoaderCircle className="loading-spinner" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+                {mutationBusy ? "正在删除" : `确认删除 ${dialog.sites.length} 个网站`}
+              </button>
+            </footer>
+          </div>
         )}
       </LibraryDialog>
     </main>

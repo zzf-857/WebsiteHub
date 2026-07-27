@@ -14,6 +14,7 @@ export type LibraryAnalysisStatus = (typeof LIBRARY_ANALYSIS_STATUSES)[number];
 export const MAX_LIBRARY_SITE_NAME_LENGTH = 160;
 export const MAX_LIBRARY_CATEGORY_NAME_LENGTH = 80;
 export const MAX_LIBRARY_TAG_NAME_LENGTH = 40;
+export const MAX_LIBRARY_BULK_DELETE_SITES = 100;
 
 export type LibraryCategoryRef = {
   id: string;
@@ -98,6 +99,15 @@ export type LibrarySiteCreateInput = {
 export type LibrarySiteUpdateInput = Omit<Partial<LibrarySiteCreateInput>, "categoryId"> & {
   categoryId?: string | null;
   expectedVersion: number;
+};
+
+export type LibraryBulkDeleteItem = {
+  siteId: string;
+  expectedVersion: number;
+};
+
+export type LibraryBulkDeleteResult = {
+  deletedSiteIds: string[];
 };
 
 export type LibraryErrorDetails = {
@@ -206,6 +216,19 @@ export function normalizeLibraryAnalysisBackfill(value: unknown): LibraryAnalysi
     activeCount: count(candidate.active_count, "analysis_backfill.active_count"),
     remainingCount: count(candidate.remaining_count, "analysis_backfill.remaining_count"),
   };
+}
+
+export function normalizeLibraryBulkDeleteResult(value: unknown): LibraryBulkDeleteResult {
+  const candidate = record(value, "bulk_delete");
+  if (!Array.isArray(candidate.deleted_site_ids)) {
+    throw new LibraryContractError("bulk_delete.deleted_site_ids 必须是数组");
+  }
+  const deletedSiteIds = candidate.deleted_site_ids.map((siteId, index) =>
+    identifier(siteId, `bulk_delete.deleted_site_ids[${index}]`));
+  if (new Set(deletedSiteIds).size !== deletedSiteIds.length) {
+    throw new LibraryContractError("bulk_delete.deleted_site_ids 不能包含重复网站");
+  }
+  return { deletedSiteIds };
 }
 
 export function normalizeLibraryCategories(value: unknown): LibraryCategory[] {
@@ -343,6 +366,28 @@ export function assertLibrarySiteUpdateInput(input: LibrarySiteUpdateInput): Lib
 
 export function assertLibraryExpectedVersion(value: unknown): number {
   return version(value, "site.expected_version");
+}
+
+export function assertLibraryBulkDeleteItems(
+  items: LibraryBulkDeleteItem[],
+): LibraryBulkDeleteItem[] {
+  if (!Array.isArray(items) || items.length < 1) {
+    throw new LibraryContractError("批量删除至少需要一个网站");
+  }
+  if (items.length > MAX_LIBRARY_BULK_DELETE_SITES) {
+    throw new LibraryContractError(`单次最多删除 ${MAX_LIBRARY_BULK_DELETE_SITES} 个网站`);
+  }
+  const normalized = items.map((item, index) => ({
+    siteId: identifier(item.siteId, `bulk_delete.items[${index}].site_id`),
+    expectedVersion: version(
+      item.expectedVersion,
+      `bulk_delete.items[${index}].expected_version`,
+    ),
+  }));
+  if (new Set(normalized.map((item) => item.siteId)).size !== normalized.length) {
+    throw new LibraryContractError("批量删除不能包含重复网站");
+  }
+  return normalized;
 }
 
 export function assertLibraryCategoryName(name: string): string {

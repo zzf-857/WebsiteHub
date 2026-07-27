@@ -35,6 +35,7 @@ export type DialogState =
   | { kind: "create" }
   | { kind: "edit"; site: LibrarySite }
   | { kind: "delete"; site: LibrarySite }
+  | { kind: "bulk-delete"; sites: LibrarySite[] }
   | { kind: "taxonomy" }
   | null;
 
@@ -91,7 +92,10 @@ export function siteHost(site: LibrarySite): string {
 export type SiteCollectionProps = {
   sites: LibrarySite[];
   viewMode: ViewMode;
+  selectionMode: boolean;
+  selectedSiteIds: ReadonlySet<string>;
   quickActionId: string | null;
+  onToggleSelected: (siteId: string) => void;
   onEdit: (site: LibrarySite) => void;
   onDelete: (site: LibrarySite) => void;
   onTogglePinned: (site: LibrarySite) => void;
@@ -105,7 +109,10 @@ export type SiteCollectionProps = {
 export function SiteCollection({
   sites,
   viewMode,
+  selectionMode,
+  selectedSiteIds,
   quickActionId,
+  onToggleSelected,
   onEdit,
   onDelete,
   onTogglePinned,
@@ -118,13 +125,16 @@ export function SiteCollection({
     <div className="library-site-collection" data-view={viewMode}>
       {sites.map((site, index) => {
         const isBusy = quickActionId === site.id;
+        const isSelected = selectedSiteIds.has(site.id);
         const isFirst = index === 0;
         const isLast = index === sites.length - 1;
         return (
           <article
             className="library-site-card"
             key={site.id}
-            draggable={reorderable && !reorderBusy}
+            data-selected={isSelected || undefined}
+            data-selection-mode={selectionMode || undefined}
+            draggable={reorderable && !reorderBusy && !selectionMode}
             onDragStart={(event) => {
               event.dataTransfer.setData("text/plain", site.id);
               event.dataTransfer.effectAllowed = "move";
@@ -141,13 +151,36 @@ export function SiteCollection({
               if (dragged && dragged !== site.id) onDropBefore(dragged, site.id);
             }}
           >
-            <Link
-              className="library-site-card-link"
-              href={`/library/${encodeURIComponent(site.id)}`}
-              aria-label={`查看 ${site.name} 的详情`}
-              draggable={false}
-            />
-            {reorderable && (
+            {selectionMode ? (
+              <button
+                className="library-site-card-link library-site-select-surface"
+                type="button"
+                aria-label={`${isSelected ? "取消选择" : "选择"} ${site.name}`}
+                onClick={() => onToggleSelected(site.id)}
+              />
+            ) : (
+              <Link
+                className="library-site-card-link"
+                href={`/library/${encodeURIComponent(site.id)}`}
+                aria-label={`查看 ${site.name} 的详情`}
+                draggable={false}
+              />
+            )}
+            {selectionMode && (
+              <label
+                className="library-site-checkbox"
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => onToggleSelected(site.id)}
+                  aria-label={`${isSelected ? "取消选择" : "选择"} ${site.name}`}
+                />
+              </label>
+            )}
+            {reorderable && !selectionMode && (
               <div
                 className="library-site-reorder"
                 role="group"
@@ -232,7 +265,7 @@ export function SiteCollection({
 
             <footer className="library-site-card-footer">
               <span className="library-site-updated">更新于 {dateFormatter.format(new Date(site.updatedAt))}</span>
-              <div className="library-site-actions">
+              {!selectionMode && <div className="library-site-actions">
                 <button
                   className="icon-button"
                   type="button"
@@ -267,7 +300,7 @@ export function SiteCollection({
                 >
                   <Trash2 aria-hidden="true" />
                 </button>
-              </div>
+              </div>}
             </footer>
           </article>
         );

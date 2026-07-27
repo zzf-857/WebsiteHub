@@ -1,4 +1,5 @@
 import {
+  assertLibraryBulkDeleteItems,
   assertLibraryCategoryName,
   assertLibraryExpectedVersion,
   assertLibrarySiteCreateInput,
@@ -6,6 +7,7 @@ import {
   assertLibraryTagName,
   libraryErrorDetails,
   normalizeLibraryAnalysisBackfill,
+  normalizeLibraryBulkDeleteResult,
   normalizeCategoryDeletePreview,
   normalizeLibraryCategories,
   normalizeLibraryCategory,
@@ -15,6 +17,8 @@ import {
   normalizeLibraryTags,
   type LibraryCategory,
   type LibraryAnalysisBackfill,
+  type LibraryBulkDeleteItem,
+  type LibraryBulkDeleteResult,
   type LibraryCategoryDeletePreview,
   type LibrarySite,
   type LibrarySiteCreateInput,
@@ -201,6 +205,21 @@ export async function deleteLibrarySite(id: string, expectedVersion: number): Pr
     expected_version: String(assertLibraryExpectedVersion(expectedVersion)),
   });
   await request(`/sites/${encodeId(id)}?${params.toString()}`, { method: "DELETE" });
+}
+
+export async function deleteLibrarySites(
+  items: LibraryBulkDeleteItem[],
+): Promise<LibraryBulkDeleteResult> {
+  const normalized = assertLibraryBulkDeleteItems(items);
+  return normalizeLibraryBulkDeleteResult(await request("/sites/bulk-delete", {
+    method: "POST",
+    body: JSON.stringify({
+      items: normalized.map((item) => ({
+        site_id: item.siteId,
+        expected_version: item.expectedVersion,
+      })),
+    }),
+  }));
 }
 
 /**

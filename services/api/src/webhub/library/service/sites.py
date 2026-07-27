@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,8 @@ from webhub.db.models import (
 )
 from webhub.library.schemas import (
     CategoryReference,
+    SiteBulkDeleteRequest,
+    SiteBulkDeleteResponse,
     SiteCreateRequest,
     SiteDeleteResponse,
     SiteResponse,
@@ -305,3 +307,80 @@ async def delete_site(
         )
     await session.commit()
     return SiteDeleteResponse(message="网站已删除", site_id=site_id)
+
+
+async def bulk_delete_sites(
+    session: AsyncSession,
+    user_id: str,
+    payload: SiteBulkDeleteRequest,
+) -> SiteBulkDeleteResponse:
+    """Atomically delete an account-scoped, versioned set of sites."""
+
+    expected_versions = {item.site_id: item.expected_version for item in payload.items}
+    site_ids = list(expected_versions)
+    sites = list(
+        (
+            await session.scalars(
+                select(Site).where(
+                    Site.user_id == user_id,
+                    Site.id.in_(site_ids),
+                )
+            )
+        ).all()
+    )
+    if len(sites) != len(site_ids) or any(
+        site.version != expected_versions[site.id] for site in sites
+    ):
+        await session.rollback()
+        raise LibraryConflictError(
+            "所选网站已发生变化，请刷新后重新选择",
+            code="bulk_delete_conflict",
+        )
+
+    related_space_ids = list(
+        (
+            await session.scalars(
+                select(SpaceMember.space_id)
+                .where(
+                    SpaceMember.user_id == user_id,
+                    SpaceMember.site_id.in_(site_ids),
+                )
+                .distinct()
+            )
+        ).all()
+    )
+    version_matches = or_(
+        *(
+            and_(Site.id == site_id, Site.version == expected_version)
+            for site_id, expected_version in expected_versions.items()
+        )
+    )
+    deleted = await session.execute(
+        delete(Site)
+        .where(
+            Site.user_id == user_id,
+            version_matches,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if deleted.rowcount != len(site_ids):  # type: ignore[attr-defined]
+        await session.rollback()
+        raise LibraryConflictError(
+            "所选网站已发生变化，请刷新后重新选择",
+            code="bulk_delete_conflict",
+        )
+
+    if related_space_ids:
+        await session.execute(
+            update(Space)
+            .where(
+                Space.user_id == user_id,
+                Space.id.in_(related_space_ids),
+            )
+            .values(version=Space.version + 1, updated_at=utc_now())
+        )
+    await session.commit()
+    return SiteBulkDeleteResponse(
+        message=f"已删除 {len(site_ids)} 个网站",
+        deleted_site_ids=site_ids,
+    )

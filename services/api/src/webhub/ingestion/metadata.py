@@ -18,6 +18,7 @@ MAX_TITLE_CHARS = 160
 MAX_DESCRIPTION_CHARS = 1_000
 # Enough to catch a repository list; beyond this the page is not "about" them.
 MAX_RELATED_LINKS = 8
+MAX_DECLARED_ICON_LINKS = 8
 # Parsing deliberately does *not* stop at <body>: related-repository links live
 # in the body, so an early stop returned metadata but never any links.  Input is
 # already bounded by the fetcher's 2 MB body cap, and link collection stops at
@@ -30,7 +31,7 @@ class ParsedMetadata:
     og_title: str | None = None
     description: str | None = None
     image_url: str | None = None
-    icon_href: str | None = None
+    icon_hrefs: list[str] = field(default_factory=list)
     github_links: list[str] = field(default_factory=list)
 
     @property
@@ -79,8 +80,13 @@ class _MetadataParser(HTMLParser):
                 "apple-touch-icon-precomposed",
                 "mask-icon",
             }
-            if href and not self.result.icon_href and icon_relations.intersection(rel.split()):
-                self.result.icon_href = href
+            if (
+                href
+                and icon_relations.intersection(rel.split())
+                and href not in self.result.icon_hrefs
+                and len(self.result.icon_hrefs) < MAX_DECLARED_ICON_LINKS
+            ):
+                self.result.icon_hrefs.append(href)
         elif tag == "a":
             href = values.get("href", "").strip()
             if href and len(self.result.github_links) < MAX_RELATED_LINKS:
@@ -140,8 +146,12 @@ def parse_metadata(html: str, *, base_url: str) -> ParsedMetadata:
     # that was actually fetched (after redirects), not the requested URL.
     if result.image_url:
         result.image_url = urljoin(base_url, result.image_url)
-    if result.icon_href:
-        result.icon_href = urljoin(base_url, result.icon_href)
+    resolved_icons: list[str] = []
+    for href in result.icon_hrefs:
+        resolved = urljoin(base_url, href)
+        if resolved not in resolved_icons:
+            resolved_icons.append(resolved)
+    result.icon_hrefs = resolved_icons
 
     seen: set[str] = set()
     repositories: list[str] = []
@@ -156,6 +166,7 @@ def parse_metadata(html: str, *, base_url: str) -> ParsedMetadata:
 
 __all__ = [
     "MAX_DESCRIPTION_CHARS",
+    "MAX_DECLARED_ICON_LINKS",
     "MAX_RELATED_LINKS",
     "MAX_TITLE_CHARS",
     "ParsedMetadata",

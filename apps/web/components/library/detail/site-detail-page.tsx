@@ -11,10 +11,12 @@ import {
   Pin,
   RefreshCw,
   Trash2,
+  X,
+  ZoomIn,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { LibraryDialog } from "@/components/library/library-dialog";
 import { SiteForm } from "@/components/library/site-form";
@@ -44,8 +46,8 @@ import { RelatedSitesCard } from "./related-sites-card";
 
 /* 网站详情页（设计稿 1d）。
    数据链路与旧版保持一致：getLibrarySite 取数、非法/404/错误三种兜底、
-   编辑与删除都带 expectedVersion 做乐观并发；外观按设计稿主列三卡装配：
-   主信息卡 → 详细介绍 → 收录动态（设计稿没有「网站预览」卡，不自创）。 */
+   编辑与删除都带 expectedVersion 做乐观并发；预览图作为主信息内的紧凑字段展示，
+   放大层只负责查看已保存的公开预览图，不会额外请求或跳转。 */
 
 type SiteDetailPageProps = {
   siteId: string;
@@ -124,6 +126,9 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
   const [notice, setNotice] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewTriggerRef = useRef<HTMLButtonElement>(null);
+  const previewCloseRef = useRef<HTMLButtonElement>(null);
 
   // 编辑表单需要完整的分类/标签列表；每次打开编辑弹层都重新拉取，保证是最新的
   const [taxonomy, setTaxonomy] = useState<TaxonomyState>({ status: "loading" });
@@ -174,6 +179,35 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
 
     return () => controller.abort();
   }, [dialog, taxonomyAttempt]);
+
+  const previewUrl = state.status === "ready" ? state.site.previewUrl : null;
+  const previewAvailable = Boolean(previewUrl && previewUrl !== failedPreviewUrl);
+  const lightboxOpen = previewOpen && previewAvailable;
+
+  useEffect(() => {
+    if (!lightboxOpen) return;
+
+    const previewTrigger = previewTriggerRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    previewCloseRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewOpen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previewTrigger?.focus();
+    };
+  }, [lightboxOpen]);
+
+  const handlePreviewError = (url: string) => {
+    setFailedPreviewUrl(url);
+    setPreviewOpen(false);
+  };
 
   const openDialog = (kind: Exclude<DialogKind, null>) => {
     setMutationError(null);
@@ -311,20 +345,6 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
       <div className="sd-layout">
         <div className="sd-main">
           <section className="sd-card sd-hero" aria-labelledby="sd-title">
-            {site.previewUrl && site.previewUrl !== failedPreviewUrl && (
-              <figure className="sd-hero-preview">
-                {/* Remote preview hosts are discovered at runtime and cannot use a static next/image allowlist. */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={site.previewUrl}
-                  alt={`${site.name} 网站预览`}
-                  width={1200}
-                  height={675}
-                  referrerPolicy="no-referrer"
-                  onError={() => setFailedPreviewUrl(site.previewUrl)}
-                />
-              </figure>
-            )}
             <div className="sd-hero-top">
               <span className="sd-hero-icon">
                 <SiteFavicon url={site.faviconUrl} name={site.name} size={40} />
@@ -377,6 +397,34 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
                 </button>
               </div>
             </div>
+
+            {previewAvailable && previewUrl && (
+              <div className="sd-preview-row">
+                <h2 className="sd-preview-label">网站预览</h2>
+                <button
+                  ref={previewTriggerRef}
+                  type="button"
+                  className="sd-preview-trigger"
+                  aria-label={`放大查看 ${site.name} 的网站预览`}
+                  title="放大查看网站预览"
+                  onClick={() => setPreviewOpen(true)}
+                >
+                  {/* Remote preview hosts are discovered at runtime and cannot use a static next/image allowlist. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewUrl}
+                    alt={`${site.name} 网站预览`}
+                    width={400}
+                    height={225}
+                    referrerPolicy="no-referrer"
+                    onError={() => handlePreviewError(previewUrl)}
+                  />
+                  <span className="sd-preview-zoom" aria-hidden="true">
+                    <ZoomIn size={18} />
+                  </span>
+                </button>
+              </div>
+            )}
 
             <div className="sd-hero-meta">
               <div>
@@ -545,6 +593,50 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
           setNotice(`已加入 Space「${spaceName}」`);
         }}
       />
+
+      {lightboxOpen && previewUrl && (
+        <div
+          className="sd-preview-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPreviewOpen(false);
+          }}
+        >
+          <div
+            className="sd-preview-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${site.name} 网站预览`}
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              if (event.key === "Tab") {
+                event.preventDefault();
+                previewCloseRef.current?.focus();
+              }
+            }}
+          >
+            <button
+              ref={previewCloseRef}
+              type="button"
+              className="sd-preview-close"
+              aria-label="关闭网站预览"
+              title="关闭"
+              onClick={() => setPreviewOpen(false)}
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewUrl}
+              alt={`${site.name} 网站预览大图`}
+              width={1200}
+              height={675}
+              referrerPolicy="no-referrer"
+              onError={() => handlePreviewError(previewUrl)}
+            />
+          </div>
+        </div>
+      )}
     </main>
   );
 }

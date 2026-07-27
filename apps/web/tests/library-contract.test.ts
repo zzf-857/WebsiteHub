@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertLibraryBulkDeleteItems,
   assertLibraryCategoryName,
   assertLibraryExpectedVersion,
   assertLibrarySiteCreateInput,
@@ -10,10 +11,12 @@ import {
   libraryErrorDetails,
   libraryErrorMessage,
   LibraryContractError,
+  MAX_LIBRARY_BULK_DELETE_SITES,
   normalizeCategoryDeletePreview,
   normalizeLibraryCategories,
   normalizeLibrarySite,
   normalizeLibrarySitePage,
+  normalizeLibraryBulkDeleteResult,
 } from "../lib/library-contract.ts";
 
 const category = { id: "category-1", name: "开发", is_default: true, icon: "Code", site_count: 2 };
@@ -173,4 +176,34 @@ test("validates optimistic concurrency versions independently of update payloads
   assert.equal(assertLibraryExpectedVersion(4), 4);
   assert.throws(() => assertLibraryExpectedVersion(0), /正整数/);
   assert.throws(() => assertLibraryExpectedVersion(true), /正整数/);
+});
+
+test("validates and normalizes the versioned bulk-delete contract", () => {
+  assert.deepEqual(assertLibraryBulkDeleteItems([
+    { siteId: " site-1 ", expectedVersion: 2 },
+    { siteId: "site-2", expectedVersion: 4 },
+  ]), [
+    { siteId: "site-1", expectedVersion: 2 },
+    { siteId: "site-2", expectedVersion: 4 },
+  ]);
+  assert.deepEqual(normalizeLibraryBulkDeleteResult({
+    deleted_site_ids: ["site-1", "site-2"],
+  }), { deletedSiteIds: ["site-1", "site-2"] });
+
+  assert.throws(() => assertLibraryBulkDeleteItems([]), /至少需要一个/);
+  assert.throws(() => assertLibraryBulkDeleteItems([
+    { siteId: "site-1", expectedVersion: 1 },
+    { siteId: "site-1", expectedVersion: 2 },
+  ]), /重复网站/);
+  assert.throws(
+    () => assertLibraryBulkDeleteItems(Array.from(
+      { length: MAX_LIBRARY_BULK_DELETE_SITES + 1 },
+      (_, index) => ({ siteId: `site-${index}`, expectedVersion: 1 }),
+    )),
+    /单次最多删除/,
+  );
+  assert.throws(
+    () => normalizeLibraryBulkDeleteResult({ deleted_site_ids: ["site-1", "site-1"] }),
+    /重复网站/,
+  );
 });

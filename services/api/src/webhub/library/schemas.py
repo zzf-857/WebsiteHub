@@ -1,12 +1,21 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
 from pydantic.functional_validators import BeforeValidator
 
 # 定义在这里而不是 batch.py：schemas 不依赖任何 library 内部模块，
 # 反过来让 batch 引用它才不会形成 schemas → batch → service → schemas 的环。
 MAX_BATCH_URLS = 50
+MAX_BULK_DELETE_SITES = 100
 
 _HTTP_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
@@ -155,6 +164,31 @@ class SiteAnalysisBackfillResponse(BaseModel):
 class SiteDeleteResponse(BaseModel):
     message: str
     site_id: str
+
+
+class SiteBulkDeleteItem(StrictRequest):
+    site_id: str = Field(min_length=1, max_length=64)
+    expected_version: int = Field(ge=1)
+
+
+class SiteBulkDeleteRequest(StrictRequest):
+    items: list[SiteBulkDeleteItem] = Field(min_length=1, max_length=MAX_BULK_DELETE_SITES)
+
+    @field_validator("items")
+    @classmethod
+    def reject_duplicate_site_ids(
+        cls,
+        items: list[SiteBulkDeleteItem],
+    ) -> list[SiteBulkDeleteItem]:
+        site_ids = [item.site_id for item in items]
+        if len(site_ids) != len(set(site_ids)):
+            raise ValueError("items 不能包含重复的网站")
+        return items
+
+
+class SiteBulkDeleteResponse(BaseModel):
+    message: str
+    deleted_site_ids: list[str]
 
 
 class SiteBatchRequest(StrictRequest):

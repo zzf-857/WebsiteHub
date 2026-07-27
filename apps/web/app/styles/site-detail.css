@@ -93,21 +93,6 @@
   padding: 28px 32px;
 }
 
-.sd-hero-preview {
-  width: auto;
-  aspect-ratio: 16 / 9;
-  margin: -28px -32px 28px;
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--surface-subtle);
-}
-
-.sd-hero-preview img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
 .sd-hero-top {
   display: flex;
   flex-wrap: wrap;
@@ -194,6 +179,124 @@
   flex-shrink: 0;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+/* 预览作为主信息中的独立字段，不再横跨卡片占满首屏。 */
+.sd-preview-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.sd-preview-label {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.sd-preview-trigger {
+  position: relative;
+  display: block;
+  width: min(400px, 100%);
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+  cursor: zoom-in;
+}
+
+.sd-preview-trigger img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sd-preview-trigger:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.sd-preview-trigger:focus-visible,
+.sd-preview-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sd-preview-zoom {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--surface) 75%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 72%, transparent);
+  color: var(--surface);
+  place-items: center;
+}
+
+/* ---------- 预览放大层 ---------- */
+
+.sd-preview-overlay {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  padding: 32px;
+  background: color-mix(in srgb, #000 78%, transparent);
+  place-items: center;
+}
+
+.sd-preview-dialog {
+  position: relative;
+  display: grid;
+  width: min(1200px, 92vw);
+  max-height: calc(100vh - 64px);
+  outline: none;
+  place-items: center;
+}
+
+.sd-preview-dialog > img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: calc(100vh - 64px);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-card-hover);
+  object-fit: contain;
+}
+
+.sd-preview-close {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--surface) 65%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 78%, transparent);
+  color: var(--surface);
+  cursor: pointer;
+  place-items: center;
+}
+
+.sd-preview-close:hover {
+  background: var(--text);
 }
 
 /* ---------- 按钮 ---------- */
@@ -766,8 +869,26 @@
     padding: 20px;
   }
 
-  .sd-hero-preview {
-    margin: -20px -20px 20px;
+  .sd-preview-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .sd-preview-trigger {
+    width: 100%;
+  }
+
+  .sd-preview-overlay {
+    padding: 16px;
+  }
+
+  .sd-preview-dialog {
+    width: 100%;
+    max-height: calc(100vh - 32px);
+  }
+
+  .sd-preview-dialog > img {
+    max-height: calc(100vh - 32px);
   }
 
   .sd-section {

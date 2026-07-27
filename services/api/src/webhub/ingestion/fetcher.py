@@ -25,11 +25,12 @@ be storable.  Outcomes map onto the ``analysis_status`` column.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urljoin, urlsplit
 
@@ -43,8 +44,16 @@ if TYPE_CHECKING:
 MAX_REDIRECTS = 3
 MAX_BODY_BYTES = 2 * 1024 * 1024
 MAX_ICON_BYTES = 256 * 1024
+MAX_ICON_CANDIDATE_TIMEOUT_SECONDS = 2
+MAX_ROOT_ICON_RESERVED_SECONDS = 4
 DEFAULT_TIMEOUT_SECONDS = 8
 _USER_AGENT = "WebHub/0.1 (+https://github.com/webhub)"
+_ROOT_ICON_PATHS = (
+    "/favicon.ico",
+    "/favicon.png",
+    "/favicon.svg",
+    "/apple-touch-icon.png",
+)
 _ICON_CONTENT_TYPES = frozenset(
     {
         "image/avif",
@@ -57,6 +66,23 @@ _ICON_CONTENT_TYPES = frozenset(
         "image/x-icon",
     }
 )
+_GENERIC_ICON_CONTENT_TYPES = frozenset(
+    {
+        "",
+        "application/octet-stream",
+        "binary/octet-stream",
+        "image",
+        "image/*",
+    }
+)
+_ICON_CONTENT_TYPE_ALIASES = {
+    "application/ico": "image/x-icon",
+    "image/ico": "image/x-icon",
+    "image/jpg": "image/jpeg",
+    "image/svg": "image/svg+xml",
+    "image/vnd.microsoft.icon": "image/x-icon",
+    "image/x-png": "image/png",
+}
 _MAX_ICON_SIGNATURE_BYTES = 4 * 1024
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,6 +123,7 @@ _REASONS: dict[str, str] = {
     "not_html": "该地址返回的不是网页内容，已跳过分析",
     "too_large": "网页内容过大，已停止读取",
     "no_metadata": "该网页没有可提取的标题或描述（可能需要执行脚本才能渲染）",
+    "icon_only": "网页内容无法读取，但已获取网站图标",
     "ok": "已提取网页元数据",
 }
 
@@ -167,33 +194,45 @@ async def _pinned_stream(
         yield target.url, response
 
 
-def _valid_image_signature(content_type: str, prefix: bytes) -> bool:
-    if content_type == "image/png":
-        return prefix.startswith(b"\x89PNG\r\n\x1a\n")
-    if content_type == "image/jpeg":
-        return prefix.startswith(b"\xff\xd8\xff")
-    if content_type == "image/gif":
-        return prefix.startswith((b"GIF87a", b"GIF89a"))
-    if content_type == "image/webp":
-        return len(prefix) >= 12 and prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP"
-    if content_type in {"image/vnd.microsoft.icon", "image/x-icon"}:
-        return prefix.startswith((b"\x00\x00\x01\x00", b"\x00\x00\x02\x00"))
-    if content_type == "image/avif":
-        if len(prefix) < 12 or prefix[4:8] != b"ftyp":
-            return False
-        brands = {prefix[index : index + 4] for index in range(8, len(prefix) - 3, 4)}
-        return bool(brands.intersection({b"avif", b"avis"}))
-    if content_type == "image/svg+xml":
-        candidate = prefix.removeprefix(b"\xef\xbb\xbf").lstrip()
-        return bool(
-            re.match(
-                rb"^(?:<\?xml[^>]*>\s*)?(?:<!--.*?-->\s*)?"
-                rb"(?:<!doctype\s+svg[^>]*>\s*)?<svg(?:\s|>)",
-                candidate,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
+def _detected_image_content_type(prefix: bytes) -> str | None:
+    if prefix.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if prefix.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if prefix.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(prefix) >= 12 and prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP":
+        return "image/webp"
+    if prefix.startswith((b"\x00\x00\x01\x00", b"\x00\x00\x02\x00")):
+        return "image/x-icon"
+    if len(prefix) >= 12 and prefix[4:8] == b"ftyp":
+        brands = {prefix[8:12]}
+        brands.update(
+            prefix[index : index + 4] for index in range(16, len(prefix) - 3, 4)
         )
-    return False
+        if brands.intersection({b"avif", b"avis"}):
+            return "image/avif"
+    candidate = prefix.removeprefix(b"\xef\xbb\xbf").lstrip()
+    if re.match(
+        rb"^(?:<\?xml[^>]*>\s*)?(?:<!--.*?-->\s*)?"
+        rb"(?:<!doctype\s+svg[^>]*>\s*)?<svg(?:\s|>)",
+        candidate,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        return "image/svg+xml"
+    return None
+
+
+def _valid_image_signature(content_type: str, prefix: bytes) -> bool:
+    detected = _detected_image_content_type(prefix)
+    if detected is None:
+        return False
+    normalized_type = _ICON_CONTENT_TYPE_ALIASES.get(content_type, content_type)
+    if normalized_type in _GENERIC_ICON_CONTENT_TYPES:
+        return detected != "image/svg+xml"
+    if normalized_type not in _ICON_CONTENT_TYPES:
+        return False
+    return normalized_type == detected
 
 
 async def _validated_public_resource_url(url: str | None, *, timeout_seconds: int) -> str | None:
@@ -217,15 +256,12 @@ async def _validated_icon_url(
     *,
     timeout_seconds: int,
     allow_private: bool,
-    required_origin: tuple[str, str, int | None] | None = None,
 ) -> str | None:
     """Return an icon URL only after a bounded, SSRF-safe image fetch succeeds."""
 
     current = url.strip()
     for _hop in range(MAX_REDIRECTS + 1):
         if _origin(current) is None:
-            return None
-        if required_origin is not None and _origin(current) != required_origin:
             return None
         try:
             async with _pinned_stream(
@@ -249,7 +285,11 @@ async def _validated_icon_url(
                 content_type = (
                     response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 )
-                if content_type not in _ICON_CONTENT_TYPES:
+                normalized_type = _ICON_CONTENT_TYPE_ALIASES.get(content_type, content_type)
+                if (
+                    normalized_type not in _ICON_CONTENT_TYPES
+                    and normalized_type not in _GENERIC_ICON_CONTENT_TYPES
+                ):
                     return None
                 content_length = response.headers.get("content-length", "").strip()
                 if content_length.isdigit() and int(content_length) > MAX_ICON_BYTES:
@@ -274,6 +314,91 @@ async def _validated_icon_url(
             )
             return None
     return None
+
+
+async def _discover_icon_url(
+    *,
+    page_url: str,
+    declared_urls: tuple[str, ...] = (),
+    timeout_seconds: int,
+    allow_private: bool,
+) -> str | None:
+    """Try declared icons, then a bounded same-origin root fallback list."""
+
+    if _origin(page_url) is None:
+        return None
+    seen: set[str] = set()
+    candidate_timeout = min(timeout_seconds, MAX_ICON_CANDIDATE_TIMEOUT_SECONDS)
+
+    async def validate(candidate: str, wall_timeout: float) -> str | None:
+        try:
+            async with asyncio.timeout(wall_timeout):
+                return await _validated_icon_url(
+                    candidate,
+                    timeout_seconds=wall_timeout,
+                    allow_private=allow_private,
+                )
+        except TimeoutError:
+            return None
+
+    async def first_valid(candidates: tuple[str, ...], wall_timeout: float) -> str | None:
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            icon_url = await validate(candidate, wall_timeout)
+            if icon_url is not None:
+                return icon_url
+        return None
+
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            root_budget = timeout_seconds
+            if declared_urls:
+                root_reserve = min(MAX_ROOT_ICON_RESERVED_SECONDS, timeout_seconds / 2)
+                declared_budget = timeout_seconds - root_reserve
+                root_budget = root_reserve
+                try:
+                    async with asyncio.timeout(declared_budget):
+                        declared_icon = await first_valid(declared_urls, candidate_timeout)
+                except TimeoutError:
+                    declared_icon = None
+                if declared_icon is not None:
+                    return declared_icon
+
+            root_candidates = tuple(urljoin(page_url, path) for path in _ROOT_ICON_PATHS)
+            root_candidate_timeout = min(
+                candidate_timeout,
+                root_budget / len(root_candidates),
+            )
+            return await first_valid(root_candidates, root_candidate_timeout)
+    except TimeoutError:
+        return None
+
+
+async def _attach_root_icon(
+    outcome: FetchOutcome,
+    *,
+    page_url: str,
+    timeout_seconds: int,
+    allow_private: bool,
+) -> FetchOutcome:
+    icon_url = await _discover_icon_url(
+        page_url=page_url,
+        timeout_seconds=timeout_seconds,
+        allow_private=allow_private,
+    )
+    if icon_url is None:
+        return outcome
+    status = "limited" if outcome.status == "failed" else outcome.status
+    reason = _reason("icon_only") if outcome.status == "failed" else outcome.reason
+    return replace(
+        outcome,
+        status=status,
+        reason=reason,
+        metadata=replace(outcome.metadata, icon_url=icon_url),
+        final_url=outcome.final_url or page_url,
+    )
 
 
 async def _decoded(body: bytes, content_type: str) -> str:
@@ -329,7 +454,12 @@ async def fetch_site_metadata(
                     if 300 <= response.status_code < 400:
                         location = response.headers.get("location", "").strip()
                         if not location:
-                            return _outcome("failed", "http_error")
+                            return await _attach_root_icon(
+                                _outcome("failed", "http_error"),
+                                page_url=request_url,
+                                timeout_seconds=timeout_seconds,
+                                allow_private=allow_private,
+                            )
                         # The wire URL contains the pinned IP.  Resolve relative
                         # redirects against the logical URL so Host/SNI cannot
                         # silently become that IP on the next hop.
@@ -338,7 +468,12 @@ async def fetch_site_metadata(
                             return _outcome("failed", "unsafe_target")
                         continue
                     if response.status_code != 200:
-                        return _outcome("failed", "http_error")
+                        return await _attach_root_icon(
+                            _outcome("failed", "http_error"),
+                            page_url=request_url,
+                            timeout_seconds=timeout_seconds,
+                            allow_private=allow_private,
+                        )
 
                     content_type = response.headers.get("content-type", "")
                     if "text/html" not in content_type.lower() and (
@@ -346,7 +481,12 @@ async def fetch_site_metadata(
                     ):
                         # Trust the declared type only; sniffing would mean
                         # parsing bytes the server said were not HTML.
-                        return _outcome("limited", "not_html")
+                        return await _attach_root_icon(
+                            _outcome("limited", "not_html"),
+                            page_url=request_url,
+                            timeout_seconds=timeout_seconds,
+                            allow_private=allow_private,
+                        )
 
                     body = bytearray()
                     truncated = False
@@ -365,23 +505,12 @@ async def fetch_site_metadata(
                 parsed.image_url,
                 timeout_seconds=timeout_seconds,
             )
-            icon_url = None
-            if parsed.icon_href:
-                icon_url = await _validated_icon_url(
-                    parsed.icon_href,
-                    timeout_seconds=timeout_seconds,
-                    allow_private=allow_private,
-                )
-            if icon_url is None:
-                page_origin = _origin(final_url)
-                fallback_url = urljoin(final_url, "/favicon.ico")
-                if fallback_url != parsed.icon_href:
-                    icon_url = await _validated_icon_url(
-                        fallback_url,
-                        timeout_seconds=timeout_seconds,
-                        allow_private=allow_private,
-                        required_origin=page_origin,
-                    )
+            icon_url = await _discover_icon_url(
+                page_url=final_url,
+                declared_urls=tuple(parsed.icon_hrefs),
+                timeout_seconds=timeout_seconds,
+                allow_private=allow_private,
+            )
             metadata = SiteMetadata(
                 title=parsed.best_title,
                 description=parsed.description,
@@ -407,23 +536,40 @@ async def fetch_site_metadata(
 
         return _outcome("failed", "too_many_redirects")
     except httpx.TimeoutException:
-        return _outcome("failed", "timeout")
+        return await _attach_root_icon(
+            _outcome("failed", "timeout"),
+            page_url=current,
+            timeout_seconds=timeout_seconds,
+            allow_private=allow_private,
+        )
     except httpx.TransportError:
-        return _outcome("failed", "unreachable")
+        return await _attach_root_icon(
+            _outcome("failed", "unreachable"),
+            page_url=current,
+            timeout_seconds=timeout_seconds,
+            allow_private=allow_private,
+        )
     except Exception as error:  # noqa: BLE001 - return a stable error, but never hide the bug
         _LOGGER.error(
             "unexpected site metadata fetch failure for %s (%s)",
             _log_origin(current),
             type(error).__name__,
         )
-        return _outcome("failed", "unreachable")
+        return await _attach_root_icon(
+            _outcome("failed", "unreachable"),
+            page_url=current,
+            timeout_seconds=timeout_seconds,
+            allow_private=allow_private,
+        )
 
 
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "MAX_BODY_BYTES",
+    "MAX_ICON_CANDIDATE_TIMEOUT_SECONDS",
     "MAX_ICON_BYTES",
     "MAX_REDIRECTS",
+    "MAX_ROOT_ICON_RESERVED_SECONDS",
     "AnalysisStatus",
     "FetchOutcome",
     "SiteMetadata",

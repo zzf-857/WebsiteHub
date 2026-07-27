@@ -47,10 +47,17 @@ test("metadata backfill refreshes the visible library for a bounded period", asy
   assert.match(source, /clearTimeout\(analysisRefreshTimer\.current\)/);
 });
 
-test("site detail renders a stable preview only when previewUrl exists", async () => {
+test("site detail renders a compact, dismissible preview only when previewUrl exists", async () => {
   const source = await readFile(SITE_DETAIL, "utf8");
-  assert.match(source, /site\.previewUrl && site\.previewUrl !== failedPreviewUrl/);
-  assert.match(source, /className="sd-hero-preview"/);
+  assert.match(source, /previewUrl && previewUrl !== failedPreviewUrl/);
+  assert.match(source, /previewAvailable && previewUrl/);
+  assert.match(source, /className="sd-preview-row"/);
+  assert.match(source, /className="sd-preview-trigger"/);
+  assert.match(source, /className="sd-preview-overlay"/);
+  assert.match(source, /aria-modal="true"/);
+  assert.match(source, /event\.key === "Escape"/);
+  assert.match(source, /event\.target === event\.currentTarget/);
+  assert.match(source, /handlePreviewError/);
   assert.match(source, /referrerPolicy="no-referrer"/);
   assert.match(source, /className="sd-btn sd-btn-primary"/);
   assert.equal(

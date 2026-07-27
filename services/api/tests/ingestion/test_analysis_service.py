@@ -59,6 +59,8 @@ def _client(tmp_path: Path) -> Iterator[TestClient]:
 def _stub_page(monkeypatch: pytest.MonkeyPatch, body: str = PAGE, status: int = 200) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         if _request.url.path == "/favicon.ico":
+            if status != 200:
+                return httpx.Response(404)
             return httpx.Response(
                 200,
                 content=b"\x00\x00\x01\x00",
@@ -536,7 +538,7 @@ def test_worker_shutdown_releases_an_in_flight_pending_claim(
         assert stored["analysis_status"] == "not_analyzed"
 
 
-def test_explicit_backfill_recovers_stale_pending_but_not_active_or_terminal_sites(
+def test_explicit_backfill_retries_failed_limited_and_stale_pending_sites(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -591,8 +593,13 @@ def test_explicit_backfill_recovers_stale_pending_but_not_active_or_terminal_sit
         )
         assert response.status_code == 202, response.text
         assert response.json() == {
-            "queued_count": 2,
-            "active_count": 3,
+            "queued_count": 4,
+            "active_count": 5,
             "remaining_count": 0,
         }
-        assert set(captured[0]) == {str(sites[0]["id"]), str(sites[1]["id"])}
+        assert set(captured[0]) == {
+            str(sites[0]["id"]),
+            str(sites[1]["id"]),
+            str(sites[3]["id"]),
+            str(sites[4]["id"]),
+        }

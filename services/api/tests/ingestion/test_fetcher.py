@@ -8,6 +8,7 @@ from urllib.parse import urldefrag, urlsplit
 import httpx
 import pytest
 
+from webhub.ingestion import fetcher as ingestion_fetcher
 from webhub.ingestion.fetcher import (
     MAX_BODY_BYTES,
     MAX_ICON_BYTES,
@@ -78,6 +79,8 @@ def _run(
 def _html(body: str = PAGE, status: int = 200, content_type: str = "text/html; charset=utf-8"):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/favicon.ico":
+            if status != 200:
+                return httpx.Response(404)
             return httpx.Response(
                 200, content=b"\x00\x00\x01\x00", headers={"content-type": "image/x-icon"}
             )
@@ -256,21 +259,279 @@ def test_same_origin_favicon_fallback_is_stored_only_after_a_real_image_response
     assert missing_outcome.metadata.icon_url is None
 
 
-def test_same_origin_favicon_fallback_rejects_cross_origin_redirects(
+def test_same_origin_favicon_fallback_allows_a_validated_public_cdn_redirect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = "<html><head><title>No declared icon</title></head><body></body></html>"
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["host"] == "icons.example.net":
+            return httpx.Response(
+                200,
+                content=b"\x89PNG\r\n\x1a\n",
+                headers={"content-type": "image/png"},
+            )
         if request.url.path == "/favicon.ico":
             return httpx.Response(302, headers={"location": "https://icons.example.net/icon.png"})
         return httpx.Response(200, content=page, headers={"content-type": "text/html"})
 
     seen, outcome, checked = _run("https://example.com/", handler, monkeypatch)
+    assert outcome.metadata.icon_url == "https://icons.example.net/icon.png"
+    assert [request.headers["host"] for request in seen] == [
+        "example.com",
+        "example.com",
+        "icons.example.net",
+    ]
+    assert "https://icons.example.net/icon.png" in checked
+
+
+def test_root_icon_redirect_to_link_local_is_rejected_before_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = "<html><head><title>Unsafe icon redirect</title></head></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/favicon.ico":
+            return httpx.Response(
+                302,
+                headers={"location": "http://169.254.169.254/latest/icon.png"},
+            )
+        if request.url.path == "/":
+            return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+        return httpx.Response(404)
+
+    seen, outcome, _ = _run(
+        "https://93.184.216.34/",
+        handler,
+        monkeypatch,
+        skip_target_check=False,
+    )
+
+    assert outcome.status == "complete"
     assert outcome.metadata.icon_url is None
-    assert [request.headers["host"] for request in seen] == ["example.com", "example.com"]
-    assert [request.url.path for request in seen] == ["/", "/favicon.ico"]
-    assert checked == ["https://example.com/", "https://example.com/favicon.ico"]
+    assert all(request.headers["host"] != "169.254.169.254" for request in seen)
+
+
+def test_declared_icons_are_tried_in_document_order_before_root_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = (
+        "<html><head><title>Multiple icons</title>"
+        '<link rel="icon" href="/missing.ico">'
+        '<link rel="apple-touch-icon" href="/working.png">'
+        "</head><body></body></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/missing.ico":
+            return httpx.Response(404)
+        if request.url.path == "/working.png":
+            return httpx.Response(
+                200,
+                content=b"\x89PNG\r\n\x1a\n",
+                headers={"content-type": "application/octet-stream"},
+            )
+        return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+
+    seen, outcome, _ = _run("https://example.com/docs", handler, monkeypatch)
+
+    assert outcome.metadata.icon_url == "https://example.com/working.png"
+    assert [request.url.path for request in seen] == ["/docs", "/missing.ico", "/working.png"]
+
+
+def test_declared_icon_collection_is_bounded_before_root_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    declarations = "".join(
+        f'<link rel="icon" href="/declared-{index}.png">' for index in range(10)
+    )
+    page = f"<html><head><title>Bounded icons</title>{declarations}</head></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/favicon.ico":
+            return httpx.Response(
+                200,
+                content=b"\x00\x00\x01\x00",
+                headers={"content-type": "image/x-icon"},
+            )
+        if request.url.path.startswith("/declared-"):
+            return httpx.Response(404)
+        return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+
+    seen, outcome, _ = _run("https://example.com/docs", handler, monkeypatch)
+
+    assert outcome.metadata.icon_url == "https://example.com/favicon.ico"
+    paths = [request.url.path for request in seen]
+    assert paths == [
+        "/docs",
+        *(f"/declared-{index}.png" for index in range(8)),
+        "/favicon.ico",
+    ]
+
+
+def test_html_failure_keeps_its_status_but_uses_ordered_root_icon_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/favicon.ico":
+            return httpx.Response(404)
+        if request.url.path == "/favicon.png":
+            return httpx.Response(
+                200,
+                content=b"\x89PNG\r\n\x1a\n",
+                headers={"content-type": "image/*"},
+            )
+        return httpx.Response(403, headers={"content-type": "text/html"})
+
+    seen, outcome, _ = _run("https://example.com/private", handler, monkeypatch)
+
+    assert outcome.status == "limited"
+    assert outcome.reason == "网页内容无法读取，但已获取网站图标"
+    assert outcome.metadata.icon_url == "https://example.com/favicon.png"
+    assert [request.url.path for request in seen] == [
+        "/private",
+        "/favicon.ico",
+        "/favicon.png",
+    ]
+
+
+def test_all_root_icon_candidates_are_bounded_and_the_last_can_succeed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = "<html><head><title>Apple icon only</title></head><body></body></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/apple-touch-icon.png":
+            return httpx.Response(
+                200,
+                content=b"\x89PNG\r\n\x1a\n",
+            )
+        if request.url.path != "/docs":
+            return httpx.Response(404)
+        return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+
+    seen, outcome, _ = _run("https://example.com/docs", handler, monkeypatch)
+
+    assert outcome.metadata.icon_url == "https://example.com/apple-touch-icon.png"
+    assert [request.url.path for request in seen] == [
+        "/docs",
+        "/favicon.ico",
+        "/favicon.png",
+        "/favicon.svg",
+        "/apple-touch-icon.png",
+    ]
+
+
+def test_each_icon_candidate_gets_a_short_timeout_inside_the_total_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[tuple[str, float]] = []
+
+    async def validate(
+        url: str,
+        *,
+        timeout_seconds: float,
+        allow_private: bool,
+    ) -> str | None:
+        assert allow_private is False
+        observed.append((url, timeout_seconds))
+        if url.endswith("dead.ico"):
+            await asyncio.sleep(1)
+        return url if url.endswith("working.png") else None
+
+    monkeypatch.setattr(ingestion_fetcher, "MAX_ICON_CANDIDATE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", validate)
+    icon_url = asyncio.run(
+        ingestion_fetcher._discover_icon_url(
+            page_url="https://example.com/docs",
+            declared_urls=(
+                "https://example.com/dead.ico",
+                "https://example.com/working.png",
+            ),
+            timeout_seconds=8,
+            allow_private=False,
+        )
+    )
+
+    assert icon_url == "https://example.com/working.png"
+    assert observed == [
+        ("https://example.com/dead.ico", 0.01),
+        ("https://example.com/working.png", 0.01),
+    ]
+
+
+def test_slow_declared_icons_cannot_starve_the_root_fallback_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+
+    async def validate(
+        url: str,
+        *,
+        timeout_seconds: float,
+        allow_private: bool,
+    ) -> str | None:
+        assert allow_private is False
+        observed.append(url)
+        if url == "https://example.com/favicon.ico":
+            assert timeout_seconds == 0.01
+            return url
+        assert timeout_seconds == 0.02
+        await asyncio.sleep(1)
+        return None
+
+    monkeypatch.setattr(ingestion_fetcher, "MAX_ICON_CANDIDATE_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(ingestion_fetcher, "MAX_ROOT_ICON_RESERVED_SECONDS", 0.04)
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", validate)
+    icon_url = asyncio.run(
+        ingestion_fetcher._discover_icon_url(
+            page_url="https://example.com/docs",
+            declared_urls=tuple(
+                f"https://example.com/declared-{index}.png" for index in range(8)
+            ),
+            timeout_seconds=0.08,  # type: ignore[arg-type] - scaled wall-clock test
+            allow_private=False,
+        )
+    )
+
+    assert icon_url == "https://example.com/favicon.ico"
+    assert "https://example.com/favicon.ico" in observed
+
+
+def test_one_slow_root_path_cannot_starve_later_root_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+
+    async def validate(
+        url: str,
+        *,
+        timeout_seconds: float,
+        allow_private: bool,
+    ) -> str | None:
+        assert timeout_seconds == 0.01
+        assert allow_private is False
+        observed.append(url)
+        if url.endswith("favicon.png"):
+            return url
+        await asyncio.sleep(1)
+        return None
+
+    monkeypatch.setattr(ingestion_fetcher, "MAX_ICON_CANDIDATE_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", validate)
+    icon_url = asyncio.run(
+        ingestion_fetcher._discover_icon_url(
+            page_url="https://example.com/docs",
+            timeout_seconds=0.04,  # type: ignore[arg-type] - scaled wall-clock test
+            allow_private=False,
+        )
+    )
+
+    assert icon_url == "https://example.com/favicon.png"
+    assert observed == [
+        "https://example.com/favicon.ico",
+        "https://example.com/favicon.png",
+    ]
 
 
 def test_declared_favicon_query_is_allowed_and_fragment_is_not_sent(
@@ -378,6 +639,38 @@ def test_invalid_favicon_fallback_is_not_persisted(
     assert outcome.metadata.icon_url is None
 
 
+@pytest.mark.parametrize(
+    ("content_type", "content"),
+    [
+        ("", b"not an image"),
+        ("application/octet-stream", b"not an image"),
+        ("application/octet-stream", b'<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+        ("image/*", b"not an image"),
+    ],
+)
+def test_generic_or_missing_icon_mime_still_requires_a_real_signature(
+    content_type: str,
+    content: bytes,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = (
+        "<html><head><title>Forged generic icon</title>"
+        '<link rel="icon" href="/forged.bin">'
+        "</head><body></body></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/forged.bin":
+            headers = {"content-type": content_type} if content_type else {}
+            return httpx.Response(200, content=content, headers=headers)
+        if request.url.path != "/":
+            return httpx.Response(404)
+        return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+
+    _, outcome, _ = _run("https://example.com/", handler, monkeypatch)
+    assert outcome.metadata.icon_url is None
+
+
 def test_an_oversized_body_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
     giant = "<html><head>" + ("<!-- padding -->" * 400_000) + "</head></html>"
     assert len(giant.encode()) > MAX_BODY_BYTES
@@ -414,6 +707,35 @@ def test_timeouts_and_connection_errors_are_distinguished(
     assert "无法连接" in unreachable.reason
 
 
+def test_redirect_target_connection_failure_never_uses_the_previous_origin_icon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.headers["host"]
+        if host == "start.example" and request.url.path == "/go":
+            return httpx.Response(302, headers={"location": "https://target.example/page"})
+        if host == "start.example" and request.url.path == "/favicon.ico":
+            return httpx.Response(
+                200,
+                content=b"\x00\x00\x01\x00",
+                headers={"content-type": "image/x-icon"},
+            )
+        if host == "target.example" and request.url.path == "/page":
+            raise httpx.ConnectError("target refused", request=request)
+        return httpx.Response(404)
+
+    seen, outcome, _ = _run("https://start.example/go", handler, monkeypatch)
+
+    assert outcome.status == "failed"
+    assert outcome.metadata.icon_url is None
+    assert ("start.example", "/favicon.ico") not in {
+        (request.headers["host"], request.url.path) for request in seen
+    }
+    assert ("target.example", "/favicon.ico") in {
+        (request.headers["host"], request.url.path) for request in seen
+    }
+
+
 def test_page_text_never_becomes_the_failure_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -445,9 +767,16 @@ def test_unexpected_fetch_errors_are_logged_but_keep_a_fixed_client_reason(
     monkeypatch.setattr("webhub.ingestion.fetcher._decoded", broken_decode)
 
     secret = "must-not-enter-logs"
+    page_handler = _html()
+
+    def no_icon(request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/":
+            return httpx.Response(404)
+        return page_handler(request)
+
     _, outcome, _checked = _run(
         f"https://example.com/?token={secret}",
-        _html(),
+        no_icon,
         monkeypatch,
     )
 

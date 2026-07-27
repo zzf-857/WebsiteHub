@@ -56,6 +56,7 @@ from .listing import (
 )
 from .sites import (
     _site_response,
+    bulk_delete_sites,
     create_site,
     delete_site,
     get_site,
@@ -99,6 +100,7 @@ __all__ = [
     "_site_url",
     "_tag_response",
     "category_delete_preview",
+    "bulk_delete_sites",
     "create_category",
     "create_site",
     "create_tag",
