@@ -10,21 +10,6 @@
 // 拆分只是把这份契约显式写出来，没有新增耦合。
 
 import {
-  AlertTriangle,
-  ArrowDown,
-  ArrowLeft,
-  ArrowUp,
-  Blocks,
-  ExternalLink,
-  LoaderCircle,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Trash2,
-  Users,
-} from "lucide-react";
-import Link from "next/link";
-import {
   useRouter,
 } from "next/navigation";
 import {
@@ -58,8 +43,6 @@ import {
   DialogState,
   EMPTY_SPACE_PAGE,
   MemberMove,
-  SpaceCard,
-  SpaceMemberRow,
   SpacePageState,
   appendUniqueMembers,
   appendUniqueSpaces,
@@ -531,242 +514,40 @@ export function useSpaceWorkspace(initialSpaceId: string | null) {
     router.push("/spaces");
   };
 
-  const renderNotice = () => notice && (
-    <div className="space-notice" role="status">
-      <span>{notice}</span>
-      <button type="button" onClick={() => setNotice(null)}>关闭</button>
-    </div>
-  );
-
-  const renderDetail = () => (
-    <main className="site-main space-workspace">
-      <button className="space-back-button" type="button" onClick={returnToList}>
-        <ArrowLeft aria-hidden="true" />
-        返回 Space 列表
-      </button>
-
-      {renderNotice()}
-
-      {detailLoading && !detail ? (
-        <section className="space-detail-loading" aria-label="正在加载 Space" aria-busy="true">
-          <LoaderCircle className="loading-spinner" aria-hidden="true" />
-          <span>正在加载 Space</span>
-        </section>
-      ) : detailError && !detail ? (
-        <section className="space-state" role="alert">
-          <span className="space-state-icon"><AlertTriangle aria-hidden="true" /></span>
-          <h1>Space 加载失败</h1>
-          <p>{detailError}</p>
-          <button className="space-button primary" type="button" onClick={refreshDetail}>
-            <RefreshCw aria-hidden="true" />
-            重试
-          </button>
-        </section>
-      ) : detail ? (
-        <>
-          <header className="workspace-page-header space-detail-header">
-            <div>
-              <span className="page-kicker">Space</span>
-              <h1>{detail.name}</h1>
-              <p>{detail.memberCount} 个网站，按自定义顺序排列。</p>
-            </div>
-            <div className="space-page-actions">
-              <button
-                className="space-button secondary"
-                type="button"
-                disabled={detail.memberCount === 0}
-                onClick={() => setOpenAllTarget(detail)}
-                title={detail.memberCount === 0 ? "这个 Space 还没有网站" : "一次打开其中全部网站"}
-              >
-                <ExternalLink aria-hidden="true" />
-                全部打开
-              </button>
-              <button className="space-button secondary" type="button" onClick={() => openDialog({ kind: "rename", space: detail })}>
-                <Pencil aria-hidden="true" />
-                重命名
-              </button>
-              <button className="space-button danger-outline" type="button" onClick={() => void loadDeletePreview(detail)}>
-                <Trash2 aria-hidden="true" />
-                删除 Space
-              </button>
-            </div>
-          </header>
-
-          {detailError && (
-            <div className="space-error-banner" role="alert">
-              <AlertTriangle aria-hidden="true" />
-              <span>{detailError}</span>
-              <button type="button" onClick={refreshDetail}>
-                <RefreshCw aria-hidden="true" />
-                重新加载
-              </button>
-            </div>
-          )}
-
-          <section className="space-member-group" aria-labelledby="space-members-title">
-            <header className="space-section-heading">
-              <div>
-                <Users aria-hidden="true" />
-                <h2 id="space-members-title">Space 成员</h2>
-              </div>
-              <span>已加载 {detail.members.length} / {detail.memberCount}</span>
-            </header>
-
-            {detail.members.length === 0 ? (
-              <div className="space-empty-state">
-                <span className="space-empty-icon" aria-hidden="true"><Blocks /></span>
-                <h2>这个 Space 还是空的</h2>
-                <p>从资料库的网站详情中将网站加入这个 Space。</p>
-                <Link className="space-button primary" href="/library">
-                  前往资料库
-                </Link>
-              </div>
-            ) : (
-              <ol className="space-member-list">
-                {detail.members.map((member, index) => (
-                  <SpaceMemberRow
-                    key={member.site.id}
-                    member={member}
-                    order={index}
-                    totalCount={detail.memberCount}
-                    busy={memberBusyId !== null}
-                    onMove={(move) => void handleMoveMember(member.site.id, move)}
-                    onRemove={() => openDialog({ kind: "remove", member })}
-                  />
-                ))}
-              </ol>
-            )}
-
-            {detail.nextCursor && (
-              <button className="space-load-more" type="button" disabled={detailLoadingMore || memberBusyId !== null} onClick={() => void loadMoreMembers()}>
-                {detailLoadingMore && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
-                {detailLoadingMore ? "正在加载" : "加载更多成员"}
-              </button>
-            )}
-          </section>
-        </>
-      ) : null}
-    </main>
-  );
-
-  const renderList = () => (
-    <main className="site-main space-workspace">
-      <header className="workspace-page-header space-page-header">
-        <div>
-          <span className="page-kicker">WebHub</span>
-          <h1>Space</h1>
-          <p>按项目或使用场景组织网站，每个网站可以属于多个 Space。</p>
-        </div>
-        <button className="space-button primary" type="button" onClick={() => openDialog({ kind: "create" })}>
-          <Plus aria-hidden="true" />
-          新建 Space
-        </button>
-      </header>
-
-      <div className="space-toolbar">
-        <div className="space-results-summary">
-          <Blocks aria-hidden="true" />
-          <span>共 {spacePage.totalCount} 个 Space</span>
-        </div>
-        <label className="space-sort-field">
-          <span className="sr-only">Space 排序方式</span>
-          <select value={sort} onChange={(event) => setSort(event.target.value as SpaceSort)}>
-            <option value="updated">最近更新</option>
-            <option value="created">创建时间</option>
-            <option value="name">名称</option>
-          </select>
-        </label>
-        <button
-          className="icon-button space-direction-button"
-          type="button"
-          onClick={() => setDirection((current) => current === "asc" ? "desc" : "asc")}
-          aria-label={direction === "asc" ? "当前升序，切换为降序" : "当前降序，切换为升序"}
-          title={direction === "asc" ? "升序" : "降序"}
-        >
-          {direction === "asc" ? <ArrowUp aria-hidden="true" /> : <ArrowDown aria-hidden="true" />}
-        </button>
-      </div>
-
-      {renderNotice()}
-
-      {spacesError && (
-        <div className="space-error-banner" role="alert">
-          <AlertTriangle aria-hidden="true" />
-          <span>{spacesError}</span>
-          <button type="button" onClick={refreshList}>
-            <RefreshCw aria-hidden="true" />
-            重新加载
-          </button>
-        </div>
-      )}
-
-      {spacesLoading ? (
-        <div className="space-card-list" aria-label="正在加载 Space" aria-busy="true">
-          {Array.from({ length: 4 }, (_, index) => (
-            <div className="space-card-skeleton" key={index} />
-          ))}
-        </div>
-      ) : spacePage.items.length === 0 && !spacesError ? (
-        <section className="space-empty-state">
-          <span className="space-empty-icon" aria-hidden="true"><Blocks /></span>
-          <h2>暂无 Space</h2>
-          <p>创建一个 Space，把同一项目或场景会用到的网站整理在一起。</p>
-          <button className="space-button primary" type="button" onClick={() => openDialog({ kind: "create" })}>
-            <Plus aria-hidden="true" />
-            创建第一个 Space
-          </button>
-        </section>
-      ) : (
-        <section className="space-collection" aria-labelledby="space-collection-title">
-          <header className="space-section-heading">
-            <div>
-              <Blocks aria-hidden="true" />
-              <h2 id="space-collection-title">我的 Space</h2>
-            </div>
-            <span>已加载 {spacePage.items.length} / {spacePage.totalCount}</span>
-          </header>
-          <div className="space-card-list">
-            {spacePage.items.map((space) => (
-              <SpaceCard
-                key={space.id}
-                space={space}
-                onOpen={() => {
-                  setNotice(null);
-                  setSelectedSpaceId(space.id);
-                  router.push(`/spaces/${encodeURIComponent(space.id)}`);
-                }}
-                onOpenAll={() => setOpenAllTarget(space)}
-                onRename={() => openDialog({ kind: "rename", space })}
-                onDelete={() => void loadDeletePreview(space)}
-              />
-            ))}
-          </div>
-          {spacePage.nextCursor && (
-            <button className="space-load-more" type="button" disabled={spacePage.loadingMore} onClick={() => void loadMoreSpaces()}>
-              {spacePage.loadingMore && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
-              {spacePage.loadingMore ? "正在加载" : "加载更多 Space"}
-            </button>
-          )}
-        </section>
-      )}
-    </main>
-  );
-
   return {
     closeDialog,
     detail,
+    detailError,
+    detailLoading,
+    detailLoadingMore,
     dialog,
+    direction,
     handleCreate,
     handleDelete,
+    handleMoveMember,
     handleRemoveMember,
     handleRename,
     loadDeletePreview,
+    loadMoreMembers,
+    loadMoreSpaces,
+    memberBusyId,
     mutationBusy,
     mutationError,
+    notice,
     openAllTarget,
-    renderDetail,
-    renderList,
+    openDialog,
+    refreshDetail,
+    refreshList,
+    returnToList,
     selectedSpaceId,
+    setDirection,
+    setNotice,
     setOpenAllTarget,
+    setSelectedSpaceId,
+    setSort,
+    sort,
+    spacePage,
+    spacesError,
+    spacesLoading,
   };
 }
