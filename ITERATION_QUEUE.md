@@ -645,6 +645,56 @@ data-compact → 计算样式正确」，两个 observer 的实际触发时机�
 
 ---
 
+## Q15 · 用户手动排查第二轮：图标补强、预览交互与资料库大列表管理
+
+状态: 已完成 · 36c1fe4
+对应: 2026-07-28 用户逐屏验收反馈
+插入原因: Q14 的主链路已接通，但真实网站仍会因 403、超时、非标准 favicon 响应而落回默认图标；
+详情预览占位偏重；拥有大量历史网站时，资料库缺少安全的批量删除和连续浏览路径。
+
+本轮三项需求：
+
+1. **真实 favicon 补强**
+   - HTML 最多保留 8 个去重的 `icon` / `apple-touch-icon` /
+     `apple-touch-icon-precomposed` / `mask-icon` 声明候选；声明无效时继续尝试站点根路径
+     `/favicon.ico`、`/favicon.png`、`/favicon.svg`、`/apple-touch-icon.png`。
+   - 页面 HTML 返回 403、超时、非 HTML 或连接失败时，根路径图标仍独立尝试；仅图标成功时保存
+     `favicon_url` 并把失败结果收敛为 `limited`，不伪装成页面完整分析成功。
+   - 每个候选及每次重定向继续执行 SSRF、DNS 固定、手动重定向、大小、MIME 与图片 magic
+     校验；通用 MIME 只接受真实图片签名，SVG 保持严格校验。禁止任何第三方 favicon CDN。
+   - “补全网站信息”会重试 `not_analyzed` / `pending` / `failed` / `limited`，明确跳过
+     `complete`；仍保持账号范围、活动任务排除和有界队列。
+
+2. **详情页紧凑预览**
+   - `preview_url` 从大块主视觉移入主信息中的紧凑预览行，不制造额外截图或空占位。
+   - 点击预览进入原图放大层；关闭按钮、背景点击与 Escape 均可收起，关闭后焦点回到触发按钮，
+     远程图片失败时同时关闭放大层并移除预览。
+
+3. **资料库大列表管理**
+   - 增加显式选择模式、卡片 checkbox、“全选当前已加载”与选中计数；选择态不触发详情导航或
+     拖拽，筛选 scope 改变立即失效，同 scope 刷新只保留仍可见的选择。
+   - 单批最多 100 条批量删除；请求携带每条 `{site_id, expected_version}`，服务端按账号预检、
+     条件 DELETE 与 rowcount 二次校验，任一缺失或版本冲突则整批回滚。确认弹层只出现一次，
+     `bulk_delete_conflict` 会清空选择、刷新并明确要求重选。
+   - 置顶与普通列表各自使用 `IntersectionObserver` 静默加载，提前 640px 预取；现代浏览器
+     主路径移除手动“加载更多”按钮，不支持 Observer 的环境保留可操作降级，并对重复游标、
+     并发请求、失败游标、筛选切换和陈旧响应做防护。
+
+自动化门禁：前端 TypeScript / ESLint / **169 tests** / Next build；后端 Ruff /
+**520 tests**；`git diff --check` 全绿。新增覆盖包括多 favicon 候选、页面失败后根图标、
+generic MIME + magic、批量删除账号隔离/原子回滚/Space 版本、超过 100 条全选语义、
+同 scope 选择保留，以及自动分页的游标与陈旧请求防护。
+
+本轮没有操作浏览器、调用真实 Provider 或触发 2027 条历史网站的全量元数据补全。
+
+**非阻断已知风险（后续单独收紧）**：单删与批量删除都先读取关联 `SpaceMember`，再删除
+`Site`。极窄并发窗口内若另一事务刚好在两步之间新增成员，外键级联会删除新成员，但关联
+Space 可能不在旧快照中而漏涨 `Space.version`。当前账号隔离、请求版本校验和整批回滚均已
+覆盖常规路径；后续应在读取成员前锁定所选 Site 行，或用兼容 SQLite 的条件 no-op UPDATE
+取得写锁，再补并发回归测试。
+
+---
+
 ## 全量门禁（每轮提交前必须全绿）
 
 ```bash
@@ -652,7 +702,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 159 测试 / 后端 503 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 169 测试 / 后端 520 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 
