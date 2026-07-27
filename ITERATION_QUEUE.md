@@ -420,6 +420,64 @@ data-compact → 计算样式正确」，两个 observer 的实际触发时机�
 
 ---
 
+## Q11 · 语义索引回填与检索接线
+
+状态: 待做
+对应: Q8 收尾 · 2026-07-27 用户批准
+插入原因: Q8 建了 `search/vectors.py` + `search/embeddings.py` + `search/service.py`，
+三个模块都有测试，但**全仓库零调用**——`stale_sites` / `store_embedding` /
+`hybrid_search` / `drop_index` 没有任何生产代码路径调它们。检索链路目前只是骨架。
+
+要做的：
+
+1. 回填入口：把 `stale_sites` 算出的待补站点交给 `embed_texts`，结果写回
+   `store_embedding`。**不能在请求线程里同步跑**——一次可能几百个站点、要打厂商接口。
+   参考 `bookmarks/worker.py` 的进程内 worker 做法，别引入新的调度依赖。
+2. 检索接线：`library` 的列表/搜索路径接上 `hybrid_search`，把 FTS 命中的 id 传进去，
+   语义召回作为增强。**未配 embedding Provider 时必须静默降级到纯 FTS**，
+   这条 `search/service.py` 已经保证了，路由层别再包一层错误提示。
+3. 索引管理：给用户一个能看到「已索引 N / 待索引 M」并触发重建的入口，
+   `drop_index` 已就绪。
+
+完成标准：
+- 未配 embedding Provider 的账号，搜索行为与接线前**逐字节一致**（要有测试证明）
+- 回填任务失败不影响任何用户可见功能，也不会重复消耗额度（`content_digest` 已管这个）
+- 跨账号不串：`nearest` 的账号作用域在 SQL 里，路由层不得改成事后过滤
+- **花钱提示**：回填要调用户自己的 embedding Provider。触发前必须显示预估请求数。
+
+---
+
+## Q12 · LLM 分类接线（全库重分类）
+
+状态: 待做
+对应: Q3b 遗留 · 2026-07-27 用户批准
+插入原因: `bookmarks/classifier.py` 完成且有测试（few-shot、封闭分类法、2–8 标签校验），
+但没有任何入口把结果落到 `Site` 上。用户的原始诉求是「让模型处理**所有网站**的分类」，
+不只是导入进来的那批。
+
+用户已明确的两条约束（2026-07-26 原话）：
+- **重复网站由内部程序合并**，只把合并后的结果交给 LLM。机械式唯一性排查不该花 token。
+- LLM 只做「检索与理解」，成本控制由工程结构保证，不是靠提示词恳求。
+
+要做的：
+
+1. 全库来源适配：现有 `classification_batches.py` 的 `ClassificationCandidateSource`
+   是面向书签导入候选的。需要一个从 `Site` 行构造 subject 的适配层，
+   **复用同一套投影与预算逻辑**，不要再发明一份。
+2. propose → 确认：`propose_reclassify` 出草稿，草稿必须携带
+   `estimated_request_count` / `estimated_input_characters`（两个函数已就绪），
+   **用户看到预估请求数之后才允许开跑**。
+3. 落库：确认后按 `validate_classification_batch_output` 的结果写 `Site.category_id`
+   与标签。走乐观锁，中途被改过就 409，不覆盖。
+
+完成标准：
+- 分类前的去重合并**全部在 Python 侧完成**，发给模型的 payload 里不含重复主体
+- 未配 model Provider 时，propose 阶段就明确拒绝，不产生一张点了必然失败的草稿
+- 用户不确认就一个 token 都不花（要有测试证明 propose 阶段零厂商调用）
+- 模型返回的分类名必须过封闭分类法校验，不得凭模型自由发挥新建分类
+
+---
+
 ## 全量门禁（每轮提交前必须全绿）
 
 ```bash
