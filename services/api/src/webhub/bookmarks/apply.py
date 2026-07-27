@@ -220,6 +220,8 @@ async def apply_candidates(
     created = skipped_existing = skipped_needs_review = failed = 0
     cursor: tuple[int, str] | None = None
     category_cache = await _category_ids(session, user_id)
+    category_positions: dict[str, int] = {}
+
 
     while True:
         conditions: list[Any] = [
@@ -301,6 +303,19 @@ async def apply_candidates(
             category_name = suggestion.category or DEFAULT_CATEGORY_NAME
             category_id = await _ensure_category(session, user_id, category_name, category_cache)
             name = _site_name(row.display_title, row.host)
+
+            if category_id not in category_positions:
+                max_pos = await session.scalar(
+                    select(func.max(Site.position)).where(
+                        Site.user_id == user_id,
+                        Site.category_id == category_id,
+                    )
+                )
+                category_positions[category_id] = max_pos if max_pos is not None else -1
+
+            category_positions[category_id] += 1
+            site_pos = category_positions[category_id]
+
             session.add(
                 Site(
                     id=new_id(),
@@ -310,6 +325,7 @@ async def apply_candidates(
                     normalized_name=name.casefold(),
                     original_url=original_url,
                     identity_url=identity_url,
+                    position=site_pos,
                     description=None,
                     favicon_url=None,
                     pinned=False,
@@ -320,6 +336,7 @@ async def apply_candidates(
                     updated_at=now,
                 )
             )
+
             claimed.add(identity_url)
             created += 1
 
