@@ -98,13 +98,32 @@ def _site_count(settings: Settings) -> int:
     return asyncio.run(scenario())
 
 
+def _set_alice_favicon(settings: Settings, favicon_url: str) -> None:
+    async def scenario() -> None:
+        database = Database(settings.database_url)
+        try:
+            async with database.sessions() as session:
+                user_id = await session.scalar(select(User.id).where(User.username == "alice"))
+                assert user_id is not None
+                site = await session.scalar(select(Site).where(Site.user_id == user_id))
+                assert site is not None
+                site.favicon_url = favicon_url
+                await session.commit()
+        finally:
+            await database.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_search_library_returns_only_the_calling_accounts_sites(tmp_path: Path) -> None:
     with _two_accounts(tmp_path) as settings:
+        _set_alice_favicon(settings, "https://qdrant.tech/favicon.ico")
         alice = _invoke(settings, "alice", "search_library", query="向量")
         bob = _invoke(settings, "bob", "search_library", query="向量")
 
     assert alice["source"] == SOURCE_LIBRARY
     assert [item["name"] for item in alice["items"]] == ["Qdrant 向量数据库"]
+    assert alice["items"][0]["favicon_url"] == "https://qdrant.tech/favicon.ico"
     # Bob shares the database but must never see Alice's row.
     assert bob["items"] == []
     assert bob["matched_count"] == 0

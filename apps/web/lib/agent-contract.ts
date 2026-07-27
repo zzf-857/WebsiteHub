@@ -7,8 +7,8 @@ import type { UIMessage } from "ai";
  *
  * Stream payloads (`data-agent-*` parts) are shaped by tool output that the
  * model can influence, so every normalizer here is *defensive*: unusable input
- * degrades to a raw view instead of throwing, because a render pass must never
- * crash the conversation.
+ * degrades to a typed compatibility notice instead of throwing or exposing
+ * raw tool payloads in the conversation.
  *
  * REST payloads (conversation history) come from our own endpoints, so those
  * normalizers throw like the library contract does — a shape mismatch there is
@@ -76,6 +76,17 @@ export type AgentMessageMetadata = {
   model?: string;
   webSearch?: boolean;
   errorCode?: string;
+  elapsedMs?: number;
+  timeToFirstTokenMs?: number;
+  reasoningMs?: number;
+  usage?: AgentTokenUsage;
+};
+
+export type AgentTokenUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  reasoningTokens?: number;
 };
 
 export type AgentDataParts = {
@@ -161,12 +172,36 @@ export function normalizeAgentMessageMetadata(value: unknown): AgentMessageMetad
   const provider = asTrimmed(candidate.provider);
   const model = asTrimmed(candidate.model);
   const errorCode = asTrimmed(candidate.errorCode);
+  const elapsedMs = asCount(candidate.elapsedMs);
+  const timeToFirstTokenMs = asCount(candidate.timeToFirstTokenMs);
+  const reasoningMs = asCount(candidate.reasoningMs);
+  const rawUsage = asRecord(candidate.usage);
+  const usage = rawUsage === null
+    ? undefined
+    : {
+        ...(asCount(rawUsage.inputTokens) !== null
+          ? { inputTokens: asCount(rawUsage.inputTokens) as number }
+          : {}),
+        ...(asCount(rawUsage.outputTokens) !== null
+          ? { outputTokens: asCount(rawUsage.outputTokens) as number }
+          : {}),
+        ...(asCount(rawUsage.totalTokens) !== null
+          ? { totalTokens: asCount(rawUsage.totalTokens) as number }
+          : {}),
+        ...(asCount(rawUsage.reasoningTokens) !== null
+          ? { reasoningTokens: asCount(rawUsage.reasoningTokens) as number }
+          : {}),
+      };
   return {
     ...(conversationId ? { conversationId } : {}),
     ...(provider ? { provider } : {}),
     ...(model ? { model } : {}),
     ...(typeof candidate.webSearch === "boolean" ? { webSearch: candidate.webSearch } : {}),
     ...(errorCode ? { errorCode } : {}),
+    ...(elapsedMs !== null ? { elapsedMs } : {}),
+    ...(timeToFirstTokenMs !== null ? { timeToFirstTokenMs } : {}),
+    ...(reasoningMs !== null ? { reasoningMs } : {}),
+    ...(usage && Object.keys(usage).length > 0 ? { usage } : {}),
   };
 }
 
@@ -174,6 +209,7 @@ export type AgentToolLink = {
   siteId: string | null;
   name: string;
   url: string | null;
+  faviconUrl: string | null;
   description: string | null;
   category: string | null;
   tags: string[];
@@ -266,7 +302,7 @@ export type AgentToolView =
   | { kind: "noop"; message: string }
   | { kind: "rejected"; reason: string }
   | { kind: "error"; source: string | null; message: string }
-  | { kind: "raw"; text: string };
+  | { kind: "unavailable"; message: string };
 
 
 function toLink(value: unknown): AgentToolLink | null {
@@ -279,6 +315,7 @@ function toLink(value: unknown): AgentToolLink | null {
     siteId: asTrimmed(candidate.site_id),
     name,
     url,
+    faviconUrl: asWebUrl(candidate.favicon_url),
     description: asTrimmed(candidate.description) ?? asTrimmed(candidate.snippet),
     category: asTrimmed(candidate.category),
     tags: asStringList(candidate.tags),
@@ -328,6 +365,7 @@ function toSiteFields(value: unknown): AgentToolLink | null {
     siteId: asTrimmed(candidate.site_id),
     name,
     url: asWebUrl(candidate.url),
+    faviconUrl: asWebUrl(candidate.favicon_url),
     description: asTrimmed(candidate.description),
     category: asTrimmed(candidate.category),
     tags: asStringList(candidate.tags),
@@ -473,15 +511,17 @@ const IMPORT_STATE_LABELS: Record<string, string> = {
 /**
  * Project one tool result into something the thread can render.
  *
- * The fallback is deliberate: an unrecognised payload becomes truncated raw
- * text rather than disappearing, so a backend change is visible instead of
- * silently dropping provenance.
+ * Unknown or legacy payloads remain visible as a compatibility notice.  Tool
+ * JSON may contain URLs, identifiers, or vendor data and must never be dumped
+ * into the user-facing transcript.
  */
 export function describeAgentToolResult(name: string, result: unknown): AgentToolView {
   const payload = asRecord(result);
   if (payload === null) {
-    const text = typeof result === "string" ? result.trim() : JSON.stringify(result ?? null);
-    return { kind: "raw", text: (text ?? "").slice(0, 600) };
+    return {
+      kind: "unavailable",
+      message: "这条结果来自旧版本，当前界面无法安全展示，请重新执行。",
+    };
   }
 
   const source = asTrimmed(payload.source);
@@ -499,6 +539,10 @@ export function describeAgentToolResult(name: string, result: unknown): AgentToo
     }
     const draft = toReclassifyDraft(payload.draft);
     if (draft !== null) return { kind: "reclassify", draft };
+    return {
+      kind: "unavailable",
+      message: "这条旧版重分类草稿已失效，请重新发起。",
+    };
   }
 
 
@@ -585,7 +629,31 @@ export function describeAgentToolResult(name: string, result: unknown): AgentToo
     return { kind: "links", source, items: [single], matchedCount: null };
   }
 
-  return { kind: "raw", text: JSON.stringify(payload).slice(0, 600) };
+  return {
+    kind: "unavailable",
+    message: "这条结果来自旧版本，当前界面无法安全展示，请重新执行。",
+  };
+}
+
+export type AgentMarkdownLink =
+  | { kind: "external"; href: string; hostname: string }
+  | { kind: "internal"; href: string };
+
+/** Allow only explicit web links, local routes, and in-page anchors from Markdown. */
+export function normalizeAgentMarkdownLink(value: unknown): AgentMarkdownLink | null {
+  const href = asTrimmed(value);
+  if (href === null) return null;
+  if (/[\\\u0000-\u001f\u007f]/u.test(href)) return null;
+  if (href.startsWith("#") || (href.startsWith("/") && !href.startsWith("//"))) {
+    return { kind: "internal", href };
+  }
+  try {
+    const parsed = new URL(href);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return { kind: "external", href, hostname: parsed.hostname };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -689,9 +757,15 @@ export type AgentStoredMessage = {
   id: string;
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  parts: AgentStoredPart[];
   sources: AgentToolResult[];
+  metadata: AgentMessageMetadata;
   status: "streaming" | "complete" | "error" | "aborted";
 };
+
+export type AgentStoredPart =
+  | { type: "reasoning"; text: string }
+  | { type: "text"; text: string };
 
 function requiredRecord(value: unknown, path: string): JsonRecord {
   const candidate = asRecord(value);
@@ -749,6 +823,22 @@ export function normalizeAgentConversationHistory(value: unknown): AgentConversa
 const MESSAGE_ROLES = new Set(["system", "user", "assistant", "tool"]);
 const MESSAGE_STATUSES = new Set(["streaming", "complete", "error", "aborted"]);
 
+function normalizeAgentStoredParts(value: unknown): AgentStoredPart[] {
+  if (!Array.isArray(value)) return [];
+  const parts: AgentStoredPart[] = [];
+  for (const entry of value) {
+    const candidate = asRecord(entry);
+    if (
+      (candidate?.type === "text" || candidate?.type === "reasoning") &&
+      typeof candidate.text === "string" &&
+      candidate.text
+    ) {
+      parts.push({ type: candidate.type, text: candidate.text });
+    }
+  }
+  return parts;
+}
+
 export function normalizeAgentStoredMessage(value: unknown): AgentStoredMessage {
   const candidate = requiredRecord(value, "message");
   const role = requiredText(candidate.role, "message.role");
@@ -764,7 +854,9 @@ export function normalizeAgentStoredMessage(value: unknown): AgentStoredMessage 
     id: requiredText(candidate.id, "message.id"),
     role: role as AgentStoredMessage["role"],
     content: typeof candidate.content === "string" ? candidate.content : "",
+    parts: normalizeAgentStoredParts(candidate.parts),
     sources,
+    metadata: normalizeAgentMessageMetadata(candidate.metadata),
     status: status as AgentStoredMessage["status"],
   };
 }
@@ -793,13 +885,24 @@ export function toAgentUIMessages(messages: readonly AgentStoredMessage[]): Agen
   const restored: AgentUIMessage[] = [];
   for (const message of messages) {
     if (message.role !== "user" && message.role !== "assistant") continue;
-    if (!message.content && message.sources.length === 0) continue;
-    const parts: AgentUIMessage["parts"] = message.sources.map((source) => ({
+    if (!message.content && message.parts.length === 0 && message.sources.length === 0) continue;
+    const reasoningParts = message.parts.filter((part) => part.type === "reasoning");
+    const textParts = message.parts.filter((part) => part.type === "text");
+    const parts: AgentUIMessage["parts"] = [...reasoningParts];
+    parts.push(...message.sources.map((source) => ({
       type: "data-agent-tool-result",
       data: source,
-    }));
-    if (message.content) parts.push({ type: "text", text: message.content });
-    restored.push({ id: message.id, role: message.role, parts });
+    }) as const));
+    parts.push(...textParts);
+    if (message.content && textParts.length === 0) {
+      parts.push({ type: "text", text: message.content });
+    }
+    restored.push({
+      id: message.id,
+      role: message.role,
+      parts,
+      ...(Object.keys(message.metadata).length > 0 ? { metadata: message.metadata } : {}),
+    });
   }
   return restored;
 }

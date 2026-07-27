@@ -78,9 +78,16 @@ def _validate_chunk_shape(chunk: JSONChunk) -> None:
 
     # Validate fields consumed by this module.  Other SDK fields are left
     # untouched for forward compatibility (for example providerMetadata).
-    if chunk_type in {"text-start", "text-delta", "text-end"}:
+    if chunk_type in {
+        "text-start",
+        "text-delta",
+        "text-end",
+        "reasoning-start",
+        "reasoning-delta",
+        "reasoning-end",
+    }:
         _require_string(chunk.get("id"), field_name="id")
-        if chunk_type == "text-delta":
+        if chunk_type in {"text-delta", "reasoning-delta"}:
             _require_string(chunk.get("delta"), field_name="delta")
     elif chunk_type == "start":
         if "messageId" in chunk and chunk["messageId"] is not None:
@@ -172,6 +179,18 @@ def text_end_chunk(text_id: str) -> dict[str, object]:
     return _chunk(chunk_type="text-end", id=text_id)
 
 
+def reasoning_start_chunk(reasoning_id: str) -> dict[str, object]:
+    return _chunk(chunk_type="reasoning-start", id=reasoning_id)
+
+
+def reasoning_delta_chunk(reasoning_id: str, delta: str) -> dict[str, object]:
+    return _chunk(chunk_type="reasoning-delta", id=reasoning_id, delta=delta)
+
+
+def reasoning_end_chunk(reasoning_id: str) -> dict[str, object]:
+    return _chunk(chunk_type="reasoning-end", id=reasoning_id)
+
+
 def message_metadata_chunk(message_metadata: object) -> dict[str, object]:
     return _chunk(chunk_type="message-metadata", messageMetadata=message_metadata)
 
@@ -237,6 +256,8 @@ class UIMessageStreamEncoder:
 
     active_text_ids: set[str] = field(default_factory=set)
     seen_text_ids: set[str] = field(default_factory=set)
+    active_reasoning_ids: set[str] = field(default_factory=set)
+    seen_reasoning_ids: set[str] = field(default_factory=set)
     terminal: TerminalType | None = None
     emitted_chunks: int = 0
     finalized: bool = False
@@ -272,10 +293,36 @@ class UIMessageStreamEncoder:
                 raise UIMessageStreamStateError(
                     f"text-end received before text-start for {text_id!r}"
                 )
+        elif chunk_type == "reasoning-start":
+            reasoning_id = str(chunk["id"])
+            if (
+                reasoning_id in self.active_reasoning_ids
+                or reasoning_id in self.seen_reasoning_ids
+            ):
+                raise UIMessageStreamStateError(
+                    f"reasoning part id {reasoning_id!r} was already started"
+                )
+        elif chunk_type == "reasoning-delta":
+            reasoning_id = str(chunk["id"])
+            if reasoning_id not in self.active_reasoning_ids:
+                raise UIMessageStreamStateError(
+                    f"reasoning-delta received before reasoning-start for {reasoning_id!r}"
+                )
+        elif chunk_type == "reasoning-end":
+            reasoning_id = str(chunk["id"])
+            if reasoning_id not in self.active_reasoning_ids:
+                raise UIMessageStreamStateError(
+                    f"reasoning-end received before reasoning-start for {reasoning_id!r}"
+                )
         elif chunk_type in {"finish", "error", "abort"}:
             if chunk_type == "finish" and self.active_text_ids:
                 active = ", ".join(sorted(self.active_text_ids))
                 raise UIMessageStreamStateError(f"finish received with open text parts: {active}")
+            if chunk_type == "finish" and self.active_reasoning_ids:
+                active = ", ".join(sorted(self.active_reasoning_ids))
+                raise UIMessageStreamStateError(
+                    f"finish received with open reasoning parts: {active}"
+                )
 
         # Serialize before mutating lifecycle state.  A failed JSON encoding
         # must not leave a text part marked active when its start event was
@@ -286,6 +333,11 @@ class UIMessageStreamEncoder:
             self.seen_text_ids.add(str(chunk["id"]))
         elif chunk_type == "text-end":
             self.active_text_ids.remove(str(chunk["id"]))
+        elif chunk_type == "reasoning-start":
+            self.active_reasoning_ids.add(str(chunk["id"]))
+            self.seen_reasoning_ids.add(str(chunk["id"]))
+        elif chunk_type == "reasoning-end":
+            self.active_reasoning_ids.remove(str(chunk["id"]))
         elif chunk_type in {"finish", "error", "abort"}:
             self.terminal = chunk_type  # type: ignore[assignment]
         self.emitted_chunks += 1
@@ -391,6 +443,9 @@ __all__ = [
     "error_chunk",
     "finish_chunk",
     "message_metadata_chunk",
+    "reasoning_delta_chunk",
+    "reasoning_end_chunk",
+    "reasoning_start_chunk",
     "start_chunk",
     "text_delta_chunk",
     "text_end_chunk",

@@ -43,7 +43,7 @@
   min-width: 0;
 }
 
-.provider-notice button {
+.provider-notice > button {
   display: grid;
   width: 24px;
   height: 24px;
@@ -59,17 +59,17 @@
     color var(--duration-hover) var(--ease-standard);
 }
 
-.provider-notice button:hover {
+.provider-notice > button:hover {
   background: var(--surface-hover);
   color: var(--text);
 }
 
-.provider-notice button svg {
+.provider-notice > button svg {
   width: 14px;
   height: 14px;
 }
 
-.provider-notice button:focus-visible {
+.provider-notice > button:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

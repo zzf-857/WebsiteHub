@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  backfillLibrarySiteMetadata,
   buildLibrarySiteSearchParams,
   createLibraryCategory,
   createLibrarySite,
@@ -21,6 +22,7 @@ const site = {
   identity_url: "https://developer.mozilla.org",
   description: null,
   favicon_url: null,
+  preview_url: null,
   category: { id: "category-1", name: "开发", is_default: true, icon: "Code" },
   tags: [],
   pinned: false,
@@ -116,6 +118,31 @@ test("site writes serialize bodies and delete optimistic concurrency", async (co
   });
   assert.equal(requests[3]?.input, "/api/backend/library/sites/site%2Fone?expected_version=5");
   assert.equal(requests[3]?.init?.method, "DELETE");
+});
+
+test("metadata backfill is an explicit bounded request", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  let capturedInput: string | URL | Request | undefined;
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = async (input, init) => {
+    capturedInput = input;
+    capturedInit = init;
+    return new Response(JSON.stringify({
+      queued_count: 100,
+      active_count: 100,
+      remaining_count: 1927,
+    }), { status: 202, headers: { "Content-Type": "application/json" } });
+  };
+
+  assert.deepEqual(await backfillLibrarySiteMetadata(100), {
+    queuedCount: 100,
+    activeCount: 100,
+    remainingCount: 1927,
+  });
+  assert.equal(capturedInput, "/api/backend/library/sites/analyze-missing?limit=100");
+  assert.equal(capturedInit?.method, "POST");
+  await assert.rejects(backfillLibrarySiteMetadata(5_001), /1 到 5000/);
 });
 
 test("reclassification confirmation sends both immutable snapshots", async (context) => {

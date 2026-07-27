@@ -89,7 +89,23 @@
 /* ---------- 主信息卡 ---------- */
 
 .sd-hero {
+  overflow: hidden;
   padding: 28px 32px;
+}
+
+.sd-hero-preview {
+  width: auto;
+  aspect-ratio: 16 / 9;
+  margin: -28px -32px 28px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-subtle);
+}
+
+.sd-hero-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .sd-hero-top {
@@ -748,6 +764,10 @@
 @media (max-width: 767px) {
   .sd-hero {
     padding: 20px;
+  }
+
+  .sd-hero-preview {
+    margin: -20px -20px 20px;
   }
 
   .sd-section {

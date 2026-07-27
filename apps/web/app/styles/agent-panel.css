@@ -500,20 +500,7 @@
   max-width: 900px;
 }
 
-/* 流式打字光标（设计稿行 212 的 8×16 青柠方块）。回答正文由 ConversationThread
-   渲染、不属于本任务可改文件，故用 ::after 挂在最后一段流式文本末尾，视觉与
-   内联 span.agent-caret 等价；data-streaming 只在回答文本流式输出时存在，
-   生成结束随属性移除，光标自然消失 */
-.agent-panel[data-streaming] .chat-turn[data-role="assistant"]:last-of-type .chat-text:last-of-type::after {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 16px;
-  margin-left: 3px;
-  animation: agent-caret-blink 1s steps(1) infinite;
-  background: var(--accent);
-  vertical-align: -3px;
-}
+/* 流式 Markdown 的光标由 Streamdown caret 提供，避免代码块和列表旁重复绘制。 */
 
 /* ========== 阶段进度条（真实工具事件驱动） ========== */
 
@@ -872,18 +859,6 @@
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-/* 打字光标 1s steps(1) 方波闪烁（设计稿 wh-blink：半程压到 0.15 而非全灭） */
-@keyframes agent-caret-blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0.15;
   }
 }
 

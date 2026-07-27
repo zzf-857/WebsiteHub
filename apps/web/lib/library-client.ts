@@ -5,6 +5,7 @@ import {
   assertLibrarySiteUpdateInput,
   assertLibraryTagName,
   libraryErrorDetails,
+  normalizeLibraryAnalysisBackfill,
   normalizeCategoryDeletePreview,
   normalizeLibraryCategories,
   normalizeLibraryCategory,
@@ -13,6 +14,7 @@ import {
   normalizeLibraryTag,
   normalizeLibraryTags,
   type LibraryCategory,
+  type LibraryAnalysisBackfill,
   type LibraryCategoryDeletePreview,
   type LibrarySite,
   type LibrarySiteCreateInput,
@@ -25,6 +27,7 @@ import {
 const LIBRARY_BASE = "/api/backend/library";
 export const DEFAULT_LIBRARY_PAGE_SIZE = 24;
 export const MAX_LIBRARY_PAGE_SIZE = 100;
+export const MAX_LIBRARY_ANALYSIS_BACKFILL = 5_000;
 
 export class LibraryApiError extends Error {
   status: number;
@@ -209,6 +212,18 @@ export async function deleteLibrarySite(id: string, expectedVersion: number): Pr
  */
 export async function analyzeLibrarySite(id: string): Promise<LibrarySite> {
   return normalizeLibrarySite(await request(`/sites/${encodeId(id)}/analyze`, {
+    method: "POST",
+  }));
+}
+
+export async function backfillLibrarySiteMetadata(
+  limit = MAX_LIBRARY_ANALYSIS_BACKFILL,
+): Promise<LibraryAnalysisBackfill> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIBRARY_ANALYSIS_BACKFILL) {
+    throw new TypeError(`补全批次大小必须是 1 到 ${MAX_LIBRARY_ANALYSIS_BACKFILL} 之间的整数`);
+  }
+  const params = new URLSearchParams({ limit: String(limit) });
+  return normalizeLibraryAnalysisBackfill(await request(`/sites/analyze-missing?${params}`, {
     method: "POST",
   }));
 }

@@ -248,7 +248,133 @@ def test_new_conversation_id_is_announced_in_stream_metadata(
     assert start["messageMetadata"]["model"] == "qwen3"
     # Without a search Provider the model must be told it cannot browse.
     assert start["messageMetadata"]["webSearch"] is False
-    assert chunks[-1]["messageMetadata"]["conversationId"] == conversation_id
+    finish_metadata = chunks[-1]["messageMetadata"]
+    assert finish_metadata["conversationId"] == conversation_id
+    assert "usage" not in finish_metadata
+    assert "reasoningMs" not in finish_metadata
+
+
+def test_reasoning_usage_and_server_timings_stream_and_persist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+
+    tool_call = {"id": "call-1", "name": "search_library", "args": {"query": "RAG"}}
+    events = [
+        (
+            "messages",
+            (
+                AIMessageChunk(
+                    content="",
+                    additional_kwargs={"reasoning_content": "先查资料库。"},
+                ),
+                {},
+            ),
+        ),
+        (
+            "updates",
+            {"agent": {"messages": [AIMessage(content="", tool_calls=[tool_call])] }},
+        ),
+        (
+            "updates",
+            {
+                "tools": {
+                    "messages": [
+                        ToolMessage(
+                            content='{"items":[]}',
+                            tool_call_id="call-1",
+                            name="search_library",
+                        )
+                    ]
+                }
+            },
+        ),
+        (
+            "messages",
+            (
+                AIMessageChunk(
+                    content="",
+                    additional_kwargs={"reasoning_content": "再综合结果。"},
+                ),
+                {},
+            ),
+        ),
+        (
+            "messages",
+            (
+                AIMessageChunk(
+                    content="",
+                    usage_metadata={
+                        "input_tokens": 20,
+                        "output_tokens": 8,
+                        "total_tokens": 28,
+                        "output_token_details": {"reasoning": 5},
+                    },
+                ),
+                {},
+            ),
+        ),
+        (
+            "messages",
+            (
+                AIMessageChunk(
+                    content="资料库暂时没有匹配项。",
+                    usage_metadata={
+                        "input_tokens": 20,
+                        "output_tokens": 8,
+                        "total_tokens": 28,
+                        "output_token_details": {"reasoning": 5},
+                    },
+                ),
+                {},
+            ),
+        ),
+    ]
+    clock = iter([1.0, 1.2, 1.5, 1.7, 2.0, 2.1])
+    monkeypatch.setattr(runner_module, "perf_counter", lambda: next(clock))
+
+    with _account(tmp_path) as settings:
+        _install_fake_graph(monkeypatch, events)
+        chunks, messages = _run(settings, "帮我找 RAG 网站")
+
+    assert _types(chunks) == [
+        "start",
+        "reasoning-start",
+        "reasoning-delta",
+        "reasoning-end",
+        "data-agent-tool-call",
+        "data-agent-tool-result",
+        "reasoning-start",
+        "reasoning-delta",
+        "reasoning-end",
+        "text-start",
+        "text-delta",
+        "text-end",
+        "finish",
+    ]
+    metadata = chunks[-1]["messageMetadata"]
+    assert metadata == {
+        "conversationId": chunks[0]["messageMetadata"]["conversationId"],
+        "provider": "ollama",
+        "model": "qwen3",
+        "webSearch": False,
+        "elapsedMs": 1100,
+        "timeToFirstTokenMs": 200,
+        "reasoningMs": 600,
+        "usage": {
+            "inputTokens": 20,
+            "outputTokens": 8,
+            "totalTokens": 28,
+            "reasoningTokens": 5,
+        },
+    }
+    assistant = messages[-1]
+    assert assistant.metadata == metadata
+    assert assistant.parts == [
+        {"type": "reasoning", "text": "先查资料库。再综合结果。"},
+        {"type": "text", "text": "资料库暂时没有匹配项。"},
+    ]
 
 
 def test_tool_only_answer_still_produces_a_visible_reply(

@@ -2,10 +2,15 @@
 
 import {
   ArrowRight,
+  Brain,
   Bookmark,
   Check,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
+  Clock,
   ExternalLink,
+  Hash,
   Loader,
   PencilLine,
   Sparkles,
@@ -14,13 +19,17 @@ import {
 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Streamdown, type Components } from "streamdown";
 
 import { ShinyText } from "@/components/react-bits/shiny-text";
+import { SiteFavicon } from "@/components/site-favicon";
 import {
   agentSourceLabels,
   agentToolLabel,
   describeAgentToolResult,
+  normalizeAgentMarkdownLink,
+  normalizeAgentMessageMetadata,
   normalizeAgentToolResult,
   type AgentDraftAction,
   type AgentSiteDraft,
@@ -31,6 +40,7 @@ import {
   type AgentToolCall,
   type AgentToolLink,
   type AgentToolResult,
+  type AgentMessageMetadata,
   type AgentUIMessage,
 } from "@/lib/agent-contract";
 
@@ -59,6 +69,150 @@ function hostOf(url: string): string {
   }
 }
 
+function formatDuration(milliseconds: number): string {
+  if (milliseconds < 1_000) return `${milliseconds} 毫秒`;
+  const seconds = milliseconds / 1_000;
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} 秒`;
+}
+
+function MarkdownAnchor({ href, children, title }: React.ComponentProps<"a"> & { node?: unknown }) {
+  const link = normalizeAgentMarkdownLink(href);
+  if (link === null) return <span>{children}</span>;
+  if (link.kind === "internal") {
+    return (
+      <Link className="chat-inline-link" href={link.href} title={title}>
+        {children}
+      </Link>
+    );
+  }
+  return (
+    <a
+      className="chat-link-card"
+      href={link.href}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={title}
+    >
+      <span className="chat-link-label">{children}</span>
+      <span className="chat-link-host">
+        {link.hostname}
+        <ExternalLink aria-hidden="true" />
+      </span>
+    </a>
+  );
+}
+
+const MARKDOWN_COMPONENTS = { a: MarkdownAnchor } as Components;
+
+function AgentMarkdown({
+  text,
+  streaming,
+  reducedMotion,
+  className,
+}: Readonly<{
+  text: string;
+  streaming: boolean;
+  reducedMotion: boolean;
+  className: string;
+}>) {
+  return (
+    <Streamdown
+      className={className}
+      mode={streaming ? "streaming" : "static"}
+      isAnimating={streaming && !reducedMotion}
+      animated={streaming && !reducedMotion ? { animation: "fadeIn", duration: 140 } : false}
+      caret={streaming ? "block" : undefined}
+      components={MARKDOWN_COMPONENTS}
+      disallowedElements={["img"]}
+      controls={{ code: { copy: true, download: false }, table: false, mermaid: false }}
+      translations={{ copyCode: "复制代码", copied: "已复制", openExternalLink: "打开外部链接" }}
+    >
+      {text}
+    </Streamdown>
+  );
+}
+
+function ReasoningDisclosure({
+  text,
+  streaming,
+  durationMs,
+  reducedMotion,
+}: Readonly<{
+  text: string;
+  streaming: boolean;
+  durationMs?: number;
+  reducedMotion: boolean;
+}>) {
+  const [open, setOpen] = useState(streaming);
+
+  return (
+    <details
+      className="chat-reasoning"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <Brain aria-hidden="true" />
+        <span>{streaming ? "思考中" : "思考过程"}</span>
+        {!streaming && durationMs !== undefined && (
+          <span className="chat-reasoning-duration">{formatDuration(durationMs)}</span>
+        )}
+        <ChevronDown className="chat-reasoning-chevron" aria-hidden="true" />
+      </summary>
+      <AgentMarkdown
+        className="chat-markdown chat-reasoning-content"
+        text={text}
+        streaming={streaming}
+        reducedMotion={reducedMotion}
+      />
+    </details>
+  );
+}
+
+function ResponseMetrics({ metadata }: Readonly<{ metadata: AgentMessageMetadata }>) {
+  const usage = metadata.usage;
+  const hasUsage = usage !== undefined && Object.keys(usage).length > 0;
+  if (metadata.elapsedMs === undefined && metadata.timeToFirstTokenMs === undefined && !hasUsage) {
+    return null;
+  }
+  const usageTitle = usage
+    ? [
+        usage.inputTokens !== undefined ? `输入 ${usage.inputTokens.toLocaleString("zh-CN")}` : null,
+        usage.outputTokens !== undefined ? `输出 ${usage.outputTokens.toLocaleString("zh-CN")}` : null,
+        usage.reasoningTokens !== undefined
+          ? `思考 ${usage.reasoningTokens.toLocaleString("zh-CN")}`
+          : null,
+      ].filter(Boolean).join(" · ")
+    : "";
+  return (
+    <div className="chat-response-metrics" aria-label="本次回答统计">
+      {metadata.elapsedMs !== undefined && (
+        <span>
+          <Clock aria-hidden="true" />
+          用时 {formatDuration(metadata.elapsedMs)}
+        </span>
+      )}
+      {metadata.timeToFirstTokenMs !== undefined && (
+        <span title="从服务端收到请求到首个模型输出">
+          首字 {formatDuration(metadata.timeToFirstTokenMs)}
+        </span>
+      )}
+      {usage && usage.totalTokens !== undefined && (
+        <span title={usageTitle || undefined}>
+          <Hash aria-hidden="true" />
+          {usage.totalTokens.toLocaleString("zh-CN")} Token
+        </span>
+      )}
+      {usage && usage.totalTokens === undefined && usageTitle && (
+        <span title="Provider 未返回总量，仅展示其实际返回的分项">
+          <Hash aria-hidden="true" />
+          {usageTitle}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ChipRow({
   category,
   tags,
@@ -83,21 +237,31 @@ function ChipRow({
 function ToolLinkList({ items }: Readonly<{ items: readonly AgentToolLink[] }>) {
   return (
     <ul className="tool-links">
-      {items.map((item, index) => (
-        <li key={`${item.siteId ?? item.url ?? item.name}-${index}`}>
-          {item.url ? (
-            <a href={item.url} target="_blank" rel="noreferrer noopener">
+      {items.map((item, index) => {
+        const content = (
+          <>
+            <SiteFavicon url={item.faviconUrl} name={item.name} size={24} />
+            <span className="tool-link-copy">
               <span className="tool-link-name">{item.name}</span>
-              <span className="tool-link-host">{hostOf(item.url)}</span>
-              <ExternalLink aria-hidden="true" />
-            </a>
-          ) : (
-            <span className="tool-link-name">{item.name}</span>
-          )}
+              {item.url && <span className="tool-link-host">{hostOf(item.url)}</span>}
+            </span>
+            <ExternalLink aria-hidden="true" />
+          </>
+        );
+        return (
+          <li key={`${item.siteId ?? item.url ?? item.name}-${index}`}>
+            {item.siteId ? (
+              <Link href={`/library/${encodeURIComponent(item.siteId)}`}>{content}</Link>
+            ) : item.url ? (
+              <a href={item.url} target="_blank" rel="noreferrer noopener">{content}</a>
+            ) : (
+              <span className="tool-link-static">{content}</span>
+            )}
           {item.description && <p className="tool-link-description">{item.description}</p>}
           <ChipRow category={item.category} tags={item.tags} />
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -227,12 +391,17 @@ function SiteUpdateCard({
     <div className="draft-card" data-variant="update">
       <div className="draft-card-main">
         <strong>{draft.before.name}</strong>
-        {draft.before.url && (
+        {draft.before.siteId ? (
+          <Link href={`/library/${encodeURIComponent(draft.before.siteId)}`}>
+            {draft.before.url ? hostOf(draft.before.url) : "查看网站详情"}
+            <ChevronRight aria-hidden="true" />
+          </Link>
+        ) : draft.before.url ? (
           <a href={draft.before.url} target="_blank" rel="noreferrer noopener">
             {hostOf(draft.before.url)}
             <ExternalLink aria-hidden="true" />
           </a>
-        )}
+        ) : null}
       </div>
       <dl className="draft-diff">
         {fields.map((field) => (
@@ -476,7 +645,12 @@ function ToolCard({
           {view.message}
         </p>
       )}
-      {view.kind === "raw" && <pre className="tool-card-raw">{view.text}</pre>}
+      {view.kind === "unavailable" && (
+        <p className="tool-card-note">
+          <CircleAlert aria-hidden="true" />
+          {view.message}
+        </p>
+      )}
     </section>
   );
 }
@@ -522,6 +696,19 @@ export function ConversationThread({
         if (message.role !== "user" && message.role !== "assistant") return null;
         const toolResults = message.role === "assistant" ? collectToolResults(message) : [];
         const hasText = message.parts.some((part) => part.type === "text" && part.text.trim());
+        const metadata = normalizeAgentMessageMetadata(message.metadata);
+        const messageStreaming =
+          waiting && message.role === "assistant" && message.id === lastMessage?.id;
+        const reasoningParts = message.parts.filter((part) => part.type === "reasoning");
+        const reasoningText = reasoningParts.map((part) => part.text).join("");
+        const firstReasoningIndex = message.parts.findIndex((part) => part.type === "reasoning");
+        const hasExplicitReasoningState = reasoningParts.some((part) => part.state !== undefined);
+        // AI SDK leaves an open reasoning part marked `streaming` when the
+        // transport errors or aborts before reasoning-end. The message status
+        // is authoritative for those terminal paths.
+        const reasoningStreaming = messageStreaming && (hasExplicitReasoningState
+          ? reasoningParts.some((part) => part.state === "streaming")
+          : !hasText);
 
         return (
           <motion.article
@@ -538,11 +725,30 @@ export function ConversationThread({
             <div className="chat-turn-body">
               {message.parts.map((part, index) => {
                 if (part.type === "text") {
-                  return part.text ? (
-                    <p className="chat-text" key={`text-${index}`}>
-                      {part.text}
-                    </p>
-                  ) : null;
+                  if (!part.text) return null;
+                  return message.role === "assistant" ? (
+                    <AgentMarkdown
+                      className="chat-text chat-markdown"
+                      key={`text-${index}`}
+                      text={part.text}
+                      streaming={messageStreaming}
+                      reducedMotion={Boolean(reducedMotion)}
+                    />
+                  ) : (
+                    <p className="chat-text" key={`text-${index}`}>{part.text}</p>
+                  );
+                }
+                if (part.type === "reasoning" && part.text) {
+                  if (index !== firstReasoningIndex) return null;
+                  return (
+                    <ReasoningDisclosure
+                      key={`reasoning-${index}-${reasoningStreaming ? "streaming" : "settled"}`}
+                      text={reasoningText}
+                      streaming={reasoningStreaming}
+                      durationMs={metadata.reasoningMs}
+                      reducedMotion={Boolean(reducedMotion)}
+                    />
+                  );
                 }
                 if (part.type === "data-agent-tool-result") {
                   const result = normalizeAgentToolResult(part.data);
@@ -566,6 +772,9 @@ export function ConversationThread({
                     </span>
                   ))}
                 </div>
+              )}
+              {message.role === "assistant" && !messageStreaming && (
+                <ResponseMetrics metadata={metadata} />
               )}
             </div>
           </motion.article>

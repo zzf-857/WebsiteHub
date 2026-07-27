@@ -122,6 +122,7 @@ def _site_summary(site: Any) -> dict[str, Any]:
         "site_id": site.id,
         "name": site.name,
         "url": site.original_url,
+        "favicon_url": site.favicon_url,
         "description": site.description,
         "category": site.category.name,
         "tags": [tag.name for tag in site.tags],
@@ -175,7 +176,6 @@ async def _get_site_detail(context: AgentToolContext, args: SiteIdArgs) -> dict[
         {
             "source": SOURCE_LIBRARY,
             "analysis_status": site.analysis_status,
-            "favicon_url": site.favicon_url,
             "created_at": site.created_at.isoformat(),
             "updated_at": site.updated_at.isoformat(),
         }

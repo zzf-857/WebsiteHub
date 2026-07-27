@@ -1,6 +1,7 @@
 "use client";
 
 import { Pin } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import {
@@ -86,12 +87,10 @@ export function PinnedSites() {
       {state.status === "ready" && state.sites.length > 0 && (
         <div className="home-card-grid">
           {state.sites.map((site) => (
-            <a
+            <Link
               key={site.id}
               className="home-pinned-card"
-              href={site.originalUrl}
-              target="_blank"
-              rel="noreferrer noopener"
+              href={`/library/${encodeURIComponent(site.id)}`}
               title={site.name}
             >
               <SiteFavicon url={site.faviconUrl} name={site.name} size={24} />
@@ -99,7 +98,7 @@ export function PinnedSites() {
                 <span className="home-pinned-name">{site.name}</span>
                 <span className="home-pinned-host">{siteHostname(site.originalUrl)}</span>
               </span>
-            </a>
+            </Link>
           ))}
         </div>
       )}

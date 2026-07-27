@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from ipaddress import ip_address
+from urllib.parse import urldefrag, urlsplit
 
 import httpx
 import pytest
 
-from webhub.ingestion.fetcher import MAX_BODY_BYTES, MAX_REDIRECTS, fetch_site_metadata
+from webhub.ingestion.fetcher import (
+    MAX_BODY_BYTES,
+    MAX_ICON_BYTES,
+    MAX_REDIRECTS,
+    fetch_site_metadata,
+)
+from webhub.providers.targets import ResolvedConnectionTarget
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
+_PINNED_ADDRESS = ip_address("93.184.216.34")
 
 PAGE = """<!doctype html><html><head>
 <title>Example Domain</title>
@@ -27,6 +36,7 @@ def _run(
     *,
     skip_target_check: bool = True,
     allow_private: bool = False,
+    client_options: list[dict[str, object]] | None = None,
 ) -> tuple[list[httpx.Request], object, list[str]]:
     seen: list[httpx.Request] = []
 
@@ -35,6 +45,8 @@ def _run(
         return handler(request)
 
     def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        if client_options is not None:
+            client_options.append(dict(kwargs))
         kwargs["transport"] = httpx.MockTransport(record)
         return _REAL_ASYNC_CLIENT(*args, **kwargs)  # type: ignore[arg-type]
 
@@ -44,10 +56,19 @@ def _run(
 
     if skip_target_check:
 
-        async def allow(value: str, **_kwargs: object) -> None:
+        async def allow(value: str, **_kwargs: object) -> ResolvedConnectionTarget:
             checked.append(value)
+            logical_url = urldefrag(value.strip()).url
+            parsed = urlsplit(logical_url)
+            assert parsed.hostname is not None
+            return ResolvedConnectionTarget(
+                url=logical_url,
+                hostname=parsed.hostname,
+                port=parsed.port or (443 if parsed.scheme == "https" else 80),
+                addresses=(_PINNED_ADDRESS,),
+            )
 
-        monkeypatch.setattr("webhub.ingestion.fetcher.validate_connection_target", allow)
+        monkeypatch.setattr("webhub.ingestion.fetcher.resolve_resource_target", allow)
 
     outcome = asyncio.run(fetch_site_metadata(url, allow_private=allow_private))
     # checked 单独返回：FetchOutcome 是 frozen slots dataclass，挂不上属性。
@@ -55,9 +76,14 @@ def _run(
 
 
 def _html(body: str = PAGE, status: int = 200, content_type: str = "text/html; charset=utf-8"):
-    return lambda _request: httpx.Response(
-        status, content=body.encode(), headers={"content-type": content_type}
-    )
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/favicon.ico":
+            return httpx.Response(
+                200, content=b"\x00\x00\x01\x00", headers={"content-type": "image/x-icon"}
+            )
+        return httpx.Response(status, content=body.encode(), headers={"content-type": content_type})
+
+    return handler
 
 
 def test_a_normal_page_yields_complete_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,7 +104,7 @@ def test_every_redirect_hop_is_revalidated_not_just_the_first(
     """The defence that matters: a 302 must not smuggle us into the metadata service."""
 
     def hop(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "short.example":
+        if request.headers["host"] == "short.example":
             return httpx.Response(
                 302, headers={"location": "http://169.254.169.254/latest/meta-data/"}
             )
@@ -87,9 +113,39 @@ def test_every_redirect_hop_is_revalidated_not_just_the_first(
     seen, outcome, checked = _run("https://short.example/x", hop, monkeypatch)
 
     # The redirect target was submitted for validation, exactly like the first URL.
-    assert checked == ["https://short.example/x", "http://169.254.169.254/latest/meta-data/"]
-    # And only the first hop was actually requested before validation ran again.
-    assert len(seen) == 2
+    assert checked == [
+        "https://short.example/x",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://169.254.169.254/cover.png",
+        "http://169.254.169.254/favicon.ico",
+    ]
+    # Both page hops and the declared icon were independently resolved and pinned.
+    assert len(seen) == 3
+
+
+def test_each_request_uses_the_validated_ip_but_keeps_host_and_sni(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_options: list[dict[str, object]] = []
+    seen, outcome, _checked = _run(
+        "https://example.com/docs",
+        _html(),
+        monkeypatch,
+        client_options=client_options,
+    )
+
+    assert outcome.status == "complete"
+    assert seen
+    assert {request.url.host for request in seen} == {str(_PINNED_ADDRESS)}
+    assert seen[0].headers["host"] == "example.com"
+    assert seen[0].extensions["sni_hostname"] == "example.com"
+    assert len(client_options) == len(seen)
+    assert all(options["trust_env"] is False for options in client_options)
+    assert all(
+        isinstance(options["limits"], httpx.Limits)
+        and options["limits"].max_keepalive_connections == 0
+        for options in client_options
+    )
 
 
 def test_a_redirect_into_a_private_address_is_refused_for_real(
@@ -173,6 +229,155 @@ def test_a_javascript_only_page_reports_limited_honestly(
     assert "脚本" in outcome.reason
 
 
+def test_same_origin_favicon_fallback_is_stored_only_after_a_real_image_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = "<html><head><title>No declared icon</title></head><body></body></html>"
+
+    def found(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/favicon.ico":
+            return httpx.Response(
+                200,
+                content=b"\x89PNG\r\n\x1a\n",
+                headers={"content-type": "image/png"},
+            )
+        return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+
+    _, outcome, checked = _run("https://example.com/docs", found, monkeypatch)
+    assert outcome.metadata.icon_url == "https://example.com/favicon.ico"
+    assert checked == ["https://example.com/docs", "https://example.com/favicon.ico"]
+
+    def missing(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/favicon.ico":
+            return httpx.Response(404, headers={"content-type": "image/x-icon"})
+        return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+
+    _, missing_outcome, _ = _run("https://example.com/docs", missing, monkeypatch)
+    assert missing_outcome.metadata.icon_url is None
+
+
+def test_same_origin_favicon_fallback_rejects_cross_origin_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = "<html><head><title>No declared icon</title></head><body></body></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/favicon.ico":
+            return httpx.Response(302, headers={"location": "https://icons.example.net/icon.png"})
+        return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+
+    seen, outcome, checked = _run("https://example.com/", handler, monkeypatch)
+    assert outcome.metadata.icon_url is None
+    assert [request.headers["host"] for request in seen] == ["example.com", "example.com"]
+    assert [request.url.path for request in seen] == ["/", "/favicon.ico"]
+    assert checked == ["https://example.com/", "https://example.com/favicon.ico"]
+
+
+def test_declared_favicon_query_is_allowed_and_fragment_is_not_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = (
+        '<html><head><title>Versioned icon</title>'
+        '<link rel="icon" href="/favicon.png?v=2#dark">'
+        "</head><body></body></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/favicon.png":
+            return httpx.Response(
+                200,
+                content=b"\x89PNG\r\n\x1a\n",
+                headers={"content-type": "image/png"},
+            )
+        return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+
+    seen, outcome, checked = _run("https://example.com/docs", handler, monkeypatch)
+
+    assert outcome.metadata.icon_url == "https://example.com/favicon.png?v=2"
+    icon_request = seen[1]
+    assert icon_request.url.query == b"v=2"
+    assert icon_request.url.fragment == ""
+    assert checked[-1] == "https://example.com/favicon.png?v=2#dark"
+
+
+@pytest.mark.parametrize(
+    "image_url",
+    (
+        "http://127.0.0.1/preview.png",
+        "http://10.1.2.3/preview.png",
+        "file:///etc/passwd",
+    ),
+    ids=("loopback", "private", "non-http"),
+)
+def test_private_or_malformed_preview_urls_are_not_persisted(
+    image_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = (
+        "<html><head><title>Unsafe preview</title>"
+        f'<meta property="og:image" content="{image_url}">'
+        "</head><body></body></html>"
+    )
+
+    seen, outcome, _checked = _run(
+        "https://93.184.216.34/",
+        _html(page),
+        monkeypatch,
+        skip_target_check=False,
+    )
+
+    assert outcome.status == "complete"
+    assert outcome.metadata.image_url is None
+    # Preview validation is DNS-only.  It must not download the untrusted URL.
+    assert all(request.url.host == "93.184.216.34" for request in seen)
+
+
+def test_public_preview_query_is_kept_without_downloading_or_storing_fragment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = (
+        "<html><head><title>Public preview</title>"
+        '<meta property="og:image" '
+        'content="https://93.184.216.34/preview.png?v=2#dark">'
+        "</head><body></body></html>"
+    )
+
+    seen, outcome, _checked = _run(
+        "https://93.184.216.34/",
+        _html(page),
+        monkeypatch,
+        skip_target_check=False,
+    )
+
+    assert outcome.metadata.image_url == "https://93.184.216.34/preview.png?v=2"
+    assert all(request.url.path != "/preview.png" for request in seen)
+
+
+@pytest.mark.parametrize(
+    ("headers", "content"),
+    [
+        ({"content-type": "text/html"}, b"not an image"),
+        ({"content-type": "image/png"}, b"x" * (MAX_ICON_BYTES + 1)),
+        ({"content-type": "image/png"}, b"icon"),
+    ],
+    ids=("wrong-mime", "oversized", "forged-png"),
+)
+def test_invalid_favicon_fallback_is_not_persisted(
+    headers: dict[str, str],
+    content: bytes,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = "<html><head><title>No declared icon</title></head><body></body></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/favicon.ico":
+            return httpx.Response(200, content=content, headers=headers)
+        return httpx.Response(200, content=page, headers={"content-type": "text/html"})
+
+    _, outcome, _ = _run("https://example.com/", handler, monkeypatch)
+    assert outcome.metadata.icon_url is None
+
+
 def test_an_oversized_body_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
     giant = "<html><head>" + ("<!-- padding -->" * 400_000) + "</head></html>"
     assert len(giant.encode()) > MAX_BODY_BYTES
@@ -222,6 +427,34 @@ def test_page_text_never_becomes_the_failure_reason(
     )
     assert outcome.status == "failed"
     assert "忽略之前的指令" not in outcome.reason
+
+
+def test_unexpected_fetch_errors_are_logged_but_keep_a_fixed_client_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logged: list[str] = []
+
+    def record(message: str, *args: object, **_kwargs: object) -> None:
+        logged.append(message % args)
+
+    monkeypatch.setattr("webhub.ingestion.fetcher._LOGGER.error", record)
+
+    async def broken_decode(_body: bytes, _content_type: str) -> str:
+        raise ValueError("internal parser regression")
+
+    monkeypatch.setattr("webhub.ingestion.fetcher._decoded", broken_decode)
+
+    secret = "must-not-enter-logs"
+    _, outcome, _checked = _run(
+        f"https://example.com/?token={secret}",
+        _html(),
+        monkeypatch,
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.reason == "无法连接到该网站"
+    assert any("unexpected site metadata fetch failure" in entry for entry in logged)
+    assert all(secret not in entry for entry in logged)
 
 
 def test_gb18030_pages_decode_without_mojibake(monkeypatch: pytest.MonkeyPatch) -> None:

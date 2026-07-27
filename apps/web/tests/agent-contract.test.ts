@@ -10,6 +10,7 @@ import {
   latestAgentUserText,
   MAX_AGENT_MESSAGE_LENGTH,
   normalizeAgentConversationHistory,
+  normalizeAgentMarkdownLink,
   normalizeAgentMessageMetadata,
   normalizeAgentStreamError,
   normalizeAgentToolCall,
@@ -86,7 +87,7 @@ test("extracts the latest user text from text parts only", () => {
   assert.equal(latestAgentUserText([{ role: "user" }, { role: "user", parts: [{ type: "file", url: "x" }] }]), "");
 });
 
-test("projects tool results into links, facets, draft, rejected, error, and raw views", () => {
+test("projects tool results into links, facets, drafts, errors, and safe compatibility views", () => {
   assert.deepEqual(
     describeAgentToolResult("search_library", {
       source: "站内存储数据",
@@ -96,6 +97,7 @@ test("projects tool results into links, facets, draft, rejected, error, and raw 
           site_id: "site-1",
           name: "MDN",
           url: "https://developer.mozilla.org/",
+          favicon_url: "https://developer.mozilla.org/favicon.ico",
           description: "Web 文档",
           category: "开发",
           tags: ["文档", 3, "  前端  "],
@@ -113,6 +115,7 @@ test("projects tool results into links, facets, draft, rejected, error, and raw 
           siteId: "site-1",
           name: "MDN",
           url: "https://developer.mozilla.org/",
+          faviconUrl: "https://developer.mozilla.org/favicon.ico",
           description: "Web 文档",
           category: "开发",
           tags: ["文档", "前端"],
@@ -122,6 +125,7 @@ test("projects tool results into links, facets, draft, rejected, error, and raw 
           siteId: null,
           name: "仅有标题",
           url: "https://example.com/",
+          faviconUrl: null,
           description: "来自搜索摘要",
           category: null,
           tags: [],
@@ -171,6 +175,7 @@ test("projects tool results into links, facets, draft, rejected, error, and raw 
         siteId: "site-1",
         name: "已收录的站点",
         url: "https://example.com/docs",
+        faviconUrl: null,
         description: null,
         category: null,
         tags: [],
@@ -189,15 +194,47 @@ test("projects tool results into links, facets, draft, rejected, error, and raw 
     { kind: "error", source: "联网搜索", message: "没有可用的搜索结果" },
   );
 
+  const legacyMessage = "这条结果来自旧版本，当前界面无法安全展示，请重新执行。";
   assert.deepEqual(describeAgentToolResult("unknown_tool", { unexpected: true }), {
-    kind: "raw",
-    text: '{"unexpected":true}',
+    kind: "unavailable",
+    message: legacyMessage,
   });
-  assert.deepEqual(describeAgentToolResult("unknown_tool", null), { kind: "raw", text: "null" });
+  assert.deepEqual(describeAgentToolResult("unknown_tool", null), {
+    kind: "unavailable",
+    message: legacyMessage,
+  });
   assert.deepEqual(describeAgentToolResult("unknown_tool", "  纯文本结果  "), {
-    kind: "raw",
-    text: "纯文本结果",
+    kind: "unavailable",
+    message: legacyMessage,
   });
+  const unknown = describeAgentToolResult("unknown_tool", { secret: "raw-json" });
+  assert.equal(unknown.kind, "unavailable");
+  if (unknown.kind === "unavailable") assert.doesNotMatch(unknown.message, /raw-json/u);
+});
+
+test("accepts explicit safe Markdown links and rejects executable or ambiguous hrefs", () => {
+  assert.deepEqual(normalizeAgentMarkdownLink("https://docs.example.com/path"), {
+    kind: "external",
+    href: "https://docs.example.com/path",
+    hostname: "docs.example.com",
+  });
+  assert.deepEqual(normalizeAgentMarkdownLink("/library/site-1"), {
+    kind: "internal",
+    href: "/library/site-1",
+  });
+  assert.deepEqual(normalizeAgentMarkdownLink("#section"), {
+    kind: "internal",
+    href: "#section",
+  });
+  for (const unsafe of [
+    "//evil.example",
+    "/\\evil.example",
+    "javascript:alert(1)",
+    "data:text/html,hello",
+    "https://safe.example/\nunsafe",
+  ]) {
+    assert.equal(normalizeAgentMarkdownLink(unsafe), null);
+  }
 });
 
 test("drops non-http urls to null while keeping named entries", () => {
@@ -220,6 +257,7 @@ test("drops non-http urls to null while keeping named entries", () => {
           siteId: null,
           name: "脚本协议站点",
           url: null,
+          faviconUrl: null,
           description: null,
           category: null,
           tags: [],
@@ -229,6 +267,7 @@ test("drops non-http urls to null while keeping named entries", () => {
           siteId: null,
           name: "正常站点",
           url: "https://example.com/safe",
+          faviconUrl: null,
           description: null,
           category: null,
           tags: [],
@@ -300,6 +339,16 @@ test("keeps only the known metadata keys and requires webSearch to be boolean", 
       model: "chat-model",
       webSearch: false,
       errorCode: "rate_limited",
+      elapsedMs: 2_450,
+      timeToFirstTokenMs: 310,
+      reasoningMs: 1_200,
+      usage: {
+        inputTokens: 80,
+        outputTokens: 20,
+        totalTokens: 100,
+        reasoningTokens: 12,
+        estimatedCost: 99,
+      },
       injected: "应被忽略",
     }),
     {
@@ -308,11 +357,29 @@ test("keeps only the known metadata keys and requires webSearch to be boolean", 
       model: "chat-model",
       webSearch: false,
       errorCode: "rate_limited",
+      elapsedMs: 2_450,
+      timeToFirstTokenMs: 310,
+      reasoningMs: 1_200,
+      usage: {
+        inputTokens: 80,
+        outputTokens: 20,
+        totalTokens: 100,
+        reasoningTokens: 12,
+      },
     },
   );
 
   assert.deepEqual(normalizeAgentMessageMetadata({ webSearch: "true" }), {});
   assert.deepEqual(normalizeAgentMessageMetadata({ webSearch: 1 }), {});
+  assert.deepEqual(
+    normalizeAgentMessageMetadata({
+      elapsedMs: -1,
+      timeToFirstTokenMs: 1.5,
+      reasoningMs: "200",
+      usage: { inputTokens: -2, totalTokens: "100" },
+    }),
+    {},
+  );
   assert.deepEqual(normalizeAgentMessageMetadata(null), {});
 });
 
@@ -372,27 +439,42 @@ test("parses grouped conversation history and rejects non-array groups", () => {
   );
 });
 
-test("restores archived messages with tool provenance before answer text", () => {
+test("restores archived reasoning, provenance, metadata, and answer text in live order", () => {
   assert.deepEqual(
     toAgentUIMessages([
-      { id: "m-1", role: "system", content: "系统提示", sources: [], status: "complete" },
-      { id: "m-2", role: "user", content: "帮我找文档", sources: [], status: "complete" },
-      { id: "m-3", role: "tool", content: "工具输出", sources: [], status: "complete" },
+      {
+        id: "m-1", role: "system", content: "系统提示", parts: [], sources: [], metadata: {}, status: "complete",
+      },
+      {
+        id: "m-2", role: "user", content: "帮我找文档", parts: [], sources: [], metadata: {}, status: "complete",
+      },
+      {
+        id: "m-3", role: "tool", content: "工具输出", parts: [], sources: [], metadata: {}, status: "complete",
+      },
       {
         id: "m-4",
         role: "assistant",
         content: "给你两个链接",
+        parts: [
+          { type: "reasoning", text: "先查资料库。" },
+          { type: "text", text: "给你两个链接" },
+        ],
         sources: [{ toolCallId: "call-1", name: "search_library", result: { items: [] } }],
+        metadata: { elapsedMs: 900, usage: { totalTokens: 24 } },
         status: "complete",
       },
-      { id: "m-5", role: "assistant", content: "", sources: [], status: "aborted" },
+      {
+        id: "m-5", role: "assistant", content: "", parts: [], sources: [], metadata: {}, status: "aborted",
+      },
     ]),
     [
       { id: "m-2", role: "user", parts: [{ type: "text", text: "帮我找文档" }] },
       {
         id: "m-4",
         role: "assistant",
+        metadata: { elapsedMs: 900, usage: { totalTokens: 24 } },
         parts: [
+          { type: "reasoning", text: "先查资料库。" },
           {
             type: "data-agent-tool-result",
             data: { toolCallId: "call-1", name: "search_library", result: { items: [] } },
@@ -475,18 +557,18 @@ test("changes 里的空字符串与 false 是合法改动，不能被当成未�
   assert.deepEqual(view.draft.changes, { description: "", pinned: false });
 });
 
-test("缺少乐观锁版本或改动集合的修改草稿降级为 raw，绝不半渲染", () => {
+test("缺少乐观锁版本或改动集合的修改草稿降级为安全提示，绝不半渲染", () => {
   const noVersion = describeAgentToolResult(
     "propose_site_update",
     siteUpdateResult({ expected_version: 0 }),
   );
-  assert.equal(noVersion.kind, "raw");
+  assert.equal(noVersion.kind, "unavailable");
 
   const noChanges = describeAgentToolResult(
     "propose_site_update",
     siteUpdateResult({ changes: {} }),
   );
-  assert.equal(noChanges.kind, "raw");
+  assert.equal(noChanges.kind, "unavailable");
 });
 
 test("无需修改时给出 noop 而不是一张点了没用的确认卡", () => {
@@ -520,7 +602,7 @@ test("Space 变更草稿被投影成 space-membership 视图", () => {
   assert.equal(view.draft.expectedVersion, 2);
 });
 
-test("非法 action 的 Space 草稿降级为 raw", () => {
+test("非法 action 的 Space 草稿降级为安全提示", () => {
   const view = describeAgentToolResult("propose_space_membership", {
     status: "awaiting_confirmation",
     draft: {
@@ -532,7 +614,7 @@ test("非法 action 的 Space 草稿降级为 raw", () => {
       expected_version: 2,
     },
   });
-  assert.equal(view.kind, "raw");
+  assert.equal(view.kind, "unavailable");
 });
 
 test("找不到 Space 时把已有 Space 一并说清楚", () => {
@@ -583,7 +665,7 @@ test("一条都不会写入的批量草稿降级，不渲染点了等于没点�
     status: "awaiting_confirmation",
     draft: { kind: "site_batch", urls: [], total: 2, ready: 0, duplicate: 2, invalid: 0, items: [] },
   });
-  assert.equal(view.kind, "raw");
+  assert.equal(view.kind, "unavailable");
 });
 
 test("批量草稿里状态不合法的条目被丢弃，而不是原样渲染", () => {
@@ -655,7 +737,10 @@ test("propose_reclassify 拒绝不合法的最大请求数", () => {
       },
     });
 
-    assert.equal(view.kind, "raw");
+    assert.equal(view.kind, "unavailable");
+    if (view.kind === "unavailable") {
+      assert.equal(view.message, "这条旧版重分类草稿已失效，请重新发起。");
+    }
   }
 });
 
@@ -682,7 +767,10 @@ test("propose_reclassify 拒绝不完整的网站或分类快照", () => {
       status: "awaiting_confirmation",
       draft,
     });
-    assert.equal(view.kind, "raw");
+    assert.equal(view.kind, "unavailable");
+    if (view.kind === "unavailable") {
+      assert.equal(view.message, "这条旧版重分类草稿已失效，请重新发起。");
+    }
   }
 });
 

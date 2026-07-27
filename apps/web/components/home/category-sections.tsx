@@ -442,12 +442,10 @@ function CategorySection({
       {hasSites && state.status === "ready" && state.sites.length > 0 && (
         <div className="home-card-grid">
           {state.sites.map((site) => (
-            <a
+            <Link
               key={site.id}
               className="home-site-card"
-              href={site.originalUrl}
-              target="_blank"
-              rel="noreferrer noopener"
+              href={`/library/${encodeURIComponent(site.id)}`}
               title={site.name}
             >
               <span className="home-site-card-head">
@@ -457,7 +455,7 @@ function CategorySection({
               </span>
               <span className="home-site-desc">{site.description?.trim() ?? ""}</span>
               <span className="home-site-host">{siteHostname(site.originalUrl)}</span>
-            </a>
+            </Link>
           ))}
         </div>
       )}

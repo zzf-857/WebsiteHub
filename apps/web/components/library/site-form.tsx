@@ -11,6 +11,10 @@ import type {
   LibrarySiteUpdateInput,
   LibraryTag,
 } from "@/lib/library-contract";
+import {
+  buildLibrarySiteUpdate,
+  type LibrarySiteFormValues,
+} from "@/lib/library-site-form";
 
 type SiteFormProps = {
   site?: LibrarySite;
@@ -23,17 +27,7 @@ type SiteFormProps = {
   onUpdate?: (input: LibrarySiteUpdateInput) => Promise<void>;
 };
 
-type FormState = {
-  name: string;
-  url: string;
-  description: string;
-  faviconUrl: string;
-  categoryId: string;
-  tagIds: string[];
-  pinned: boolean;
-};
-
-function initialState(site: LibrarySite | undefined): FormState {
+function initialState(site: LibrarySite | undefined): LibrarySiteFormValues {
   return {
     name: site?.name ?? "",
     url: site?.originalUrl ?? "",
@@ -60,7 +54,7 @@ function SiteFormContent({
   onCreate,
   onUpdate,
 }: Readonly<SiteFormProps>) {
-  const [values, setValues] = useState<FormState>(() => initialState(site));
+  const [values, setValues] = useState<LibrarySiteFormValues>(() => initialState(site));
   const [tagQuery, setTagQuery] = useState("");
   const errorId = useId();
   const isEdit = Boolean(site);
@@ -73,6 +67,16 @@ function SiteFormContent({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy) return;
+    if (site && onUpdate) {
+      const update = buildLibrarySiteUpdate(site, values);
+      if (update === null) {
+        onCancel();
+        return;
+      }
+      await onUpdate(update);
+      return;
+    }
+
     const shared = {
       name: values.name,
       url: values.url,
@@ -81,9 +85,6 @@ function SiteFormContent({
       tagIds: values.tagIds,
       pinned: values.pinned,
     };
-    if (site && onUpdate) {
-      await onUpdate({ ...shared, categoryId: values.categoryId || null, expectedVersion: site.version });
-    }
     if (!site && onCreate) {
       await onCreate({
         ...shared,

@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from webhub.db.models import Site, SiteEmbedding
 
 from .embeddings import MAX_BATCH_INPUTS, EmbeddingEndpoint, embed_texts
-from .vectors import content_digest, stale_sites, store_embedding
+from .vectors import content_digest, embedding_text, stale_sites, store_embedding
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +58,16 @@ class IndexStatus:
     pending_capped: bool
     #: 本次回填预计要发出的厂商请求数。**这是给用户看的花钱数字。**
     estimated_requests: int
+    #: 「全部重建」覆盖全库预计发出的请求数；与当前缺失量无关。
+    rebuild_estimated_requests: int
+    #: 「全部重建」第一轮实际会处理的站点数。
+    rebuild_pass_sites: int
+    #: 「全部重建」第一轮实际会发出的请求数。
+    rebuild_pass_estimated_requests: int
+    #: 全库是否超过单轮处理上限，需要后续继续补齐。
+    rebuild_capped: bool
+    #: 单轮最多处理的站点数。由后端下发，前端不得复制常量。
+    pass_limit: int
     #: 当前绑定的模型名；未配 Provider 时为 None。
     model: str | None
 
@@ -91,6 +101,9 @@ async def index_status(
         await session.scalar(select(func.count()).select_from(Site).where(Site.user_id == user_id))
         or 0
     )
+    rebuild_pass_sites = min(total, MAX_SITES_PER_PASS)
+    rebuild_estimated_requests = -(-total // MAX_BATCH_INPUTS)
+    rebuild_pass_estimated_requests = -(-rebuild_pass_sites // MAX_BATCH_INPUTS)
     model = binding.model_name if binding is not None else None
     if binding is None or not model:
         # 未配 Provider 时不谎报「全部待索引」：一次也不会发，pending 就是 0。
@@ -100,16 +113,39 @@ async def index_status(
             pending=0,
             pending_capped=False,
             estimated_requests=0,
+            rebuild_estimated_requests=rebuild_estimated_requests,
+            rebuild_pass_sites=rebuild_pass_sites,
+            rebuild_pass_estimated_requests=rebuild_pass_estimated_requests,
+            rebuild_capped=total > MAX_SITES_PER_PASS,
+            pass_limit=MAX_SITES_PER_PASS,
             model=None,
         )
 
-    indexed = int(
-        await session.scalar(
-            select(func.count())
-            .select_from(SiteEmbedding)
-            .where(SiteEmbedding.user_id == user_id, SiteEmbedding.model == model)
+    # A row is usable only when both its model and digest still match the
+    # current site text. Counting rows by model alone makes an edited site show
+    # up in both "indexed" and "pending" until the next paid backfill.
+    embedding_rows = (
+        await session.execute(
+            select(
+                Site.name,
+                Site.description,
+                SiteEmbedding.model,
+                SiteEmbedding.content_hash,
+            )
+            .join(
+                SiteEmbedding,
+                (SiteEmbedding.user_id == Site.user_id)
+                & (SiteEmbedding.site_id == Site.id),
+                isouter=True,
+            )
+            .where(Site.user_id == user_id)
         )
-        or 0
+    ).all()
+    indexed = sum(
+        1
+        for name, description, embedding_model, content_hash in embedding_rows
+        if embedding_model == model
+        and content_hash == content_digest(embedding_text(name, description, None), model)
     )
     # 多取一个用来判断是否还有剩，而不是让 pending == 上限时无法区分
     # 「正好这么多」和「还有很多」。
@@ -123,6 +159,11 @@ async def index_status(
         pending_capped=capped,
         # 向上取整：63 个站点也要发一次。
         estimated_requests=-(-pending // MAX_BATCH_INPUTS),
+        rebuild_estimated_requests=rebuild_estimated_requests,
+        rebuild_pass_sites=rebuild_pass_sites,
+        rebuild_pass_estimated_requests=rebuild_pass_estimated_requests,
+        rebuild_capped=total > MAX_SITES_PER_PASS,
+        pass_limit=MAX_SITES_PER_PASS,
         model=model,
     )
 

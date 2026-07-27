@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -72,6 +73,11 @@ def test_reading_the_status_never_spends_anything(
     assert body["total_sites"] == 3
     assert body["pending"] == 0
     assert body["estimated_requests"] == 0
+    assert body["rebuild_estimated_requests"] == 1
+    assert body["rebuild_pass_sites"] == 3
+    assert body["rebuild_pass_estimated_requests"] == 1
+    assert body["rebuild_capped"] is False
+    assert body["pass_limit"] == 512
     assert body["running"] is False
     assert seen == []
 
@@ -89,8 +95,45 @@ def test_rebuilding_without_a_provider_reports_nothing_scheduled(
         headers=ORIGIN,
     )
     assert response.status_code == 200, response.text
-    assert response.json() == {"scheduled": False, "dropped": 0, "estimated_requests": 0}
+    assert response.json() == {
+        "scheduled": False,
+        "reason": "provider_unavailable",
+        "dropped": 0,
+        "estimated_requests": 0,
+    }
     assert seen == []
+
+
+def test_a_new_pass_reports_the_scheduled_reason(
+    indexed_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from webhub.search import routes as search_routes
+
+    async def configured_binding(*_args: object, **_kwargs: object) -> object:
+        return SimpleNamespace(model_name="embed-1")
+
+    async def current_status(*_args: object, **_kwargs: object) -> object:
+        return SimpleNamespace(estimated_requests=1)
+
+    monkeypatch.setattr(search_routes, "resolve_optional_binding", configured_binding)
+    monkeypatch.setattr(search_routes, "index_status", current_status)
+    monkeypatch.setattr(search_routes.worker, "is_running", lambda _user_id: False)
+    monkeypatch.setattr(search_routes.worker, "schedule_backfill", lambda *_args, **_kwargs: True)
+
+    response = indexed_client.post(
+        "/api/search/index/rebuild",
+        json={"drop_existing": False, "limit": 512},
+        headers=ORIGIN,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "scheduled": True,
+        "reason": "scheduled",
+        "dropped": 0,
+        "estimated_requests": 1,
+    }
 
 
 def test_the_index_endpoints_require_a_session(tmp_path: Path) -> None:
@@ -151,7 +194,15 @@ def test_rebuilding_while_a_pass_runs_does_not_drop_the_index(
         dropped_calls.append(user_id)
         return 99
 
+    async def configured_binding(*_args: object, **_kwargs: object) -> object:
+        return SimpleNamespace(model_name="embed-1")
+
+    async def current_status(*_args: object, **_kwargs: object) -> object:
+        return SimpleNamespace(estimated_requests=1)
+
     monkeypatch.setattr(search_routes, "drop_index", spy_drop)
+    monkeypatch.setattr(search_routes, "resolve_optional_binding", configured_binding)
+    monkeypatch.setattr(search_routes, "index_status", current_status)
     monkeypatch.setattr(search_routes.worker, "is_running", lambda _user_id: True)
 
     response = indexed_client.post(
@@ -162,5 +213,6 @@ def test_rebuilding_while_a_pass_runs_does_not_drop_the_index(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["scheduled"] is False
+    assert body["reason"] == "already_running"
     assert body["dropped"] == 0
     assert dropped_calls == [], "已有一轮在跑时绝不能先丢索引"

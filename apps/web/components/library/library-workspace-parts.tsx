@@ -10,7 +10,6 @@ import {
   ArrowUp,
   ChevronsDown,
   ChevronsUp,
-  ExternalLink,
   GripVertical,
   LoaderCircle,
   Pencil,
@@ -142,6 +141,12 @@ export function SiteCollection({
               if (dragged && dragged !== site.id) onDropBefore(dragged, site.id);
             }}
           >
+            <Link
+              className="library-site-card-link"
+              href={`/library/${encodeURIComponent(site.id)}`}
+              aria-label={`查看 ${site.name} 的详情`}
+              draggable={false}
+            />
             {reorderable && (
               <div
                 className="library-site-reorder"
@@ -198,20 +203,14 @@ export function SiteCollection({
               <SiteFavicon url={site.faviconUrl} name={site.name} size={viewMode === "grid" ? 32 : 24} />
               <div className="library-site-copy">
                 <div className="library-site-title-row">
-                  <Link href={`/library/${encodeURIComponent(site.id)}`} className="library-site-title">
+                  <span className="library-site-title">
                     {site.name}
-                  </Link>
+                  </span>
                   {site.pinned && <Pin className="library-pinned-mark" aria-label="已置顶" />}
                 </div>
-                <a
-                  className="library-site-host"
-                  href={site.originalUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={site.originalUrl}
-                >
+                <span className="library-site-host" title={site.originalUrl}>
                   {siteHost(site)}
-                </a>
+                </span>
                 {site.description && <p className="library-site-description">{site.description}</p>}
               </div>
             </div>
@@ -234,16 +233,6 @@ export function SiteCollection({
             <footer className="library-site-card-footer">
               <span className="library-site-updated">更新于 {dateFormatter.format(new Date(site.updatedAt))}</span>
               <div className="library-site-actions">
-                <a
-                  className="icon-button"
-                  href={site.originalUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={`访问 ${site.name}`}
-                  title="访问网站"
-                >
-                  <ExternalLink aria-hidden="true" />
-                </a>
                 <button
                   className="icon-button"
                   type="button"

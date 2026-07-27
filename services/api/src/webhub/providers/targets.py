@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+from dataclasses import dataclass
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 _PRIVATE_IPV4_NETWORKS = (
@@ -18,6 +19,40 @@ class ProviderTargetError(ValueError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedConnectionTarget:
+    """One URL and the exact addresses approved for its next connection."""
+
+    url: str
+    hostname: str
+    port: int
+    addresses: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]
+
+    @property
+    def host_header(self) -> str:
+        parsed = urlsplit(self.url)
+        host = f"[{self.hostname}]" if ":" in self.hostname else self.hostname
+        default_port = (parsed.scheme == "https" and self.port == 443) or (
+            parsed.scheme == "http" and self.port == 80
+        )
+        return host if default_port else f"{host}:{self.port}"
+
+    def connection_url(
+        self,
+        address: ipaddress.IPv4Address | ipaddress.IPv6Address | None = None,
+    ) -> str:
+        """Replace only the authority used for TCP; path and query stay intact."""
+
+        selected = address or self.addresses[0]
+        parsed = urlsplit(self.url)
+        host = f"[{selected}]" if selected.version == 6 else str(selected)
+        default_port = (parsed.scheme == "https" and self.port == 443) or (
+            parsed.scheme == "http" and self.port == 80
+        )
+        netloc = host if default_port else f"{host}:{self.port}"
+        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, ""))
 
 
 def _parsed_base_url(value: str) -> tuple[SplitResult, str, int]:
@@ -45,6 +80,34 @@ def _parsed_base_url(value: str) -> tuple[SplitResult, str, int]:
         raise ProviderTargetError("invalid_base_url", "Base URL 主机名无效") from error
     if not ascii_hostname:
         raise ProviderTargetError("invalid_base_url", "Base URL 主机名无效")
+    return parsed, ascii_hostname, port or (443 if parsed.scheme.casefold() == "https" else 80)
+
+
+def _parsed_resource_url(value: str) -> tuple[SplitResult, str, int]:
+    """Parse a fetchable HTTP URL while allowing resource query/fragment suffixes."""
+
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except ValueError as error:
+        raise ProviderTargetError("invalid_resource_url", "资源 URL 无效") from error
+    hostname = parsed.hostname
+    if (
+        parsed.scheme.casefold() not in {"http", "https"}
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ProviderTargetError(
+            "invalid_resource_url",
+            "资源 URL 必须是不含凭据的绝对 HTTP(S) URL",
+        )
+    try:
+        ascii_hostname = hostname.rstrip(".").encode("idna").decode("ascii").casefold()
+    except UnicodeError as error:
+        raise ProviderTargetError("invalid_resource_url", "资源 URL 主机名无效") from error
+    if not ascii_hostname:
+        raise ProviderTargetError("invalid_resource_url", "资源 URL 主机名无效")
     return parsed, ascii_hostname, port or (443 if parsed.scheme.casefold() == "https" else 80)
 
 
@@ -120,13 +183,13 @@ def _resolve(hostname: str, port: int) -> set[ipaddress.IPv4Address | ipaddress.
     return addresses
 
 
-async def validate_connection_target(
-    value: str,
+async def _validated_addresses(
+    hostname: str,
+    port: int,
     *,
     allow_private: bool,
     timeout_seconds: int,
-) -> None:
-    _, hostname, port = _parsed_base_url(value)
+) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]:
     direct_address = _address(hostname)
     if direct_address is not None:
         addresses = {direct_address}
@@ -153,3 +216,60 @@ async def validate_connection_target(
             "unsafe_provider_target",
             "Provider 地址解析到本机、私网、保留或其他不安全目标",
         )
+    return tuple(sorted(addresses, key=lambda address: (address.version, int(address))))
+
+
+async def resolve_resource_target(
+    value: str,
+    *,
+    allow_private: bool,
+    timeout_seconds: int,
+) -> ResolvedConnectionTarget:
+    """Resolve a web resource once and return the addresses that may be dialled.
+
+    The returned URL keeps its query but drops its fragment, which is a
+    client-side identifier and must never be included in an HTTP request.
+    """
+
+    parsed, hostname, port = _parsed_resource_url(value)
+    addresses = await _validated_addresses(
+        hostname,
+        port,
+        allow_private=allow_private,
+        timeout_seconds=timeout_seconds,
+    )
+    scheme = parsed.scheme.casefold()
+    host_display = f"[{hostname}]" if ":" in hostname else hostname
+    default_port = (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
+    netloc = host_display if default_port else f"{host_display}:{port}"
+    request_url = urlunsplit((scheme, netloc, parsed.path, parsed.query, ""))
+    return ResolvedConnectionTarget(
+        url=request_url,
+        hostname=hostname,
+        port=port,
+        addresses=addresses,
+    )
+
+
+async def validate_connection_target(
+    value: str,
+    *,
+    allow_private: bool,
+    timeout_seconds: int,
+) -> None:
+    _, hostname, port = _parsed_base_url(value)
+    await _validated_addresses(
+        hostname,
+        port,
+        allow_private=allow_private,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+__all__ = [
+    "ProviderTargetError",
+    "ResolvedConnectionTarget",
+    "normalize_base_url",
+    "resolve_resource_target",
+    "validate_connection_target",
+]

@@ -1,0 +1,63 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { LibrarySite } from "../lib/library-contract.ts";
+import {
+  buildLibrarySiteUpdate,
+  type LibrarySiteFormValues,
+} from "../lib/library-site-form.ts";
+
+const site: LibrarySite = {
+  id: "site-1",
+  name: "Example",
+  originalUrl: "https://old.example/",
+  identityUrl: "https://old.example",
+  description: "Saved description",
+  faviconUrl: "https://old.example/favicon.ico",
+  previewUrl: "https://old.example/preview.png",
+  category: { id: "category-1", name: "默认", isDefault: true, icon: "Folder" },
+  tags: [{ id: "tag-1", name: "Docs" }],
+  pinned: false,
+  source: "manual",
+  analysisStatus: "complete",
+  version: 4,
+  createdAt: "2026-07-27T00:00:00Z",
+  updatedAt: "2026-07-27T00:00:00Z",
+};
+
+const values: LibrarySiteFormValues = {
+  name: site.name,
+  url: site.originalUrl,
+  description: site.description ?? "",
+  faviconUrl: site.faviconUrl ?? "",
+  categoryId: site.category.id,
+  tagIds: site.tags.map((tag) => tag.id),
+  pinned: site.pinned,
+};
+
+test("site edit PATCH omits untouched fields from a stale form snapshot", () => {
+  assert.equal(buildLibrarySiteUpdate(site, values), null);
+  assert.deepEqual(
+    buildLibrarySiteUpdate(site, { ...values, url: "https://new.example/" }),
+    { expectedVersion: 4, url: "https://new.example/" },
+  );
+});
+
+test("site edit PATCH preserves explicit favicon changes and clears", () => {
+  assert.deepEqual(
+    buildLibrarySiteUpdate(site, {
+      ...values,
+      url: "https://new.example/",
+      faviconUrl: "https://new.example/icon.png",
+    }),
+    {
+      expectedVersion: 4,
+      url: "https://new.example/",
+      faviconUrl: "https://new.example/icon.png",
+    },
+  );
+  assert.deepEqual(buildLibrarySiteUpdate(site, { ...values, faviconUrl: "" }), {
+    expectedVersion: 4,
+    faviconUrl: null,
+  });
+});

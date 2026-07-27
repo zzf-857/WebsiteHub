@@ -18,6 +18,7 @@ import {
   type ChangeEvent,
 } from "react";
 import {
+  backfillLibrarySiteMetadata,
   createLibrarySite,
   DEFAULT_LIBRARY_PAGE_SIZE,
   deleteLibrarySite,
@@ -53,6 +54,8 @@ import {
 
 // 全站统一使用共享版网站图标（size 为像素值）；
 // 旧枚举尺寸按 small=20 / medium=24 / large=32 迁移
+
+const ANALYSIS_REFRESH_DELAYS_MS = [1_000, 2_000, 3_000, 5_000, 8_000, 13_000] as const;
 
 export function useLibraryWorkspace() {
   const [intent] = useState(initialIntent);
@@ -90,6 +93,8 @@ export function useLibraryWorkspace() {
   const [quickActionId, setQuickActionId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
+  const [analysisBackfillBusy, setAnalysisBackfillBusy] = useState(false);
+  const analysisRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadTaxonomies = useCallback(async (signal?: AbortSignal) => {
     const generation = taxonomyRequestGeneration.current + 1;
@@ -195,10 +200,66 @@ export function useLibraryWorkspace() {
     setRefreshVersion((current) => current + 1);
   }, []);
 
+  const stopAnalysisRefresh = useCallback(() => {
+    if (analysisRefreshTimer.current !== null) {
+      clearTimeout(analysisRefreshTimer.current);
+      analysisRefreshTimer.current = null;
+    }
+  }, []);
+
+  const startAnalysisRefresh = useCallback(() => {
+    stopAnalysisRefresh();
+    refreshSites();
+    let index = 0;
+    const tick = () => {
+      refreshSites();
+      const delay = ANALYSIS_REFRESH_DELAYS_MS[index];
+      index += 1;
+      if (delay === undefined) {
+        analysisRefreshTimer.current = null;
+        return;
+      }
+      analysisRefreshTimer.current = setTimeout(tick, delay);
+    };
+    analysisRefreshTimer.current = setTimeout(tick, ANALYSIS_REFRESH_DELAYS_MS[index]);
+    index += 1;
+  }, [refreshSites, stopAnalysisRefresh]);
+
+  useEffect(() => stopAnalysisRefresh, [stopAnalysisRefresh]);
+
   const refreshAfterMutation = useCallback(() => {
     refreshSites();
     void loadTaxonomies().catch(() => undefined);
   }, [loadTaxonomies, refreshSites]);
+
+  const handleAnalysisBackfill = useCallback(async () => {
+    if (analysisBackfillBusy) return;
+    setAnalysisBackfillBusy(true);
+    setSitesError(null);
+    try {
+      const result = await backfillLibrarySiteMetadata();
+      if (result.queuedCount > 0) {
+        setNotice(
+          result.remainingCount > 0
+            ? `已开始补全 ${result.queuedCount} 个网站，另有 ${result.remainingCount} 个可继续处理`
+            : `已开始补全 ${result.queuedCount} 个网站`,
+        );
+      } else if (result.activeCount > 0) {
+        setNotice(`已有 ${result.activeCount} 个网站正在补全`);
+      } else {
+        setNotice("没有待补全的网站");
+      }
+      if (result.queuedCount > 0 || result.activeCount > 0) {
+        startAnalysisRefresh();
+      } else {
+        refreshSites();
+      }
+    } catch (error) {
+      setSitesError(errorMessage(error, "网站信息补全任务启动失败，请重试"));
+    } finally {
+      setAnalysisBackfillBusy(false);
+    }
+  }, [analysisBackfillBusy, refreshSites, startAnalysisRefresh]);
 
   const handleTaxonomyChanged = useCallback(async () => {
     try {
@@ -421,6 +482,7 @@ export function useLibraryWorkspace() {
   };
 
   return {
+    analysisBackfillBusy,
     categories,
     categoryId,
     closeDialog,
@@ -428,6 +490,7 @@ export function useLibraryWorkspace() {
     dialog,
     direction,
     handleCreate,
+    handleAnalysisBackfill,
     handleDelete,
     handleSortChange,
     handleTaxonomyChanged,

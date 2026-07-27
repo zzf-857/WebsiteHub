@@ -19,6 +19,9 @@ from webhub.streaming.ui_message_stream import (
     error_chunk,
     finish_chunk,
     message_metadata_chunk,
+    reasoning_delta_chunk,
+    reasoning_end_chunk,
+    reasoning_start_chunk,
     start_chunk,
     text_delta_chunk,
     text_end_chunk,
@@ -220,6 +223,22 @@ def test_state_machine_rejects_invalid_text_order_and_open_finish() -> None:
     encoder.finalize()
     with pytest.raises(UIMessageStreamStateError, match="already finalized"):
         encoder.finalize()
+
+
+def test_reasoning_parts_require_a_complete_lifecycle_before_finish() -> None:
+    encoder = UIMessageStreamEncoder()
+    with pytest.raises(UIMessageStreamStateError, match="before reasoning-start"):
+        encoder.encode(reasoning_delta_chunk("reasoning-1", "oops"))
+
+    encoder.encode(start_chunk(message_id="assistant-1"))
+    encoder.encode(reasoning_start_chunk("reasoning-1"))
+    encoder.encode(reasoning_delta_chunk("reasoning-1", "先分析。"))
+    with pytest.raises(UIMessageStreamStateError, match="open reasoning parts"):
+        encoder.encode(finish_chunk(finish_reason="stop"))
+
+    encoder.encode(reasoning_end_chunk("reasoning-1"))
+    encoder.encode(finish_chunk(finish_reason="stop"))
+    assert encoder.finalize() == b"data: [DONE]\n\n"
 
 
 def test_headers_include_v1_and_no_store_and_reject_crlf() -> None:

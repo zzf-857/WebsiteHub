@@ -146,6 +146,12 @@ class SiteListResponse(BaseModel):
     aggregate: SiteListAggregate
 
 
+class SiteAnalysisBackfillResponse(BaseModel):
+    queued_count: int
+    active_count: int
+    remaining_count: int
+
+
 class SiteDeleteResponse(BaseModel):
     message: str
     site_id: str

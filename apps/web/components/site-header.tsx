@@ -1,6 +1,6 @@
 "use client";
 
-import { Compass, FileUp, LogOut, Search, Settings, Sparkles } from "lucide-react";
+import { Compass, Database, FileUp, LogOut, Search, Settings, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -277,6 +277,10 @@ export function SiteHeader() {
           <Link className="header-account-item" href="/settings/providers">
             <Settings aria-hidden="true" />
             <span>模型服务设置</span>
+          </Link>
+          <Link className="header-account-item" href="/settings/search-index">
+            <Database aria-hidden="true" />
+            <span>语义索引</span>
           </Link>
           <Link className="header-account-item" href="/settings/import">
             <FileUp aria-hidden="true" />

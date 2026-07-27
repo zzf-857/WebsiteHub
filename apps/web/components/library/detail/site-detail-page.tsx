@@ -123,6 +123,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
 
   // 编辑表单需要完整的分类/标签列表；每次打开编辑弹层都重新拉取，保证是最新的
   const [taxonomy, setTaxonomy] = useState<TaxonomyState>({ status: "loading" });
@@ -310,6 +311,20 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
       <div className="sd-layout">
         <div className="sd-main">
           <section className="sd-card sd-hero" aria-labelledby="sd-title">
+            {site.previewUrl && site.previewUrl !== failedPreviewUrl && (
+              <figure className="sd-hero-preview">
+                {/* Remote preview hosts are discovered at runtime and cannot use a static next/image allowlist. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={site.previewUrl}
+                  alt={`${site.name} 网站预览`}
+                  width={1200}
+                  height={675}
+                  referrerPolicy="no-referrer"
+                  onError={() => setFailedPreviewUrl(site.previewUrl)}
+                />
+              </figure>
+            )}
             <div className="sd-hero-top">
               <span className="sd-hero-icon">
                 <SiteFavicon url={site.faviconUrl} name={site.name} size={40} />
@@ -327,10 +342,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
                   )}
                 </div>
                 <p className="sd-hero-domain">
-                  <a href={site.originalUrl} target="_blank" rel="noopener noreferrer">
-                    {host}
-                    <span className="sr-only">（在新标签页打开）</span>
-                  </a>
+                  {host}
                 </p>
                 {/* 后端只有一个 description 字段：这里截断做导语，全文在下方「详细介绍」卡展示 */}
                 {site.description && <p className="sd-hero-desc">{site.description}</p>}

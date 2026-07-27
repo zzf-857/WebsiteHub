@@ -338,6 +338,76 @@ def test_site_delete_version_check_is_atomic_across_concurrent_sessions(
     assert client.get(f"/api/library/sites/{created['id']}").status_code == 404
 
 
+def test_url_change_invalidates_scraped_media_but_keeps_a_new_explicit_favicon(
+    isolated_library: tuple[TestClient, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, database_path = isolated_library
+    _register(client, "url-media-owner")
+    monkeypatch.setattr(
+        "webhub.library.routes.ingestion_worker.schedule_analysis",
+        lambda *_args, **_kwargs: None,
+    )
+    created_response = client.post(
+        "/api/library/sites",
+        json={
+            "name": "Old target",
+            "url": "https://old-target.example/",
+            "favicon_url": "https://old-target.example/favicon.ico",
+        },
+        headers=ORIGIN,
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE sites SET preview_url = ?, analysis_status = 'complete' WHERE id = ?",
+            ("https://old-target.example/preview.png", created["id"]),
+        )
+        connection.commit()
+
+    # Older clients posted the entire form, including the unchanged old icon.
+    # That repeated value must not be mistaken for an icon chosen for the new URL.
+    changed = client.patch(
+        f"/api/library/sites/{created['id']}",
+        json={
+            "expected_version": created["version"],
+            "url": "https://new-target.example/",
+            "favicon_url": "https://old-target.example/favicon.ico",
+        },
+        headers=ORIGIN,
+    )
+    assert changed.status_code == 200, changed.text
+    body = changed.json()
+    assert body["original_url"] == "https://new-target.example/"
+    assert body["favicon_url"] is None
+    assert body["preview_url"] is None
+    assert body["analysis_status"] == "not_analyzed"
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE sites SET preview_url = ?, analysis_status = 'complete' WHERE id = ?",
+            ("https://new-target.example/preview.png", created["id"]),
+        )
+        connection.commit()
+
+    explicit = client.patch(
+        f"/api/library/sites/{created['id']}",
+        json={
+            "expected_version": body["version"],
+            "url": "https://final-target.example/",
+            "favicon_url": "https://final-target.example/brand.png",
+        },
+        headers=ORIGIN,
+    )
+    assert explicit.status_code == 200, explicit.text
+    explicit_body = explicit.json()
+    assert explicit_body["favicon_url"] == "https://final-target.example/brand.png"
+    assert explicit_body["preview_url"] is None
+    assert explicit_body["analysis_status"] == "not_analyzed"
+
+
 def test_legacy_invalid_favicon_is_not_exposed_in_site_response(
     isolated_library: tuple[TestClient, Path],
 ) -> None:

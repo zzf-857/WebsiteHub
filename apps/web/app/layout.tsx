@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { AuthProvider } from "@/components/auth/auth-context";
 
+import "streamdown/styles.css";
 import "./globals.css";
 
 const initialThemeScript = `(() => {

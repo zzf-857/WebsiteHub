@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
@@ -29,6 +30,9 @@ from webhub.db.database import Database
 from webhub.streaming.ui_message_stream import (
     data_chunk,
     finish_chunk,
+    reasoning_delta_chunk,
+    reasoning_end_chunk,
+    reasoning_start_chunk,
     start_chunk,
     text_delta_chunk,
     text_end_chunk,
@@ -47,6 +51,7 @@ from .runner import AgentProviderNotConfiguredError, AgentRunRequest
 from .tools import AgentToolContext, build_tools
 
 MAX_PERSISTED_CONTENT = 32_000
+MAX_PERSISTED_REASONING = 32_000
 _EMPTY_REPLY = "（本轮没有生成任何内容，请换一种说法再试一次。）"
 
 
@@ -84,6 +89,67 @@ def _message_text(message: Any) -> str:
                     parts.append(value)
         return "".join(parts)
     return ""
+
+
+def _message_reasoning(message: Any) -> str:
+    """Extract only Provider-declared reasoning from a LangChain chunk."""
+
+    try:
+        blocks = getattr(message, "content_blocks", None)
+    except (AttributeError, TypeError, ValueError):
+        blocks = None
+    if isinstance(blocks, Sequence) and not isinstance(blocks, (str, bytes, bytearray)):
+        parts = [
+            block.get("reasoning")
+            for block in blocks
+            if isinstance(block, Mapping)
+            and block.get("type") == "reasoning"
+            and isinstance(block.get("reasoning"), str)
+        ]
+        if parts:
+            return "".join(parts)
+
+    additional = getattr(message, "additional_kwargs", None)
+    if isinstance(additional, Mapping):
+        reasoning = additional.get("reasoning_content")
+        if isinstance(reasoning, str):
+            return reasoning
+    return ""
+
+
+def _message_usage(message: Any) -> dict[str, int]:
+    """Project Provider-reported LangChain usage without estimating missing fields."""
+
+    raw = getattr(message, "usage_metadata", None)
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, int] = {}
+    for source, target in (
+        ("input_tokens", "inputTokens"),
+        ("output_tokens", "outputTokens"),
+        ("total_tokens", "totalTokens"),
+    ):
+        value = raw.get(source)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            result[target] = value
+    details = raw.get("output_token_details")
+    if isinstance(details, Mapping):
+        reasoning = details.get("reasoning")
+        if isinstance(reasoning, int) and not isinstance(reasoning, bool) and reasoning >= 0:
+            result["reasoningTokens"] = reasoning
+    return result
+
+
+def _add_usage(total: dict[str, int], delta: Mapping[str, int]) -> None:
+    for key, value in delta.items():
+        total[key] = total.get(key, 0) + value
+
+
+def _merge_usage_max(total: dict[str, int], observed: Mapping[str, int]) -> None:
+    """Keep one model round's latest cumulative Provider counters."""
+
+    for key, value in observed.items():
+        total[key] = max(total.get(key, 0), value)
 
 
 def _json_safe(value: Any, *, depth: int = 0) -> Any:
@@ -214,8 +280,19 @@ class LangGraphAgentRunner:
         request: AgentRunRequest,
         conversation_id: str,
         text: str,
+        reasoning: str,
         sources: list[dict[str, Any]],
+        metadata: dict[str, Any],
     ) -> None:
+        parts: list[dict[str, str]] = []
+        if reasoning:
+            parts.append(
+                {
+                    "type": "reasoning",
+                    "text": reasoning[:MAX_PERSISTED_REASONING],
+                }
+            )
+        parts.append({"type": "text", "text": text[:MAX_PERSISTED_CONTENT]})
         try:
             async with self.database.sessions() as session:
                 await chat_service.append_message(
@@ -224,7 +301,9 @@ class LangGraphAgentRunner:
                     conversation_id,
                     role="assistant",
                     content=text[:MAX_PERSISTED_CONTENT],
+                    parts=parts,
                     sources=sources or None,
+                    metadata=metadata,
                     status="complete",
                 )
         except ChatError:
@@ -235,6 +314,7 @@ class LangGraphAgentRunner:
     async def run(self, request: AgentRunRequest) -> AsyncIterator[Mapping[str, Any]]:
         """Stream one turn as UI Message Stream v1 chunks."""
 
+        run_started = perf_counter()
         context = await self._prepare_turn(request)
         message_id = f"assistant-{uuid4()}"
         yield start_chunk(
@@ -268,8 +348,15 @@ class LangGraphAgentRunner:
 
         text_id = f"text-{uuid4()}"
         text_open = False
+        reasoning_id: str | None = None
+        reasoning_open = False
+        reasoning_started: float | None = None
+        reasoning_elapsed = 0.0
+        first_output_at: float | None = None
         collected: list[str] = []
+        collected_reasoning: list[str] = []
         sources: list[dict[str, Any]] = []
+        usage_rounds: list[dict[str, int]] = [{}]
 
         async for stream_mode, payload in graph.astream(
             {"messages": [*context.history, HumanMessage(content=request.message)]},
@@ -280,36 +367,107 @@ class LangGraphAgentRunner:
                 chunk, _ = payload
                 if getattr(chunk, "type", None) == "tool":
                     continue
+                # Provider usage is normally emitted once at the end of a
+                # model round, but compatible endpoints may repeat cumulative
+                # counters on several chunks.  Take the maximum within a round
+                # and only sum distinct rounds separated by tool events.
+                _merge_usage_max(usage_rounds[-1], _message_usage(chunk))
+                reasoning = _message_reasoning(chunk)
+                if reasoning:
+                    now = perf_counter()
+                    if first_output_at is None:
+                        first_output_at = now
+                    if not reasoning_open:
+                        reasoning_id = f"reasoning-{uuid4()}"
+                        yield reasoning_start_chunk(reasoning_id)
+                        reasoning_open = True
+                        reasoning_started = now
+                    collected_reasoning.append(reasoning)
+                    yield reasoning_delta_chunk(reasoning_id, reasoning)
                 delta = _message_text(chunk)
                 if not delta:
                     continue
+                now = perf_counter()
+                if first_output_at is None:
+                    first_output_at = now
+                if reasoning_open and reasoning_id is not None:
+                    yield reasoning_end_chunk(reasoning_id)
+                    reasoning_open = False
+                    if reasoning_started is not None:
+                        reasoning_elapsed += now - reasoning_started
+                    reasoning_started = None
                 if not text_open:
                     yield text_start_chunk(text_id)
                     text_open = True
                 collected.append(delta)
                 yield text_delta_chunk(text_id, delta)
             elif stream_mode == "updates":
-                for event in _tool_events(payload):
+                tool_events = _tool_events(payload)
+                if tool_events and usage_rounds[-1]:
+                    usage_rounds.append({})
+                if tool_events and reasoning_open and reasoning_id is not None:
+                    now = perf_counter()
+                    yield reasoning_end_chunk(reasoning_id)
+                    reasoning_open = False
+                    if reasoning_started is not None:
+                        reasoning_elapsed += now - reasoning_started
+                    reasoning_started = None
+                for event in tool_events:
                     if event["kind"] == "call":
                         yield data_chunk("agent-tool-call", event["data"], transient=True)
                     else:
                         sources.append(event["data"])
                         yield data_chunk("agent-tool-result", event["data"])
 
+        if reasoning_open and reasoning_id is not None:
+            now = perf_counter()
+            yield reasoning_end_chunk(reasoning_id)
+            reasoning_open = False
+            if reasoning_started is not None:
+                reasoning_elapsed += now - reasoning_started
         if not text_open:
             # A model that answers with tool calls only would otherwise finish
             # with an empty bubble.
             yield text_start_chunk(text_id)
             text_open = True
             collected.append(_EMPTY_REPLY)
+            if first_output_at is None:
+                first_output_at = perf_counter()
             yield text_delta_chunk(text_id, _EMPTY_REPLY)
         yield text_end_chunk(text_id)
 
         reply = "".join(collected)
-        await self._persist_reply(request, context.conversation_id, reply, sources)
+        finished_at = perf_counter()
+        usage: dict[str, int] = {}
+        for round_usage in usage_rounds:
+            _add_usage(usage, round_usage)
+        finish_metadata: dict[str, Any] = {
+            "conversationId": context.conversation_id,
+            "provider": context.model_binding.provider,
+            "model": context.model_binding.model_name,
+            "webSearch": context.search_binding is not None,
+            "elapsedMs": max(0, round((finished_at - run_started) * 1_000)),
+        }
+        if first_output_at is not None:
+            finish_metadata["timeToFirstTokenMs"] = max(
+                0,
+                round((first_output_at - run_started) * 1_000),
+            )
+        if reasoning_elapsed > 0:
+            finish_metadata["reasoningMs"] = max(0, round(reasoning_elapsed * 1_000))
+        if usage:
+            finish_metadata["usage"] = usage
+        await self._persist_reply(
+            request,
+            context.conversation_id,
+            reply,
+            "".join(collected_reasoning),
+            sources,
+            finish_metadata,
+        )
         yield finish_chunk(
             finish_reason="stop",
-            message_metadata={"conversationId": context.conversation_id},
+            message_metadata=finish_metadata,
         )
 
 

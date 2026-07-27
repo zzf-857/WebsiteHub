@@ -15,6 +15,7 @@ import {
   Search,
   Tags,
   Trash2,
+  WandSparkles,
 } from "lucide-react";
 import {
   LibraryDialog,
@@ -36,6 +37,7 @@ import { useLibraryWorkspace } from "@/components/library/use-library-workspace"
 
 export function LibraryWorkspace() {
   const {
+    analysisBackfillBusy,
     categories,
     categoryId,
     closeDialog,
@@ -43,6 +45,7 @@ export function LibraryWorkspace() {
     dialog,
     direction,
     handleCreate,
+    handleAnalysisBackfill,
     handleDelete,
     handleSortChange,
     handleTaxonomyChanged,
@@ -90,6 +93,20 @@ export function LibraryWorkspace() {
           <p>整理、检索并维护当前账号保存的网站。</p>
         </div>
         <div className="library-page-actions">
+          <button
+            className="library-button secondary"
+            type="button"
+            onClick={() => void handleAnalysisBackfill()}
+            disabled={analysisBackfillBusy || totalLibrarySites === 0}
+            title="补全未分析网站的公开信息"
+          >
+            {analysisBackfillBusy ? (
+              <LoaderCircle className="loading-spinner" aria-hidden="true" />
+            ) : (
+              <WandSparkles aria-hidden="true" />
+            )}
+            {analysisBackfillBusy ? "正在启动" : "补全网站信息"}
+          </button>
           <button
             className="library-button secondary"
             type="button"

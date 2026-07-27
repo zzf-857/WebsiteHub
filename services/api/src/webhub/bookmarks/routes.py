@@ -51,6 +51,7 @@ from webhub.bookmarks.uploads import (
     StagedBookmarkUpload,
     stage_bookmark_upload,
 )
+from webhub.ingestion import worker as ingestion_worker
 
 router = APIRouter(prefix="/bookmark-imports", tags=["bookmark-imports"])
 
@@ -435,6 +436,7 @@ async def preview_occurrences(
 async def apply_import(
     job_id: str,
     payload: BookmarkImportApplyRequest,
+    request: Request,
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
@@ -446,7 +448,7 @@ async def apply_import(
     makes "确认前资料库无变化" true by construction rather than by discipline.
     """
 
-    return await _call(
+    response, created_site_ids = await _call(
         queries.apply_import(
             session,
             identity.user.id,
@@ -454,3 +456,9 @@ async def apply_import(
             expected_job_version=payload.expected_job_version,
         )
     )
+    ingestion_worker.schedule_analysis(
+        request.app.state.database,
+        user_id=str(identity.user.id),
+        site_ids=created_site_ids,
+    )
+    return response

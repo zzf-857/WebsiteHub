@@ -8,16 +8,24 @@ import {
   rebuildSemanticIndex,
   SearchApiError,
 } from "@/lib/search-client";
-import type { SemanticIndexStatus } from "@/lib/search-contract";
-
-// 每轮回填的上限与后端 MAX_SITES_PER_PASS 一致。大库分几轮跑，
-// 一轮的花费上界因此是可预期的。
-const PASS_LIMIT = 512;
+import type { SemanticIndexRun, SemanticIndexStatus } from "@/lib/search-contract";
 
 function errorMessage(error: unknown): string {
   if (error instanceof SearchApiError) return error.message;
   if (error instanceof Error) return error.message;
   return "语义索引状态读取失败";
+}
+
+function runNotice(run: SemanticIndexRun): string {
+  if (run.reason === "provider_unavailable") {
+    return "当前没有可用的 embedding Provider，请检查服务商配置后重试";
+  }
+  if (run.reason === "already_running") {
+    return "已有一轮索引在进行中，本次没有重复排队";
+  }
+  return `已排队，本轮预计发出 ${run.estimatedRequests} 次请求${
+    run.dropped ? `；已丢弃 ${run.dropped} 条旧向量` : ""
+  }`;
 }
 
 export function SemanticIndexPanel() {
@@ -58,22 +66,16 @@ export function SemanticIndexPanel() {
   }, [refreshKey]);
 
   const confirmRebuild = async () => {
-    if (!pendingRebuild) return;
+    if (!pendingRebuild || !status) return;
     setBusy(true);
     setError(null);
     try {
       const run = await rebuildSemanticIndex({
         dropExisting: pendingRebuild.dropExisting,
-        limit: PASS_LIMIT,
+        limit: status.passLimit,
       });
       setPendingRebuild(null);
-      setNotice(
-        run.scheduled
-          ? `已排队，预计发出 ${run.estimatedRequests} 次请求${
-              run.dropped ? `；已丢弃 ${run.dropped} 条旧向量` : ""
-            }`
-          : "已有一轮索引在进行中，本次没有重复排队",
-      );
+      setNotice(runNotice(run));
       refresh();
     } catch (failure) {
       setError(errorMessage(failure));
@@ -85,8 +87,8 @@ export function SemanticIndexPanel() {
   return (
     <section className="provider-section" aria-labelledby="semantic-index-title">
       <header className="provider-section-head">
-        <Database size={16} aria-hidden="true" />
         <h2 id="semantic-index-title" className="provider-section-title">
+          <Database size={16} aria-hidden="true" />
           语义检索索引
         </h2>
       </header>
@@ -143,17 +145,31 @@ export function SemanticIndexPanel() {
       {notice && <p className="provider-notice">{notice}</p>}
       {error && <p className="provider-error">{error}</p>}
 
-      {pendingRebuild ? (
+      {pendingRebuild && status ? (
         <div className="provider-notice">
-          <p>
-            即将{pendingRebuild.dropExisting ? "丢弃现有向量并重建" : "补齐缺失的向量"}，
-            预计发出 <strong>{status?.estimatedRequests ?? 0}</strong> 次请求，
-            消耗你自己的 Provider 额度。
-            {status?.pendingCapped
-              ? "站点较多，本轮只处理前 512 个，跑完后可以再点一次。"
-              : ""}
-            确认继续？
-          </p>
+          {pendingRebuild.dropExisting ? (
+            <p>
+              即将丢弃现有向量并重建。全库预计共发出
+              <strong> {status.rebuildEstimatedRequests} </strong>
+              次请求；本轮处理 {status.rebuildPassSites} 个站点，预计发出
+              <strong> {status.rebuildPassEstimatedRequests} </strong>
+              次请求，消耗你自己的 Provider 额度。
+              {status.rebuildCapped
+                ? ` 单轮上限为 ${status.passLimit} 个站点，本轮完成后还需继续补齐。`
+                : ""}
+              确认继续？
+            </p>
+          ) : (
+            <p>
+              即将补齐缺失的向量，预计发出
+              <strong> {status.estimatedRequests} </strong>
+              次请求，消耗你自己的 Provider 额度。
+              {status.pendingCapped
+                ? ` 单轮上限为 ${status.passLimit} 个站点，本轮完成后可以再点一次。`
+                : ""}
+              确认继续？
+            </p>
+          )}
           <div className="provider-card-actions">
             <button
               className="provider-btn provider-btn-primary"

@@ -73,7 +73,13 @@ class _MetadataParser(HTMLParser):
         elif tag == "link":
             rel = values.get("rel", "").strip().lower()
             href = values.get("href", "").strip()
-            if href and not self.result.icon_href and "icon" in rel.split():
+            icon_relations = {
+                "icon",
+                "apple-touch-icon",
+                "apple-touch-icon-precomposed",
+                "mask-icon",
+            }
+            if href and not self.result.icon_href and icon_relations.intersection(rel.split()):
                 self.result.icon_href = href
         elif tag == "a":
             href = values.get("href", "").strip()

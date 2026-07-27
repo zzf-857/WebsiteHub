@@ -42,6 +42,7 @@ export type LibrarySite = {
   identityUrl: string;
   description: string | null;
   faviconUrl: string | null;
+  previewUrl: string | null;
   category: LibraryCategoryRef;
   tags: LibraryTagRef[];
   pinned: boolean;
@@ -59,6 +60,12 @@ export type LibrarySitePage = {
     matchedCount: number;
     pinnedCount: number;
   };
+};
+
+export type LibraryAnalysisBackfill = {
+  queuedCount: number;
+  activeCount: number;
+  remainingCount: number;
 };
 
 export type LibraryCategoryDeletePreview = {
@@ -180,6 +187,7 @@ export function normalizeLibrarySite(value: unknown): LibrarySite {
     identityUrl: absoluteWebUrl(candidate.identity_url, "site.identity_url"),
     description: nullableText(candidate.description, "site.description"),
     faviconUrl: nullableWebUrl(candidate.favicon_url, "site.favicon_url"),
+    previewUrl: nullableWebUrl(candidate.preview_url, "site.preview_url"),
     category: normalizeCategoryRefAt(candidate.category, "site.category"),
     tags: candidate.tags.map((tag, index) => normalizeTagRefAt(tag, `site.tags[${index}]`)),
     pinned: boolean(candidate.pinned, "site.pinned"),
@@ -188,6 +196,15 @@ export function normalizeLibrarySite(value: unknown): LibrarySite {
     version: version(candidate.version, "site.version"),
     createdAt: isoDate(candidate.created_at, "site.created_at"),
     updatedAt: isoDate(candidate.updated_at, "site.updated_at"),
+  };
+}
+
+export function normalizeLibraryAnalysisBackfill(value: unknown): LibraryAnalysisBackfill {
+  const candidate = record(value, "analysis_backfill");
+  return {
+    queuedCount: count(candidate.queued_count, "analysis_backfill.queued_count"),
+    activeCount: count(candidate.active_count, "analysis_backfill.active_count"),
+    remainingCount: count(candidate.remaining_count, "analysis_backfill.remaining_count"),
   };
 }
 

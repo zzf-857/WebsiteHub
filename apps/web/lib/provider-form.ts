@@ -37,8 +37,7 @@ export type ProviderKindSection = {
   description: string;
 };
 
-// 分区文案只描述**当前真的生效**的能力：向量服务的配置槽位后端还没有任何消费点
-// （langgraph_runner 只解析 model 与 search），所以这里如实写明，不做能力预告。
+// 分区文案只描述当前真的生效的能力；语义索引已在 Q11 接入检索链路。
 export const PROVIDER_KIND_SECTIONS: readonly ProviderKindSection[] = [
   {
     kind: "model",
@@ -53,7 +52,7 @@ export const PROVIDER_KIND_SECTIONS: readonly ProviderKindSection[] = [
   {
     kind: "embedding",
     title: "向量服务",
-    description: "语义检索用的向量模型。检索链路尚未接入，此处保存的配置暂时不会被调用。",
+    description: "资料库语义检索使用的向量模型。启用后可在“语义索引”页面补齐向量并增强相关度排序。",
   },
 ];
 

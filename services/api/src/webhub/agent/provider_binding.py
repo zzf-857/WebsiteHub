@@ -207,17 +207,21 @@ def build_chat_model(binding: ProviderBinding):  # noqa: ANN201 - langchain type
     routes and tests that never construct a model.
     """
 
-    from langchain_openai import ChatOpenAI
+    from .openai_compatible import ReasoningCompatibleChatOpenAI
 
     if binding.model_name is None:
         raise AgentProviderNotConfiguredError
-    return ChatOpenAI(
+    return ReasoningCompatibleChatOpenAI(
         model=binding.model_name,
         api_key=binding.client_api_key,
         base_url=binding.base_url,
         timeout=binding.timeout_seconds,
         max_retries=1,
         streaming=True,
+        # These first-party endpoints implement the standard
+        # stream_options.include_usage contract.  Generic compatible endpoints
+        # are intentionally left off: some reject that option outright.
+        stream_usage=binding.provider in {"openai", "deepseek"},
     )
 
 

@@ -8,6 +8,7 @@ from webhub.auth.rate_limit import LoginRateLimiter
 from webhub.bookmarks.admission import BookmarkUploadAdmissionManager
 from webhub.config import Settings, get_settings
 from webhub.db.database import Database
+from webhub.ingestion import worker as ingestion_worker
 from webhub.routes import router
 
 
@@ -23,9 +24,15 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await selected_database.assert_schema_current()
-        yield
-        if owns_database:
-            await selected_database.dispose()
+        ingestion_worker.start(selected_database)
+        try:
+            yield
+        finally:
+            try:
+                await ingestion_worker.shutdown(selected_database)
+            finally:
+                if owns_database:
+                    await selected_database.dispose()
 
     application = FastAPI(
         title="WebHub API",

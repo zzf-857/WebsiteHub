@@ -7,8 +7,10 @@
 
 import {
   ArrowUpRight,
+  ChevronRight,
   Plus,
 } from "lucide-react";
+import Link from "next/link";
 import {
   PopCheck,
 } from "@/components/react-bits/pop-check";
@@ -91,8 +93,7 @@ export function formatConversationTime(iso: string): string | null {
 export function LibraryResultCard({ link }: Readonly<{ link: AgentToolLink }>) {
   return (
     <article className="agent-site-card">
-      {/* search_library 的工具结果不含 favicon 地址，交给 SiteFavicon 回落成字母块；28×28 对齐设计稿行 217 */}
-      <SiteFavicon url={null} name={link.name} size={28} />
+      <SiteFavicon url={link.faviconUrl} name={link.name} size={28} />
       <div className="agent-site-main">
         <div className="agent-site-title">
           <strong>{link.name}</strong>
@@ -106,11 +107,14 @@ export function LibraryResultCard({ link }: Readonly<{ link: AgentToolLink }>) {
           {link.pinned && <span>已置顶</span>}
         </div>
       </div>
-      {link.url && (
-        <a className="agent-open-button" href={link.url} target="_blank" rel="noreferrer noopener">
-          打开
-          <ArrowUpRight aria-hidden="true" />
-        </a>
+      {link.siteId && (
+        <Link
+          className="agent-open-button"
+          href={`/library/${encodeURIComponent(link.siteId)}`}
+        >
+          详情
+          <ChevronRight aria-hidden="true" />
+        </Link>
       )}
     </article>
   );
@@ -131,7 +135,7 @@ export function WebResultCard({
   return (
     <article className="agent-site-card" data-external="true">
       {/* 28×28 对齐设计稿行 231 */}
-      <SiteFavicon url={null} name={link.name} size={28} />
+      <SiteFavicon url={link.faviconUrl} name={link.name} size={28} />
       <div className="agent-site-main">
         <div className="agent-site-title">
           <strong>{link.name}</strong>

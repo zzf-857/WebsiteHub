@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowUpRight, Clock } from "lucide-react";
+import { ChevronRight, Clock } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import {
@@ -115,12 +116,10 @@ export function RecentSites() {
       {state.status === "ready" && state.sites.length > 0 && (
         <div className="home-recent-card">
           {state.sites.map((site) => (
-            <a
+            <Link
               key={site.id}
               className="home-recent-row"
-              href={site.originalUrl}
-              target="_blank"
-              rel="noreferrer noopener"
+              href={`/library/${encodeURIComponent(site.id)}`}
               title={site.name}
             >
               <span className="home-recent-favicon">
@@ -130,8 +129,8 @@ export function RecentSites() {
               <span className="home-recent-desc">{site.description?.trim() ?? ""}</span>
               <span className="home-recent-cat">{site.category.name}</span>
               <span className="home-recent-time">{formatRelativeTime(site.createdAt)}</span>
-              <ArrowUpRight className="home-recent-arrow" aria-hidden="true" />
-            </a>
+              <ChevronRight className="home-recent-arrow" aria-hidden="true" />
+            </Link>
           ))}
         </div>
       )}

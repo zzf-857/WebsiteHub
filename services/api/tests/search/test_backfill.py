@@ -14,7 +14,7 @@ from sqlalchemy import select
 from webhub.config import Settings
 from webhub.db.database import Database
 from webhub.db.migrations import upgrade_database
-from webhub.db.models import User
+from webhub.db.models import Site, User
 from webhub.main import create_app
 from webhub.search.backfill import backfill_embeddings, index_status
 
@@ -156,18 +156,85 @@ def test_the_estimate_matches_what_the_backfill_actually_sends(
     with _account(tmp_path, 5) as settings:
         _mock(monkeypatch, _vectors)
 
-        async def scenario(session) -> tuple[int, int, int, int]:
+        async def scenario(session) -> tuple[int, int, int, int, int, int]:
             user_id = await _user_id(session)
             before = await index_status(session, user_id, binding=Endpoint())
             result = await backfill_embeddings(session, user_id, binding=Endpoint())
             after = await index_status(session, user_id, binding=Endpoint())
-            return before.estimated_requests, result.requests, after.pending, after.indexed
+            return (
+                before.estimated_requests,
+                result.requests,
+                after.pending,
+                after.indexed,
+                after.rebuild_estimated_requests,
+                after.rebuild_pass_estimated_requests,
+            )
 
-        estimated, actual, pending_after, indexed_after = _run(settings, scenario)  # type: ignore[misc]
+        estimated, actual, pending_after, indexed_after, rebuild_total, rebuild_pass = _run(
+            settings, scenario
+        )  # type: ignore[misc]
 
     assert estimated == actual
     assert pending_after == 0
     assert indexed_after == 5
+    assert rebuild_total == 1, "全库已索引也不能把全部重建费用报成 0"
+    assert rebuild_pass == 1
+
+
+def test_edited_site_is_pending_instead_of_also_counted_as_indexed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with _account(tmp_path, 2) as settings:
+        _mock(monkeypatch, _vectors)
+
+        async def scenario(session) -> tuple[int, int, int]:
+            user_id = await _user_id(session)
+            await backfill_embeddings(session, user_id, binding=Endpoint())
+            site = await session.scalar(
+                select(Site).where(Site.user_id == user_id).order_by(Site.id).limit(1)
+            )
+            assert site is not None
+            site.name = "修改后需要重新索引的站点"
+            await session.commit()
+
+            status = await index_status(session, user_id, binding=Endpoint())
+            return status.total_sites, status.indexed, status.pending
+
+        total, indexed, pending = _run(settings, scenario)  # type: ignore[misc]
+
+    assert (total, indexed, pending) == (2, 1, 1)
+
+
+def test_rebuild_estimate_reports_the_full_cost_and_server_pass_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from webhub.search import backfill as backfill_module
+
+    monkeypatch.setattr(backfill_module, "MAX_SITES_PER_PASS", 2)
+    with _account(tmp_path, 5) as settings:
+
+        async def scenario(session) -> tuple[int, int, int, bool, int]:
+            user_id = await _user_id(session)
+            status = await index_status(session, user_id, binding=Endpoint())
+            return (
+                status.rebuild_estimated_requests,
+                status.rebuild_pass_sites,
+                status.rebuild_pass_estimated_requests,
+                status.rebuild_capped,
+                status.pass_limit,
+            )
+
+        full_requests, pass_sites, pass_requests, capped, pass_limit = _run(
+            settings, scenario
+        )  # type: ignore[misc]
+
+    assert full_requests == 1
+    assert pass_sites == 2
+    assert pass_requests == 1
+    assert capped is True
+    assert pass_limit == 2
 
 
 def test_an_unconfigured_account_is_never_told_it_has_work_pending(

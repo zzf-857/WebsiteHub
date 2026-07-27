@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable
 from typing import Annotated, Literal
 
@@ -14,6 +13,7 @@ from webhub.auth.dependencies import (
     require_trusted_origin,
 )
 from webhub.ingestion import service as ingestion_service
+from webhub.ingestion import worker as ingestion_worker
 from webhub.library import batch, service
 from webhub.library.schemas import (
     CategoryCreateRequest,
@@ -22,6 +22,7 @@ from webhub.library.schemas import (
     CategoryListResponse,
     CategoryResponse,
     CategoryUpdateRequest,
+    SiteAnalysisBackfillResponse,
     SiteBatchItemResponse,
     SiteBatchRequest,
     SiteBatchResponse,
@@ -41,20 +42,13 @@ from webhub.search.vectors import has_embeddings
 
 router = APIRouter(prefix="/library", tags=["library"])
 
-# 强引用住脱钩的分析任务：asyncio 只持弱引用，不这么做任务可能在抓取中途被 GC。
-_ANALYSIS_TASKS: set[asyncio.Task[None]] = set()
-
 
 def _schedule_analysis(request: Request, *, user_id: str, site_id: str) -> None:
-    task = asyncio.create_task(
-        ingestion_service.analyze_in_background(
-            request.app.state.database,
-            user_id,
-            site_id,
-        )
+    ingestion_worker.schedule_analysis(
+        request.app.state.database,
+        user_id=str(user_id),
+        site_ids=(site_id,),
     )
-    _ANALYSIS_TASKS.add(task)
-    task.add_done_callback(_ANALYSIS_TASKS.discard)
 
 
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]
@@ -241,11 +235,15 @@ async def site(
 async def edit_site(
     site_id: str,
     payload: SiteUpdateRequest,
+    request: Request,
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
 ) -> SiteResponse:
-    return await _call(service.update_site(session, identity.user.id, site_id, payload))
+    updated = await _call(service.update_site(session, identity.user.id, site_id, payload))
+    if "url" in payload.model_fields_set and updated.analysis_status == "not_analyzed":
+        _schedule_analysis(request, user_id=identity.user.id, site_id=updated.id)
+    return updated
 
 
 @router.delete("/sites/{site_id}", response_model=SiteDeleteResponse)
@@ -269,6 +267,7 @@ async def remove_site(
 @router.post("/sites/{site_id}/analyze", response_model=SiteResponse)
 async def analyze_site(
     site_id: str,
+    request: Request,
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
@@ -280,18 +279,24 @@ async def analyze_site(
     rather than a spinner that never resolves on its own.
     """
 
-    outcome = await ingestion_service.analyze_site(session, identity.user.id, site_id)
-    if outcome is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "not_found", "message": "网站不存在"},
+    try:
+        await ingestion_worker.analyze_and_wait(
+            request.app.state.database,
+            user_id=str(identity.user.id),
+            site_id=site_id,
         )
+    except ingestion_worker.AnalysisQueueFullError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "analysis_queue_full", "message": str(error)},
+        ) from error
     return await _call(service.get_site(session, identity.user.id, site_id))
 
 
 @router.post("/sites/batch", response_model=SiteBatchResponse)
 async def batch_sites(
     payload: SiteBatchRequest,
+    request: Request,
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
@@ -320,6 +325,13 @@ async def batch_sites(
     counts = dict.fromkeys(names, 0)
     for item in items:
         counts[item.status] = counts.get(item.status, 0) + 1
+    ingestion_worker.schedule_analysis(
+        request.app.state.database,
+        user_id=str(identity.user.id),
+        site_ids=tuple(
+            item.site_id for item in items if item.status == "created" and item.site_id is not None
+        ),
+    )
     return SiteBatchResponse(
         confirmed=payload.confirm,
         total=len(items),
@@ -337,6 +349,44 @@ async def batch_sites(
             )
             for item in items
         ],
+    )
+
+
+@router.post(
+    "/sites/analyze-missing",
+    response_model=SiteAnalysisBackfillResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def analyze_missing_sites(
+    request: Request,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=ingestion_worker.MAX_QUEUED_ANALYSES_PER_ACCOUNT),
+    ] = ingestion_worker.MAX_QUEUED_ANALYSES_PER_ACCOUNT,
+) -> SiteAnalysisBackfillResponse:
+    """Queue one bounded, user-triggered batch of historical unanalysed sites."""
+
+    user_id = str(identity.user.id)
+    site_ids, remaining = await ingestion_service.not_analyzed_site_ids(
+        session,
+        user_id,
+        limit=limit,
+        excluded_site_ids=ingestion_worker.pending_site_ids(request.app.state.database, user_id),
+    )
+    scheduled = ingestion_worker.schedule_analysis(
+        request.app.state.database,
+        user_id=user_id,
+        site_ids=tuple(site_ids),
+    )
+    return SiteAnalysisBackfillResponse(
+        queued_count=scheduled.queued,
+        active_count=len(
+            ingestion_worker.pending_site_ids(request.app.state.database, user_id)
+        ),
+        remaining_count=remaining + scheduled.rejected,
     )
 
 

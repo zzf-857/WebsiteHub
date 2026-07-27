@@ -173,6 +173,13 @@ async def update_site(
         if payload.url is None:
             raise LibraryValidationError("网址不能为空")
         url_update = _site_url(payload.url)
+    url_changed = url_update is not None and url_update[1] != site.identity_url
+    # The web form now sends only dirty fields. Keep this comparison as a
+    # compatibility guard for older clients that submitted the old favicon on
+    # every PATCH: repeating the stored value is not a new icon decision.
+    explicit_new_favicon = (
+        "favicon_url" in fields and payload.favicon_url != site.favicon_url
+    )
 
     if "pinned" in fields and payload.pinned is None:
         raise LibraryValidationError("置顶状态不能为空")
@@ -215,9 +222,16 @@ async def update_site(
             site.name, site.normalized_name = name_update
         if url_update is not None:
             site.original_url, site.identity_url = url_update
+        if url_changed:
+            # Scraped media belongs to the old target. Keeping it would show
+            # one website's identity on another and, because analysis only
+            # fills blanks, even an explicit re-analysis could never repair it.
+            site.favicon_url = None
+            site.preview_url = None
+            site.analysis_status = "not_analyzed"
         if "description" in fields:
             site.description = (payload.description or "").strip()
-        if "favicon_url" in fields:
+        if "favicon_url" in fields and (not url_changed or explicit_new_favicon):
             site.favicon_url = payload.favicon_url
         if "pinned" in fields:
             site.pinned = bool(payload.pinned)

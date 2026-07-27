@@ -69,6 +69,11 @@ async def read_index_status(
         pending=status.pending,
         pending_capped=status.pending_capped,
         estimated_requests=status.estimated_requests,
+        rebuild_estimated_requests=status.rebuild_estimated_requests,
+        rebuild_pass_sites=status.rebuild_pass_sites,
+        rebuild_pass_estimated_requests=status.rebuild_pass_estimated_requests,
+        rebuild_capped=status.rebuild_capped,
+        pass_limit=status.pass_limit,
         running=worker.is_running(user_id),
     )
 
@@ -96,7 +101,12 @@ async def rebuild_index(
         kind="embedding",
     )
     if binding is None or not binding.model_name:
-        return SemanticIndexRunResponse(scheduled=False, dropped=0, estimated_requests=0)
+        return SemanticIndexRunResponse(
+            scheduled=False,
+            reason="provider_unavailable",
+            dropped=0,
+            estimated_requests=0,
+        )
 
     # 顺序要紧：先确认能排上再决定丢不丢。反过来写的话，已有一轮在跑时会
     # 「删掉了全部向量却没排上新一轮」——用户一次误点就凭空丢失整个索引。
@@ -104,6 +114,7 @@ async def rebuild_index(
         status = await index_status(session, user_id, binding=binding)
         return SemanticIndexRunResponse(
             scheduled=False,
+            reason="already_running",
             dropped=0,
             estimated_requests=status.estimated_requests,
         )
@@ -119,6 +130,7 @@ async def rebuild_index(
     )
     return SemanticIndexRunResponse(
         scheduled=scheduled,
+        reason="scheduled" if scheduled else "already_running",
         dropped=dropped,
         estimated_requests=status.estimated_requests,
     )
