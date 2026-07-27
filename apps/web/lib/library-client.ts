@@ -257,3 +257,12 @@ export async function reorderLibrarySites(
     }),
   });
 }
+
+/** 执行 Agent 的全库重分类草稿 */
+export async function confirmAgentReclassify(draft: { expectedVersions: Record<string, number> }): Promise<void> {
+  await request("/reclassify/apply", {
+    method: "POST",
+    body: JSON.stringify({ expected_versions: draft.expectedVersions }),
+  });
+}
+

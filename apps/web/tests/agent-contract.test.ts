@@ -610,3 +610,41 @@ test("批量草稿里状态不合法的条目被丢弃，而不是原样渲染",
 test("propose_sites 有中文标签", () => {
   assert.equal(agentToolLabel("propose_sites"), "生成批量收录草稿");
 });
+
+test("propose_reclassify 草稿正确转换为 reclassify 视图", () => {
+  const view = describeAgentToolResult("propose_reclassify", {
+    status: "awaiting_confirmation",
+    draft: {
+      kind: "reclassify",
+      site_count: 5,
+      estimated_request_count: 1,
+      estimated_input_characters: 2900,
+      allowed_categories: ["开发", "工具"],
+      expected_versions: { s1: 1, s2: 2 },
+    },
+  });
+  assert.equal(view.kind, "reclassify");
+  if (view.kind !== "reclassify") return;
+  assert.equal(view.draft.siteCount, 5);
+  assert.equal(view.draft.estimatedRequestCount, 1);
+  assert.equal(view.draft.estimatedInputCharacters, 2900);
+  assert.deepEqual(view.draft.allowedCategories, ["开发", "工具"]);
+});
+
+test("propose_reclassify 拒绝与 noop 状态正常处理", () => {
+  const rejected = describeAgentToolResult("propose_reclassify", {
+    status: "rejected",
+    reason: "当前账号未配置模型 Provider",
+  });
+  assert.equal(rejected.kind, "rejected");
+  if (rejected.kind === "rejected") {
+    assert.equal(rejected.reason, "当前账号未配置模型 Provider");
+  }
+
+  const noop = describeAgentToolResult("propose_reclassify", {
+    status: "noop",
+    message: "资料库中没有需要分类的网站。",
+  });
+  assert.equal(noop.kind, "noop");
+});
+

@@ -38,6 +38,8 @@ import {
   listAgentConversations,
   loadAgentConversation,
 } from "@/lib/agent-client";
+import { confirmAgentReclassify } from "@/lib/library-client";
+
 import {
   AGENT_SOURCE_LIBRARY,
   AGENT_SOURCE_WEB,
@@ -368,7 +370,7 @@ export function useAgentPanel() {
         confirmation = { toolCallId, kind: "site_updated", siteId: updated.id };
       } else if (action.kind === "site_batch") {
         await confirmAgentSiteBatch(action.draft);
-      } else {
+      } else if (action.kind === "space_membership") {
         await confirmAgentSpaceMembership(action.draft);
         confirmation = {
           toolCallId,
@@ -376,7 +378,10 @@ export function useAgentPanel() {
           siteId: action.draft.siteId,
           spaceId: action.draft.spaceId,
         };
+      } else if (action.kind === "reclassify") {
+        await confirmAgentReclassify(action.draft);
       }
+
       setDraftStates((current) => ({ ...current, [toolCallId]: { status: "saved" } }));
 
       // 把「已确认」写回会话，否则下一轮回放到的历史仍然说这张草稿没生效，

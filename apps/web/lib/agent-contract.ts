@@ -226,12 +226,21 @@ export type AgentSpaceMembershipDraft = {
   expectedVersion: number;
 };
 
-/** 确认按钮回传给面板的东西：三类草稿共用一个入口，避免三套并行的状态管道。 */
+export type AgentReclassifyDraft = {
+  siteCount: number;
+  estimatedRequestCount: number;
+  estimatedInputCharacters: number;
+  allowedCategories: string[];
+  expectedVersions: Record<string, number>;
+};
+
+/** 确认按钮回传给面板的东西：四类草稿共用一个入口，避免四套并行的状态管道。 */
 export type AgentDraftAction =
   | { kind: "site"; draft: AgentSiteDraft }
   | { kind: "site_update"; draft: AgentSiteUpdateDraft }
   | { kind: "site_batch"; draft: AgentSiteBatchDraft }
-  | { kind: "space_membership"; draft: AgentSpaceMembershipDraft };
+  | { kind: "space_membership"; draft: AgentSpaceMembershipDraft }
+  | { kind: "reclassify"; draft: AgentReclassifyDraft };
 
 export type AgentToolFacet = {
   id: string;
@@ -247,10 +256,12 @@ export type AgentToolView =
   | { kind: "site-update"; draft: AgentSiteUpdateDraft }
   | { kind: "site-batch"; draft: AgentSiteBatchDraft }
   | { kind: "space-membership"; draft: AgentSpaceMembershipDraft }
+  | { kind: "reclassify"; draft: AgentReclassifyDraft }
   | { kind: "noop"; message: string }
   | { kind: "rejected"; reason: string }
   | { kind: "error"; source: string | null; message: string }
   | { kind: "raw"; text: string };
+
 
 function toLink(value: unknown): AgentToolLink | null {
   const candidate = asRecord(value);
@@ -391,6 +402,30 @@ function toSpaceMembershipDraft(value: unknown): AgentSpaceMembershipDraft | nul
   return { action, siteId, siteName, spaceId, spaceName, expectedVersion };
 }
 
+function toReclassifyDraft(value: unknown): AgentReclassifyDraft | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  const siteCount = asCount(candidate.site_count);
+  const estimatedRequestCount = asCount(candidate.estimated_request_count);
+  const estimatedInputCharacters = asCount(candidate.estimated_input_characters);
+  if (siteCount === null || estimatedRequestCount === null || estimatedInputCharacters === null) return null;
+  const allowedCategories = asStringList(candidate.allowed_categories);
+  const rawVersions = asRecord(candidate.expected_versions);
+  const expectedVersions: Record<string, number> = {};
+  if (rawVersions) {
+    for (const [k, v] of Object.entries(rawVersions)) {
+      if (typeof v === "number") expectedVersions[k] = v;
+    }
+  }
+  return {
+    siteCount,
+    estimatedRequestCount,
+    estimatedInputCharacters,
+    allowedCategories,
+    expectedVersions,
+  };
+}
+
 const FACET_TOOLS = new Set(["list_categories", "list_tags", "list_spaces"]);
 
 /**
@@ -412,6 +447,18 @@ export function describeAgentToolResult(name: string, result: unknown): AgentToo
   if (error !== null) return { kind: "error", source, message: error };
 
   const status = asTrimmed(payload.status);
+
+  if (name === "propose_reclassify") {
+    if (status === "rejected") {
+      return { kind: "rejected", reason: asTrimmed(payload.reason) ?? "无法生成重分类提案" };
+    }
+    if (status === "noop") {
+      return { kind: "noop", message: asTrimmed(payload.message) ?? "资料库中没有需要分类的网站。" };
+    }
+    const draft = toReclassifyDraft(payload.draft);
+    if (draft !== null) return { kind: "reclassify", draft };
+  }
+
 
   if (name === "propose_site") {
     if (status === "rejected") {
