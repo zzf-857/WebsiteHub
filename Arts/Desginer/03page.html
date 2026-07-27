@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>WebHub | Development Tools</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Theme Configuration -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                "on-secondary-fixed": "#171e00",
+                "on-tertiary": "#ffffff",
+                "secondary": "#526600",
+                "surface": "#f9f9fe",
+                "on-secondary-fixed-variant": "#3d4c00",
+                "on-secondary-container": "#566a00",
+                "on-tertiary-fixed": "#002108",
+                "inverse-surface": "#2e3034",
+                "on-surface-variant": "#46464a",
+                "on-primary": "#ffffff",
+                "on-primary-fixed": "#1b1b1d",
+                "surface-bright": "#f9f9fe",
+                "primary-container": "#1c1c1e",
+                "tertiary": "#000100",
+                "surface-dim": "#d9dade",
+                "surface-container-low": "#f3f3f8",
+                "secondary-container": "#c5f000",
+                "error": "#ba1a1a",
+                "tertiary-fixed-dim": "#3ce36a",
+                "on-tertiary-container": "#00993e",
+                "on-error-container": "#93000a",
+                "outline": "#77767b",
+                "surface-container": "#ededf2",
+                "on-secondary": "#ffffff",
+                "inverse-on-surface": "#f0f0f5",
+                "primary-fixed": "#e4e2e4",
+                "surface-container-high": "#e8e8ed",
+                "error-container": "#ffdad6",
+                "primary": "#010102",
+                "on-tertiary-fixed-variant": "#00531e",
+                "secondary-fixed": "#c8f300",
+                "inverse-primary": "#c8c6c8",
+                "on-error": "#ffffff",
+                "tertiary-container": "#002208",
+                "on-background": "#1a1c1f",
+                "surface-container-highest": "#e2e2e7",
+                "tertiary-fixed": "#69ff87",
+                "outline-variant": "#c7c6ca",
+                "surface-tint": "#5f5e60",
+                "secondary-fixed-dim": "#afd500",
+                "on-surface": "#1a1c1f",
+                "background": "#f9f9fe",
+                "surface-container-lowest": "#ffffff",
+                "on-primary-container": "#858486",
+                "surface-variant": "#e2e2e7",
+                "primary-fixed-dim": "#c8c6c8",
+                "on-primary-fixed-variant": "#474649"
+            },
+            "borderRadius": {
+                "DEFAULT": "0.125rem",
+                "lg": "0.25rem",
+                "xl": "0.5rem",
+                "full": "0.75rem"
+            },
+            "spacing": {
+                "columns": "12",
+                "margin-mobile": "20px",
+                "margin-desktop": "80px",
+                "stack-md": "16px",
+                "container-max": "1440px",
+                "gutter": "24px",
+                "stack-sm": "8px",
+                "stack-lg": "32px"
+            },
+            "fontFamily": {
+                "mono-label": ["Inter"],
+                "display-lg": ["Inter"],
+                "label-sm": ["Inter"],
+                "display-lg-mobile": ["Inter"],
+                "body-lg": ["Inter"],
+                "headline-md": ["Inter"],
+                "body-md": ["Inter"]
+            },
+            "fontSize": {
+                "mono-label": ["12px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "500"}],
+                "display-lg": ["48px", {"lineHeight": "1.1", "letterSpacing": "0px", "fontWeight": "700"}],
+                "label-sm": ["13px", {"lineHeight": "1", "letterSpacing": "0.02em", "fontWeight": "600"}],
+                "display-lg-mobile": ["32px", {"lineHeight": "1.2", "letterSpacing": "0px", "fontWeight": "700"}],
+                "body-lg": ["18px", {"lineHeight": "1.6", "letterSpacing": "0px", "fontWeight": "400"}],
+                "headline-md": ["24px", {"lineHeight": "1.3", "letterSpacing": "0px", "fontWeight": "600"}],
+                "body-md": ["16px", {"lineHeight": "1.5", "letterSpacing": "0px", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .soft-precision-shadow {
+            box-shadow: 0 2px 4px rgba(0,0,0,0.04), 0 12px 24px rgba(0,0,0,0.02);
+        }
+        .soft-precision-shadow:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.06), 0 16px 32px rgba(0,0,0,0.04);
+        }
+        body {
+            background-color: #f9f9fe;
+            color: #1a1c1f;
+            -webkit-font-smoothing: antialiased;
+        }
+    </style>
+</head>
+<body class="font-body-md text-body-md overflow-x-hidden">
+<!-- TopNavBar -->
+<header class="sticky top-0 w-full z-50 flex justify-between items-center px-margin-desktop h-16 bg-surface-container-lowest dark:bg-primary-container border-b border-outline-variant dark:border-outline shadow-sm">
+<div class="flex items-center gap-stack-lg">
+<span class="font-display-lg text-display-lg tracking-tighter text-primary dark:text-primary-fixed">WebHub</span>
+<nav class="hidden md:flex gap-6 ml-8">
+<a class="font-body-md text-body-md text-on-surface-variant dark:text-on-primary-container hover:text-primary dark:hover:text-primary-fixed transition-colors" href="#">Home</a>
+<a class="font-body-md text-body-md text-primary dark:text-primary-fixed font-bold border-b-2 border-primary dark:border-primary-fixed pb-1" href="#">Library</a>
+<a class="font-body-md text-body-md text-on-surface-variant dark:text-on-primary-container hover:text-primary dark:hover:text-primary-fixed transition-colors" href="#">Spaces</a>
+</nav>
+</div>
+<div class="flex items-center gap-4 flex-1 justify-end max-w-xl">
+<div class="relative w-full max-w-xs group">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline">search</span>
+<input class="w-full bg-surface-container-low border border-outline-variant rounded-lg pl-10 pr-4 py-2 focus:outline-none focus:border-primary transition-all" placeholder="Search resources..." type="text"/>
+</div>
+<button class="material-symbols-outlined text-primary dark:text-primary-fixed text-2xl p-2 rounded-full hover:bg-surface-container-high transition-colors">account_circle</button>
+</div>
+</header>
+<div class="flex min-h-screen">
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-16 h-[calc(100vh-64px)] w-64 flex flex-col p-4 bg-surface dark:bg-surface-dim border-r border-outline-variant dark:border-outline z-40">
+<div class="mb-8 px-2">
+<h3 class="font-headline-md text-headline-md text-primary mb-1">Categories</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant">Explore curated hubs</p>
+</div>
+<nav class="flex flex-col gap-1">
+<a class="flex items-center gap-3 px-3 py-2.5 bg-secondary-container text-on-secondary-container dark:bg-secondary dark:text-on-secondary rounded-lg font-semibold transition-transform active:scale-95" href="#">
+<span class="material-symbols-outlined">code</span>
+<span class="font-label-sm text-label-sm">Dev</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-on-surface-variant dark:text-on-primary-container hover:bg-surface-container-high rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">smart_toy</span>
+<span class="font-label-sm text-label-sm">AI Tools</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-on-surface-variant dark:text-on-primary-container hover:bg-surface-container-high rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">school</span>
+<span class="font-label-sm text-label-sm">Learning</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-on-surface-variant dark:text-on-primary-container hover:bg-surface-container-high rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">palette</span>
+<span class="font-label-sm text-label-sm">Design</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-on-surface-variant dark:text-on-primary-container hover:bg-surface-container-high rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary">today</span>
+<span class="font-label-sm text-label-sm">Daily</span>
+</a>
+</nav>
+<div class="mt-auto pt-6 border-t border-outline-variant">
+<div class="p-4 bg-primary-container rounded-lg text-white">
+<p class="font-mono-label text-mono-label text-secondary-fixed mb-2">PRO PLAN</p>
+<p class="font-label-sm text-label-sm mb-3">Get unlimited access to agent automations.</p>
+<button class="w-full bg-secondary-container text-on-secondary-container py-2 rounded font-bold text-xs uppercase tracking-wider hover:bg-secondary-fixed transition-colors">Upgrade</button>
+</div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 flex-1 px-margin-desktop py-stack-lg">
+<!-- Category Header -->
+<div class="flex items-end justify-between mb-8">
+<div>
+<div class="flex items-center gap-3 mb-2">
+<span class="material-symbols-outlined text-4xl text-primary">terminal</span>
+<h1 class="font-display-lg text-display-lg">Development</h1>
+</div>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">Essential resources for the modern web architect. Curated tools for frontend performance, backend scalability, and DevOps efficiency.</p>
+</div>
+<div class="flex gap-3">
+<button class="px-6 py-2 bg-primary text-white font-semibold rounded-lg flex items-center gap-2 hover:bg-opacity-90 transition-all">
+<span class="material-symbols-outlined">add</span> Submit Link
+                    </button>
+</div>
+</div>
+<!-- Filter Bar -->
+<div class="sticky top-16 z-30 bg-surface flex items-center justify-between py-4 border-b border-outline-variant mb-8">
+<div class="flex items-center gap-6">
+<button class="font-label-sm text-label-sm text-primary border-b-2 border-primary pb-4 -mb-4">Most Used</button>
+<button class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors pb-4 -mb-4">Recent</button>
+<button class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors pb-4 -mb-4">Alphabetical</button>
+<button class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors pb-4 -mb-4">Featured</button>
+</div>
+<div class="flex items-center gap-4">
+<span class="font-mono-label text-mono-label text-outline uppercase">24 Results</span>
+<div class="h-4 w-px bg-outline-variant"></div>
+<button class="material-symbols-outlined text-on-surface-variant hover:text-primary">grid_view</button>
+<button class="material-symbols-outlined text-outline hover:text-primary">view_list</button>
+</div>
+</div>
+<!-- Bento Grid of Website Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+<!-- Repeatable Card Logic (x24) -->
+<!-- Card 1 -->
+<div class="group bg-white border border-outline-variant rounded-lg p-stack-md soft-precision-shadow transition-all hover:border-primary flex flex-col relative overflow-hidden">
+<div class="absolute top-0 right-0 w-16 h-16 bg-secondary-container opacity-0 group-hover:opacity-10 transition-opacity" style="clip-path: polygon(100% 0, 0 0, 100% 100%);"></div>
+<div class="flex items-start justify-between mb-3">
+<div class="w-10 h-10 rounded bg-surface-container-high flex items-center justify-center overflow-hidden border border-outline-variant">
+<img class="w-6 h-6" data-alt="A clean, minimalist vector logo representing a modern developer tool, featuring sharp geometric lines in black and gray, centered on a pristine white background. The style is industrial and tech-focused, reflecting a high-end software company's brand identity." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDO07UYCjS_Cz-NQn7FqJJam4ReGemti3vDYD8qbTFTq5kccdHJkbHsEfcxSHK7wO7d5j6vsmCzDKXLWv3gjkhRzxil4cpS1df8nOEJZrYVwNw6QbFBMJLZWw_gzqoeN0RFLrMXmEnpciHIjSBbg2vHBJO4DakI1mc2gX79V_ScfmTQln5mdrxldsmrv3kvuUNaG-yuXatPF0nchB1vM4faJpui8-Q_49n0KK1zi6jbmruTBC5YuPOyrTSo3DBlto9QjIrs1qQXZ953"/>
+</div>
+<button class="material-symbols-outlined text-outline hover:text-primary transition-colors">more_horiz</button>
+</div>
+<h3 class="font-headline-md text-lg text-primary mb-1 group-hover:text-secondary transition-colors">StackOverflow</h3>
+<p class="font-body-md text-sm text-on-surface-variant line-clamp-1 mb-4">Knowledge hub for every coding question.</p>
+<div class="mt-auto flex items-center gap-2">
+<span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono-label text-[10px] uppercase rounded">Community</span>
+<span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono-label text-[10px] uppercase rounded">Q&A</span>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="group bg-white border border-outline-variant rounded-lg p-stack-md soft-precision-shadow transition-all hover:border-primary flex flex-col relative overflow-hidden">
+<div class="flex items-start justify-between mb-3">
+<div class="w-10 h-10 rounded bg-surface-container-high flex items-center justify-center overflow-hidden border border-outline-variant">
+<img class="w-6 h-6" data-alt="A simple, elegant icon for a documentation site, showcasing a stylized page with code symbols in a stark monochromatic palette. The lighting is flat and even, highlighting the clean structuralism and professional aesthetic of a premier documentation resource." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBFXZIP83Y1WxKTFwvo1WGm1smchfRGjYAeH-pLe4bNEHnme_e-kUiHXdgXlpRsUzNiSg63KlHJ5wsfViYhX44Q6kBybm9EdiyJSjTnMmuKf1KqIXtXGtmFngl22rnYCh4-iq0fmX2zHVp-dBIEgPkliT9tq4AzZTnxCWIXt_dVQVJq0bGp3p1opabmkX6LKHoDVtitGH2goplojtfaqM8RHkATWu6WDgETQu0k1_wTLs9pBufIeie4bFuG1pM5eeR8wq19pD8gACXE"/>
+</div>
+<button class="material-symbols-outlined text-outline hover:text-primary transition-colors">more_horiz</button>
+</div>
+<h3 class="font-headline-md text-lg text-primary mb-1 group-hover:text-secondary transition-colors">MDN Web Docs</h3>
+<p class="font-body-md text-sm text-on-surface-variant line-clamp-1 mb-4">The ultimate reference for web technologies.</p>
+<div class="mt-auto flex items-center gap-2">
+<span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono-label text-[10px] uppercase rounded">Docs</span>
+<span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono-label text-[10px] uppercase rounded">Standards</span>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="group bg-white border border-outline-variant rounded-lg p-stack-md soft-precision-shadow transition-all hover:border-primary flex flex-col relative overflow-hidden">
+<div class="flex items-start justify-between mb-3">
+<div class="w-10 h-10 rounded bg-surface-container-high flex items-center justify-center overflow-hidden border border-outline-variant">
+<img class="w-6 h-6" data-alt="A tech-focused circular logo design with interlocking nodes, rendered in a crisp black outline on a white field. The aesthetic conveys connectivity and high-speed infrastructure, perfect for a modern cloud computing or server management tool icon." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDL9uwP5k5LfPYYLKiNkOl1PwPS-vlMU0YlsKsa2QjCJ5fF83ucYiC0SzH1Z-zZ-c9Xj0lYELQZ-BzQwNa-0bqVuL6rtWTsDcOkO56xu2nl93c6V4znKhwWEe1kGoVCD0hO2Nvn6EJT5RSgnQ76rJxd_-R2SAphIVMhJlvSe8Y2ebTXGobJP8neh48aJwEbT-y--4UHezh_gLyp4PrwqNAoOdJhBRF3Hn8Q0gV8BXFWvxfSe80dH4i3ppCX3LSz61c4cLRrMMmO-XsC"/>
+</div>
+<button class="material-symbols-outlined text-outline hover:text-primary transition-colors">more_horiz</button>
+</div>
+<h3 class="font-headline-md text-lg text-primary mb-1 group-hover:text-secondary transition-colors">GitHub</h3>
+<p class="font-body-md text-sm text-on-surface-variant line-clamp-1 mb-4">Version control and collaboration platform.</p>
+<div class="mt-auto flex items-center gap-2">
+<span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono-label text-[10px] uppercase rounded">Git</span>
+<span class="px-2 py-0.5 bg-secondary-container text-on-secondary-container font-mono-label text-[10px] uppercase rounded font-bold">Tools</span>
+</div>
+</div>
+<!-- Card 4 -->
+<div class="group bg-white border border-outline-variant rounded-lg p-stack-md soft-precision-shadow transition-all hover:border-primary flex flex-col relative overflow-hidden">
+<div class="flex items-start justify-between mb-3">
+<div class="w-10 h-10 rounded bg-surface-container-high flex items-center justify-center overflow-hidden border border-outline-variant">
+<img class="w-6 h-6" data-alt="A minimalist logo representing a deployment platform, featuring an upward-pointing arrow integrated with a sleek geometric square. The design is presented in solid onyx against a soft off-white background, embodying speed, precision, and modern web hosting excellence." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCudZu94vxvk3p1hoiHmiZY2h5-N--qFN_KlGhLTpvZYgQVkGcT1EBxWUPnG58gMgCZz6eoCuiYwNnc8X_CxbwnzUI_MHURbOt2aECcIeD2KGc91G8zcB5Zn1zwGq9DEN_Axy3yjIJaJYVMm5QgNRliPn9gFlpXQvAj2DUpJUCKx8BZJTr6AW_MordWuuywtmHfhKl_it7LRUjUNET-4tyVzBrNLNNwPCCNTcjplh3X9Jw5y9WGSLuZIKA37hFJ3Cug1zIvkE20yRul"/>
+</div>
+<button class="material-symbols-outlined text-outline hover:text-primary transition-colors">more_horiz</button>
+</div>
+<h3 class="font-headline-md text-lg text-primary mb-1 group-hover:text-secondary transition-colors">Vercel</h3>
+<p class="font-body-md text-sm text-on-surface-variant line-clamp-1 mb-4">Develop. Preview. Ship. Fast.</p>
+<div class="mt-auto flex items-center gap-2">
+<span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono-label text-[10px] uppercase rounded">Hosting</span>
+<span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono-label text-[10px] uppercase rounded">Frontend</span>
+</div>
+</div>
+<!-- Manual loop simulation for 24 items -->
+<script>
+                    const titles = ["Postman", "Can I Use", "CodePen", "Figma", "DevDocs", "Radix UI", "Tailwind CSS", "Unsplash", "FontAwesome", "Netlify", "DigitalOcean", "Firebase", "MongoDB Atlas", "Sentry", "New Relic", "Awwwards", "Dribbble", "Behance", "ProductHunt", "HackerNews"];
+                    const tags = ["Tools", "Design", "Backend", "Cloud", "Analytics", "UI"];
+                    
+                    const grid = document.querySelector('.grid');
+                    for (let i = 0; i < 20; i++) {
+                        const title = titles[i % titles.length];
+                        const tag1 = tags[Math.floor(Math.random() * tags.length)];
+                        const tag2 = tags[Math.floor(Math.random() * tags.length)];
+                        
+                        const card = `
+                        <div class="group bg-white border border-outline-variant rounded-lg p-stack-md soft-precision-shadow transition-all hover:border-primary flex flex-col relative overflow-hidden">
+                            <div class="flex items-start justify-between mb-3">
+                                <div class="w-10 h-10 rounded bg-surface-container-high flex items-center justify-center overflow-hidden border border-outline-variant">
+                                    <div class="w-6 h-6 bg-primary-container/10 rounded-sm flex items-center justify-center">
+                                        <span class="material-symbols-outlined text-sm text-outline">language</span>
+                                    </div>
+                                </div>
+                                <button class="material-symbols-outlined text-outline hover:text-primary transition-colors">more_horiz</button>
+                            </div>
+                            <h3 class="font-headline-md text-lg text-primary mb-1 group-hover:text-secondary transition-colors">${title}</h3>
+                            <p class="font-body-md text-sm text-on-surface-variant line-clamp-1 mb-4">Professional resource for modern digital engineering.</p>
+                            <div class="mt-auto flex items-center gap-2">
+                                <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono-label text-[10px] uppercase rounded">${tag1}</span>
+                                <span class="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono-label text-[10px] uppercase rounded">${tag2}</span>
+                            </div>
+                        </div>`;
+                        grid.innerHTML += card;
+                    }
+                </script>
+</div>
+<!-- Agent Interaction Anchor -->
+<div class="fixed bottom-8 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-50">
+<div class="bg-primary-container shadow-2xl rounded-xl p-2 flex items-center gap-2 border border-white/10 group">
+<div class="flex-1 flex items-center px-4">
+<span class="material-symbols-outlined text-secondary-fixed mr-3" style="font-variation-settings: 'FILL' 1;">smart_toy</span>
+<input class="bg-transparent border-none text-white focus:ring-0 w-full placeholder:text-white/40 font-body-md" placeholder="Ask the WebHub Agent to find a specific tool..." type="text"/>
+</div>
+<button class="bg-secondary-container text-on-secondary-container px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:scale-[1.02] transition-transform">
+                        Find <span class="material-symbols-outlined text-sm">send</span>
+</button>
+</div>
+</div>
+</main>
+</div>
+<!-- Footer -->
+<footer class="w-full py-stack-lg px-margin-desktop flex flex-col md:flex-row justify-between items-center bg-surface-container-low dark:bg-primary-container border-t border-outline-variant dark:border-outline flat no shadows">
+<div class="flex flex-col items-center md:items-start mb-6 md:mb-0">
+<span class="font-display-lg text-display-lg text-primary mb-2">WebHub</span>
+<p class="font-mono-label text-mono-label text-on-surface-variant dark:text-on-primary-container">© 2024 WebHub Navigation</p>
+</div>
+<div class="flex gap-8">
+<a class="font-mono-label text-mono-label text-on-surface-variant dark:text-on-primary-container hover:underline transition-all duration-200" href="#">About</a>
+<a class="font-mono-label text-mono-label text-on-surface-variant dark:text-on-primary-container hover:underline transition-all duration-200" href="#">Privacy</a>
+<a class="font-mono-label text-mono-label text-on-surface-variant dark:text-on-primary-container hover:underline transition-all duration-200" href="#">Terms</a>
+<a class="font-mono-label text-mono-label text-on-surface-variant dark:text-on-primary-container hover:underline transition-all duration-200" href="#">Support</a>
+</div>
+</footer>
+<!-- Micro-interactions Script -->
+<script>
+        // Smooth reveal on scroll for cards
+        const observerOptions = {
+            threshold: 0.1
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.group.bg-white').forEach(card => {
+            card.style.opacity = '0';
+            card.style.transform = 'translateY(20px)';
+            card.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            observer.observe(card);
+        });
+
+        // Subtle parallax on header
+        window.addEventListener('scroll', () => {
+            const scroll = window.pageYOffset;
+            const header = document.querySelector('header');
+            if (scroll > 10) {
+                header.classList.add('backdrop-blur-md');
+                header.style.backgroundColor = 'rgba(255, 255, 255, 0.85)';
+            } else {
+                header.classList.remove('backdrop-blur-md');
+                header.style.backgroundColor = '';
+            }
+        });
+    </script>
+</body></html>

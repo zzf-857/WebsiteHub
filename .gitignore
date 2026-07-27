@@ -43,3 +43,6 @@ logs/
 .DS_Store
 Thumbs.db
 Desktop.ini
+.claude/
+relative-data-test/
+

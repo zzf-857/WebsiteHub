@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style data-omelette-injected>html,body{background:transparent}</style><script data-omelette-injected>(()=>{{const W=new URLSearchParams(location.search).get("theme");if(W==="light"||W==="dark"){document.documentElement.dataset.theme=W}}{if(new URLSearchParams(location.search).get("_omthumb")==="1"){const W=(q)=>{const X=q.focus;if(!X)return;q.focus=function(H){X.call(this,{...H,preventScroll:true})}};W(HTMLElement.prototype);W(SVGElement.prototype);if(typeof MathMLElement!=="undefined"){W(MathMLElement.prototype)}const $=(q)=>{q.removeAttribute("autofocus");q.inert=true;if(!(q instanceof HTMLElement))q.removeAttribute("tabindex")};const z=(q)=>{if(q.hasAttribute("autofocus"))$(q);for(const X of q.querySelectorAll("[autofocus]")){$(X)}};z(document.documentElement);new MutationObserver((q)=>{for(const X of q){for(const H of X.addedNodes){if(H.nodeType===1)z(H)}}}).observe(document,{childList:true,subtree:true})}}{const W=()=>{try{if(document.querySelector('meta[name="color-scheme"]'))return;const $=getComputedStyle(document.documentElement).getPropertyValue("color-scheme").trim();if($&&$!=="normal")return;const z=(j)=>{if(!j)return null;const F=getComputedStyle(j).backgroundColor.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+%?))?\s*\)$/);if(!F)return null;const G=F[4]==null?1:parseFloat(F[4])/(F[4].endsWith("%")?100:1);if(G<0.99)return null;return[+F[1],+F[2],+F[3]]};const q=z(document.body)||z(document.documentElement);if(!q)return;const X=(j)=>{const F=j/255;return F<=0.04045?F/12.92:((F+0.055)/1.055)**2.4};const H=0.2126*X(q[0])+0.7152*X(q[1])+0.0722*X(q[2]);document.documentElement.style.setProperty("color-scheme",H<0.4?"dark":"light")}catch{}};if(document.readyState==="complete")W();else window.addEventListener("load",W)}var b=[];var p=false;var u=30000;var d=3000;document.addEventListener("DOMContentLoaded",()=>{const W=window.Babel;const $="om-src-id";if(W&&W.registerPlugin&&!(W.availablePlugins&&W.availablePlugins[$])){W.registerPlugin($,({types:H})=>({visitor:{JSXOpeningElement(j,F){const G=j.node;if(G.name&&G.name.type==="JSXMemberExpression")return;for(let Q=0;Q<G.attributes.length;Q++){const V=G.attributes[Q];if(V.type==="JSXAttribute"&&V.name&&V.name.name==="data-om-id")return}const P=F.file&&F.file.opts&&F.file.opts.filename||"?";const R=G.loc&&G.loc.start;const J=`jsx:${P}:${G.start??0}:${R?R.line:0}:${R?R.column+1:0}`;G.attributes.push(H.jsxAttribute(H.jsxIdentifier("data-om-id"),H.stringLiteral(J)))}}}))}const z="om-text-extract";let q=false;if(p&&W&&W.registerPlugin&&!(W.availablePlugins&&W.availablePlugins[z])){const H=window.React;if(H&&H.useSyncExternalStore&&H.createElement){q=true;const j={};const F=new Set;let G=0;window.__omTextO=j;window.__omTextSet=(J)=>{for(const Q in J){const V=J[Q];if(V==null)delete j[Q];else j[Q]=V}G++;F.forEach((Q)=>Q())};const P=(J)=>{F.add(J);return()=>F.delete(J)};const R=()=>G;window.__OmT=function J(Q){H.useSyncExternalStore(P,R,R);return H.createElement("span",{"data-om-text":Q.i,className:"__om-t"},Q.i in j?j[Q.i]:Q.children)};W.registerPlugin(z,({types:J})=>{const Q={style:1,script:1,noscript:1,textarea:1,title:1,option:1,text:1,tspan:1,textPath:1};const V={placeholder:1,alt:1,title:1,label:1,"aria-label":1,"aria-description":1,"aria-placeholder":1};const Y=(K,M)=>J.logicalExpression("??",J.memberExpression(J.logicalExpression("||",J.memberExpression(J.identifier("window"),J.identifier("__omTextO")),J.objectExpression([])),J.stringLiteral(K),true),M);const Z=(K)=>K.file&&K.file.opts&&K.file.opts.filename||"?";const B=(K)=>K.file&&K.file.code||"";const U=(K,M)=>{const L=(D)=>D&&D.start!=null&&D.end!=null&&(D.type==="StringLiteral"||D.type==="TemplateLiteral"&&D.expressions.length===0)?[D.start,D.end]:null;const N=L(M);if(N)return N;if(M&&M.type==="Identifier"){const D=K.scope.getBinding(M.name);if(D&&D.constant&&D.path.node.type==="VariableDeclarator"){return L(D.path.node.init)}}return null};const x=(K,M,L)=>{const N=K.node;let D=false;const f=(w,A)=>{D=true;return J.jsxElement(J.jsxOpeningElement(J.jsxIdentifier("__OmT"),[J.jsxAttribute(J.jsxIdentifier("i"),J.stringLiteral(w))],false),J.jsxClosingElement(J.jsxIdentifier("__OmT")),[A],false)};const C=N.children.map((w)=>{if(w.type==="JSXText"){if(w.start==null||w.end==null)return w;const A=L.slice(w.start,w.end);const S=A.length-A.trimStart().length;const O=A.length-A.trimEnd().length;if(S+O>=A.length)return w;return f(`txt:${M}:${w.start+S}:${w.end-O}`,w)}if(w.type==="JSXExpressionContainer"){const A=U(K,w.expression);if(A)return f(`str:${M}:${A[0]}:${A[1]}`,w)}return w});if(D)N.children=C};return{visitor:{JSXOpeningElement(K,M){const L=K.node;const N=Z(M);const D={};for(let f=0;f<L.attributes.length;f++){const C=L.attributes[f];if(C.type!=="JSXAttribute"||!C.name)continue;const w=C.name.name;if(!V[w])continue;if(!C.value||C.value.type!=="StringLiteral")continue;if(C.value.start==null||C.value.end==null)continue;const A=`txt:${N}:${C.value.start}:${C.value.end}`;D[w]=A;C.value=J.jsxExpressionContainer(Y(A,J.stringLiteral(C.value.value)))}if(Object.keys(D).length){L.attributes.push(J.jsxAttribute(J.jsxIdentifier("data-om-text-attrs"),J.stringLiteral(JSON.stringify(D))))}},JSXElement(K,M){const L=K.node.openingElement;const N=L&&L.name&&L.name.name;if(N==="__OmT")return;if(typeof N==="string"&&Q[N])return;x(K,Z(M),B(M))},JSXFragment(K,M){x(K,Z(M),B(M))}}}})}}const X=q?["transform-react-jsx-source",$,z]:["transform-react-jsx-source",$];document.querySelectorAll('script[type="text/babel"],script[type="text/jsx"]').forEach((H,j)=>{const F=H.getAttribute("data-plugins")||"";const G=X.filter((P)=>F.indexOf(P)<0);if(G.length){H.setAttribute("data-plugins",F?`${F},${G.join(",")}`:G.join(","))}if(!H.hasAttribute("data-filename")){H.setAttribute("data-filename",H.getAttribute("src")||`inline-${j}`)}})});var I=window.parent;var g="not editable here — open the project in the Claude Design editor to save";var n=()=>Promise.resolve({persisted:false,noHost:true,reason:g});var k=n;var v="data/storage.json";var l=()=>{try{const W=new URL(document.baseURI);const $=W.pathname.match(/\/projects\/([^/]+)\/serve\//);if($)return $[1];return W.hostname.split(".")[0]||""}catch{return location.hostname.split(".")[0]||""}};var o=()=>{try{const W=new URL(document.baseURI);const $=W.pathname.indexOf("/serve/");if($>=0)return W.origin+W.pathname.slice(0,$+"/serve/".length)+v}catch{}return"./"+v};var E=null;var _=()=>{if(!E){E=fetch(o(),{cache:"no-store"}).then((W)=>{if(W.ok)return W.text();return W.status===404?"":null}).catch(()=>null).then((W)=>{if(W===null){E=null;return null}const $=new Map;if(!W)return $;let z;try{z=JSON.parse(W)}catch{console.warn("[omelette.storage] "+v+" is not valid JSON; treating the store as unreadable so a save cannot overwrite the "+"hand-edited bytes. Fix the JSON (or delete the file) to re-enable persistence.");E=null;return null}if(z===null||typeof z!=="object"||Array.isArray(z)){console.warn("[omelette.storage] "+v+" doesn't hold a JSON object; treating the store as unreadable so a save cannot "+"overwrite the hand-edited bytes. Make the top level a JSON object to re-enable persistence.");E=null;return null}const q=z;if("data"in q){const X=q.data;if(X===null||typeof X!=="object"||Array.isArray(X)){console.warn("[omelette.storage] "+v+' has a "data" field that is not a JSON object; treating the store as unreadable so a '+'save cannot overwrite the hand-edited bytes. Make "data" a JSON object to re-enable persistence.');E=null;return null}const H=q._meta;const j=H!==null&&typeof H==="object"?H.project:undefined;if(typeof j==="string"&&j!==""&&j!==l())return $;for(const F of Object.keys(X))$.set(F,X[F]);return $}for(const X of Object.keys(q)){if(X!=="_meta")$.set(X,q[X])}return $})}return E};var y=(W)=>k(v,JSON.stringify({_meta:{project:l(),version:1},data:Object.fromEntries(W)},null,2));var m=Promise.resolve();var T=(W)=>{const $=m.then(W);m=$.then(()=>{return},()=>{return});return $};var s=/sk-(?:ant-)?[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|xox[a-z]-[A-Za-z0-9][A-Za-z0-9-]{9,}|AIza[0-9A-Za-z_-]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY-----/;var a=/password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|credential/i;var r=(W,$,z)=>{if(s.test($)||a.test(W)&&typeof z==="string"&&z.length>=8){console.warn('[omelette.storage] the value for "'+W+'" looks like a credential. The storage file is a plaintext project file — visible to '+"everyone with project access and copied when the project is duplicated. Do not store secrets here.")}};var c={persisted:false,reason:"could not load the existing store — not overwriting it"};var i={persisted:false,reason:"stored value changed since a failed read — re-read this key before saving"};var h=new Set;var t={get:(W)=>{if(typeof W!=="string"){return Promise.reject(new TypeError("storage.get: key must be a string"))}return T(_).then(($)=>{if($===null){h.add(W);return null}h.delete(W);if(!$.has(W))return null;const z=$.get(W);return z==null?null:JSON.parse(JSON.stringify(z))})},set:(W,$)=>{if(typeof W!=="string"){return Promise.reject(new TypeError("storage.set: key must be a string"))}let z;try{z=JSON.stringify($)}catch(X){return Promise.reject(new TypeError("storage.set: value must be JSON-serializable ("+String(X)+")"))}if(z===undefined){return Promise.reject(new TypeError("storage.set: value must be JSON-serializable"))}r(W,z,$);const q=JSON.parse(z);return T(()=>_().then((X)=>{if(X===null)return c;if(h.has(W)){if(X.has(W))return i;h.delete(W)}X.set(W,q);return y(X)}))},delete:(W)=>{if(typeof W!=="string"){return Promise.reject(new TypeError("storage.delete: key must be a string"))}return T(()=>_().then(($)=>{if($===null)return c;if(h.has(W)){if($.has(W))return i;h.delete(W)}$.delete(W);return y($)}))},keys:()=>T(_).then((W)=>W===null?[]:Array.from(W.keys()))};window.omelette={writeFile:(W,$)=>k(W,$).then((z)=>{if(!z.persisted&&!z.noHost){throw new Error(z.reason||"write failed")}}),storage:t};if(I&&I!==window){const W=(J,Q)=>{try{I.postMessage({__omelette_log:true,type:J,data:Q},"*")}catch{}};["log","warn","error"].forEach((J)=>{const Q=console[J];console[J]=(...V)=>{const Y=V.map((Z)=>{try{return typeof Z==="object"?JSON.stringify(Z):String(Z)}catch{try{return String(Z)}catch{return"[unstringifiable]"}}}).join(" ");W(J,Y);Q.apply(console,V)}});window.addEventListener("error",(J)=>{const Q=J.target;if(Q&&Q!==window&&Q.tagName){const V=Q.src||Q.href||"";W("resource_error",`${Q.tagName} failed to load: ${V}`)}else{W("error",`${J.message||"Unknown error"} at ${J.filename||"?"}:${J.lineno||0}:${J.colno||0}`)}},true);window.addEventListener("unhandledrejection",(J)=>{const Q=J.reason;const V=Q instanceof Error?`${Q.message} ${Q.stack}`:String(Q);W("error",`Unhandled rejection: ${V}`)});window.addEventListener("click",(J)=>{if(J.defaultPrevented||J.button!==0)return;if(J.metaKey||J.ctrlKey||J.shiftKey||J.altKey)return;const Q=J.composedPath?J.composedPath():[];const V=["button","input","select","textarea","summary","label"];let Y=null;for(const x of Q){if(!(x instanceof Element))continue;if(x.localName==="a"){if(!(x instanceof HTMLAnchorElement))return;Y=x;break}if(V.indexOf(x.localName)!==-1)return}if(!Y)return;if(Y.isContentEditable)return;const Z=Y.closest("[contenteditable]");if(Z&&Z.getAttribute("contenteditable")!=="false")return;const B=(Y.getAttribute("target")||"_self").toLowerCase();if(B!=="_self"&&B!=="_top"&&B!=="_parent")return;let U;try{U=new URL(Y.href)}catch{return}if(U.protocol!=="http:"&&U.protocol!=="https:")return;if(location.origin==="null")return;if(U.origin===location.origin)return;J.preventDefault();window.open(U.href,"_blank","noopener,noreferrer")});const $=()=>{try{I.postMessage({type:"omelette:height",height:document.documentElement.scrollHeight},"*")}catch{}};if(window.ResizeObserver)new ResizeObserver($).observe(document.documentElement);const z=()=>{$();if(!document.querySelector('script[type="text/babel"],script[type="text/jsx"]'))return;const J=()=>document.getElementById("root")||document.querySelector("body > div[id]");const Q=J()?.firstElementChild??null;let V=0;const Y=()=>{const Z=J();if(Z&&Z.firstElementChild!==Q||++V>30){$();return}setTimeout(Y,100)};setTimeout(Y,100)};if(document.readyState==="complete")z();else window.addEventListener("load",z);const q={};let X=0;const H=(J)=>new Promise((Q,V)=>{if(!b.length){V(new Error("claude.complete: no parent origin"));return}const Y=`c${++X}`;const Z=()=>setTimeout(()=>{delete q[Y];V(new Error(`claude.complete: no data for ${u/1000}s`))},u);const B=Z();q[Y]={resolve:Q,reject:V,text:"",t:B,arm:Z};try{for(const U of b){I.postMessage({__om_api:true,id:Y,body:J},U)}}catch(U){clearTimeout(B);delete q[Y];V(U)}});const j=8;const F=async(J,Q)=>{if(!Array.isArray(J.messages)){throw new Error("claude.complete: tools require a messages array")}const V=J.messages.slice();const Y={...J,tools:J.tools.map((U)=>{if(U===null||typeof U!=="object")return U;const x={};for(const K of Object.keys(U)){if(typeof U[K]!=="function")x[K]=U[K]}return x})};const Z=Y.tool_choice;const B=Z!=null&&(Z.type==="any"||Z.type==="tool")?{...Y,tool_choice:Z.disable_parallel_tool_use!==undefined?{type:"auto",disable_parallel_tool_use:Z.disable_parallel_tool_use}:{type:"auto"}}:Y;for(let U=0;U<j;U++){const x=await H({...U===0?Y:B,messages:V});const K=x.message;const M=K&&Array.isArray(K.content)?K.content:null;const L=M?M.filter((D)=>D?.type==="tool_use"):[];if(K?.stop_reason!=="tool_use"||L.length===0){return x.text}const N=[];for(const D of L){const f=Q.get(D.name);if(!f){N.push({type:"tool_result",tool_use_id:D.id,content:`no handler for tool "${D.name}"`,is_error:true});continue}try{const C=await f(D.input);const w=typeof C==="string"?C:R(C)??"";N.push({type:"tool_result",tool_use_id:D.id,content:w})}catch(C){N.push({type:"tool_result",tool_use_id:D.id,content:String(C?.message??C??"tool handler failed"),is_error:true})}}V.push({role:"assistant",content:M},{role:"user",content:N})}throw new Error(`claude.complete: exceeded ${j} tool turns`)};window.claude={complete(J){const Q=J;if(Q!==null&&typeof Q==="object"&&Array.isArray(Q.tools)&&Q.tools.some((V)=>V!==null&&typeof V==="object"&&typeof V.run==="function")){const V=new Map;for(const Y of Q.tools){if(Y!==null&&typeof Y==="object"&&typeof Y.run==="function"){V.set(String(Y.name),Y.run)}}return F(Q,V)}return H(J).then((V)=>V.text)}};const G={};let P=0;k=(J,Q)=>new Promise((V)=>{if(!b.length){V({persisted:false,noHost:true,reason:g});return}const Y=`f${++P}`;const Z=setTimeout(()=>{delete G[Y];V({persisted:false,noHost:true,reason:g})},d);G[Y]={settle:V,t:Z};try{for(const B of b){I.postMessage({__om_file:true,id:Y,op:"write",path:J,content:Q},B)}}catch{clearTimeout(Z);delete G[Y];V({persisted:false,noHost:true,reason:g})}});const R=(J)=>{try{return JSON.stringify(J)}catch{return JSON.stringify(String(J))}};window.addEventListener("message",(J)=>{if(b.indexOf(J.origin)<0)return;if(J.source!==I)return;const Q=J.data;if(!Q)return;if(Q.type==="omelette-preview-refresh"){if(typeof Q.token!=="string"||!/^[0-9a-f.-]+(\.(rc|pr-[0-9]+))?(\.[0-9]+\.[0-9a-f]{16})?$/.test(Q.token))return;const Z=Math.max(1,Math.floor((Q.expiresAt||0)-Date.now()/1000));document.cookie="__Host-omelette-preview="+Q.token+"; Path=/; Secure; SameSite=None; Partitioned; Max-Age="+Z;return}if(Q.__om_file_r){const Z=G[Q.id];if(!Z)return;clearTimeout(Z.t);delete G[Q.id];Z.settle(Q.ok?{persisted:true}:{persisted:false,reason:Q.error||"write failed"});return}if(Q.__om_api_r){const Z=q[Q.id];if(!Z)return;if(Q.error!=null){clearTimeout(Z.t);delete q[Q.id];Z.reject(new Error(Q.error));return}if(Q.chunk!=null){clearTimeout(Z.t);Z.t=Z.arm();Z.text+=Q.chunk;return}if(Q.done){clearTimeout(Z.t);delete q[Q.id];Z.resolve({text:Q.text!=null?Q.text:Z.text,message:Q.message});return}return}if(!Q.__om_eval)return;const V=Q;const Y=(Z)=>{J.source.postMessage({...Z,__om_eval_r:1,id:V.id},J.origin)};try{const Z=(0,eval)(V.code);if(Z&&typeof Z.then==="function"){Z.then((B)=>Y({ok:1,v:R(B)}),(B)=>Y({ok:0,e:String(B)}))}else{Y({ok:1,v:R(Z)})}}catch(Z){Y({ok:0,e:String(Z)})}})}})();
+</script>
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#EBEDEF;font-family:'Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;}
+a{color:inherit;text-decoration:none;}
+a:hover{color:#4F7A0B;}
+@keyframes wh-spin{to{transform:rotate(360deg);}}
+@keyframes wh-blink{0%,100%{opacity:1;}50%{opacity:.15;}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important;}}
+</style>
+</helmet>
+<section style="padding:64px;display:flex;flex-direction:column;gap:72px;">
+
+<!-- ================= 1a 首页 默认 ================= -->
+<div style="display:flex;flex-wrap:wrap;gap:72px;align-items:flex-start;">
+<div id="1a" style="display:flex;flex-direction:column;gap:14px;">
+<div style="display:flex;align-items:center;gap:10px;"><span style="background:#16181A;color:#fff;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">1a</span><span style="font-size:14px;color:#5E666E;font-weight:500;">网址导航首页 · 默认状态 · 1920×1080</span></div>
+<div style="width:1920px;height:1080px;overflow:hidden;background:#F5F6F7;border:1px solid #DDE1E4;box-shadow:0 2px 16px rgba(20,24,28,.08);border-radius:8px;color:#16181A;position:relative;">
+  <!-- Header -->
+  <div style="height:64px;display:flex;align-items:center;padding:0 40px;gap:36px;background:rgba(255,255,255,.92);border-bottom:1px solid #E7EAEC;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="width:30px;height:30px;border-radius:7px;background:#B4E534;display:flex;align-items:center;justify-content:center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1A2005" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88"></polygon></svg></div>
+      <span style="font-size:17px;font-weight:700;letter-spacing:.2px;">WebHub</span>
+    </div>
+    <nav style="display:flex;gap:6px;font-size:14px;">
+      <span style="padding:6px 14px;border-radius:7px;background:#16181A;color:#fff;font-weight:500;">首页</span>
+      <span style="padding:6px 14px;border-radius:7px;color:#5E666E;" style-hover="background:#EEF1F2;color:#16181A;">网址库</span>
+      <span style="padding:6px 14px;border-radius:7px;color:#5E666E;" style-hover="background:#EEF1F2;color:#16181A;">Space</span>
+    </nav>
+    <div style="flex:1;"></div>
+    <div style="display:flex;align-items:center;gap:8px;width:240px;height:34px;border:1px solid #E3E6E8;border-radius:7px;padding:0 12px;background:#fff;color:#8B939B;font-size:13px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+      <span style="flex:1;">精确搜索站内网址</span><span style="border:1px solid #E3E6E8;border-radius:4px;padding:0 5px;font-size:11px;">⌘K</span>
+    </div>
+    <div style="width:34px;height:34px;border:1px solid #E3E6E8;border-radius:7px;background:#fff;display:flex;align-items:center;justify-content:center;color:#5E666E;" style-hover="border-color:#B4E534;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg></div>
+    <div style="width:32px;height:32px;border-radius:50%;background:#16181A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;">林</div>
+  </div>
+  <!-- Body -->
+  <div style="display:flex;gap:28px;padding:24px 40px 0;">
+    <!-- Sidebar -->
+    <div style="width:216px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;font-size:14px;">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;background:#fff;border:1px solid #E3E6E8;font-weight:500;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4F7A0B" stroke-width="2" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"></path></svg>
+        <span style="flex:1;">全部</span><span style="font-size:12px;color:#8B939B;">128</span>
+      </div>
+      <sc-for list="{{ sideCats }}" as="c" hint-placeholder-count="6">
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;color:#3D444B;" style-hover="background:#EEF1F2;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8B939B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ c.p }}"></path></svg>
+          <span style="flex:1;">{{ c.label }}</span><span style="font-size:12px;color:#B0B7BD;">{{ c.count }}</span>
+        </div>
+      </sc-for>
+      <div style="height:1px;background:#E7EAEC;margin:14px 4px;"></div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;color:#8B939B;padding:0 12px 6px;">SPACE</div>
+      <sc-for list="{{ spaces }}" as="sp" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;color:#3D444B;" style-hover="background:#EEF1F2;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8B939B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5M12 22V12"></path></svg>
+          <span style="flex:1;">{{ sp.name }}</span><span style="font-size:12px;color:#B0B7BD;">{{ sp.count }}</span>
+        </div>
+      </sc-for>
+      <div style="display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;color:#8B939B;font-size:13px;" style-hover="color:#4F7A0B;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5v14"></path></svg><span>新建 Space</span>
+      </div>
+    </div>
+    <!-- Main -->
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:22px;">
+      <!-- Agent module -->
+      <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:22px 26px 18px;box-shadow:0 1px 2px rgba(20,24,28,.04);">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6CA80F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path><path d="M20 3v4M22 5h-4"></path></svg>
+          <span style="font-size:21px;font-weight:700;">今天想找什么网站？</span>
+          <div style="flex:1;"></div>
+          <div style="display:flex;border:1px solid #E3E6E8;border-radius:7px;overflow:hidden;font-size:13px;">
+            <span style="padding:6px 14px;background:#16181A;color:#fff;font-weight:500;">仅收藏库</span>
+            <span style="padding:6px 14px;color:#5E666E;display:flex;align-items:center;gap:6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"></path></svg>允许联网</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;color:#5E666E;font-size:13px;padding:6px 10px;border-radius:7px;" style-hover="background:#EEF1F2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2"></path></svg>历史</div>
+          <div style="display:flex;align-items:center;gap:6px;color:#5E666E;font-size:13px;padding:6px 10px;border-radius:7px;" style-hover="background:#EEF1F2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5v14"></path></svg>新对话</div>
+        </div>
+        <div style="margin-top:16px;border:1px solid #E3E6E8;border-radius:8px;background:#FBFCFC;transition:border-color .18s;" style-hover="border-color:#A8D42C;">
+          <div style="padding:14px 16px 6px;font-size:15px;color:#8B939B;min-height:44px;line-height:1.6;">描述你要找的网站，或粘贴一个/多个 URL 直接入库…</div>
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 12px 12px;">
+            <span style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:#8B939B;"><span style="border:1px solid #E3E6E8;border-radius:5px;background:#fff;padding:1px 7px;font-weight:700;">/</span>命令：/搜索 · /存入</span>
+            <div style="flex:1;"></div>
+            <span style="font-size:12.5px;color:#B0B7BD;">Enter 发送 · Shift+Enter 换行</span>
+            <div style="width:36px;height:36px;border-radius:7px;background:#B4E534;display:flex;align-items:center;justify-content:center;" style-hover="background:#A8D42C;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#1A2005" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;font-size:13px;color:#5E666E;">
+          <span style="border:1px solid #EDF0F1;background:#F5F6F7;border-radius:7px;padding:5px 12px;" style-hover="border-color:#A8D42C;color:#16181A;">帮我找 Unity API 文档</span>
+          <span style="border:1px solid #EDF0F1;background:#F5F6F7;border-radius:7px;padding:5px 12px;" style-hover="border-color:#A8D42C;color:#16181A;">/存入 ai-bot.cn</span>
+          <span style="border:1px solid #EDF0F1;background:#F5F6F7;border-radius:7px;padding:5px 12px;" style-hover="border-color:#A8D42C;color:#16181A;">把 Figma 移到「设计」并置顶</span>
+        </div>
+      </div>
+      <!-- 置顶网站 -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4F7A0B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"></path></svg>
+          <span style="font-size:15px;font-weight:700;">置顶网站</span>
+          <div style="flex:1;"></div><span style="font-size:13px;color:#8B939B;" style-hover="color:#4F7A0B;">管理置顶</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+          <sc-for list="{{ pinned }}" as="s" hint-placeholder-count="8">
+            <div style="display:flex;align-items:center;gap:11px;background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:12px 14px;transition:border-color .12s,box-shadow .12s;" style-hover="border-color:#C6CDD2;box-shadow:0 2px 8px rgba(20,24,28,.07);">
+              <img src="{{ s.icon }}" width="24" height="24" style="border-radius:5px;flex-shrink:0;" alt="{{ s.name }}">
+              <div style="min-width:0;"><div style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.name }}</div><div style="font-size:12px;color:#8B939B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.d }}</div></div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <!-- Space 快速入口 -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5E666E" stroke-width="2" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path></svg>
+          <span style="font-size:15px;font-weight:700;">Space</span>
+          <div style="flex:1;"></div><span style="font-size:13px;color:#8B939B;" style-hover="color:#4F7A0B;">全部 Space →</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+          <sc-for list="{{ spaces }}" as="sp" hint-placeholder-count="4">
+            <div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:14px 16px;" style-hover="border-color:#C6CDD2;box-shadow:0 2px 8px rgba(20,24,28,.07);">
+              <div style="flex:1;min-width:0;"><div style="font-size:14px;font-weight:500;">{{ sp.name }}</div><div style="font-size:12px;color:#8B939B;margin-top:2px;">{{ sp.count }} 个网站</div></div>
+              <div style="display:flex;align-items:center;gap:5px;color:#5E666E;font-size:12.5px;border:1px solid #E3E6E8;border-radius:6px;padding:4px 9px;" style-hover="border-color:#A8D42C;color:#4F7A0B;">全部打开<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10M7 17 17 7"></path></svg></div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <!-- 最近收录 -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5E666E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+          <span style="font-size:15px;font-weight:700;">最近收录</span>
+          <div style="flex:1;"></div><span style="font-size:13px;color:#8B939B;" style-hover="color:#4F7A0B;">查看更多 →</span>
+        </div>
+        <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;overflow:hidden;">
+          <sc-for list="{{ recent }}" as="r" hint-placeholder-count="5">
+            <div style="display:flex;align-items:center;gap:14px;padding:13px 18px;border-bottom:1px solid #F0F2F4;font-size:13.5px;" style-hover="background:#FAFBFB;">
+              <img src="{{ r.icon }}" width="20" height="20" style="border-radius:4px;flex-shrink:0;" alt="{{ r.name }}">
+              <span style="font-weight:500;flex-shrink:0;">{{ r.name }}</span>
+              <span style="color:#8B939B;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1;">{{ r.desc }}</span>
+              <span style="font-size:12px;color:#5E666E;background:#F1F3F4;border-radius:5px;padding:2px 8px;flex-shrink:0;">{{ r.cat }}</span>
+              <span style="font-size:12px;color:#B0B7BD;flex-shrink:0;width:64px;text-align:right;">{{ r.time }}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#B0B7BD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10M7 17 17 7"></path></svg>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <!-- 下一分区露出 -->
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="width:10px;height:10px;border-radius:3px;background:#B4E534;"></span>
+        <span style="font-size:15px;font-weight:700;">开发</span><span style="font-size:13px;color:#8B939B;">36 个网站</span>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ================= 1b Agent 工作状态 ================= -->
+<div id="1b" style="display:flex;flex-direction:column;gap:14px;">
+<div style="display:flex;align-items:center;gap:10px;"><span style="background:#16181A;color:#fff;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">1b</span><span style="font-size:14px;color:#5E666E;font-weight:500;">首页 · Agent 工作状态「帮我找 Unity API 文档」</span></div>
+<div style="width:1920px;height:1080px;overflow:hidden;background:#F5F6F7;border:1px solid #DDE1E4;box-shadow:0 2px 16px rgba(20,24,28,.08);border-radius:8px;color:#16181A;">
+  <div style="height:64px;display:flex;align-items:center;padding:0 40px;gap:36px;background:rgba(255,255,255,.92);border-bottom:1px solid #E7EAEC;">
+    <div style="display:flex;align-items:center;gap:10px;"><div style="width:30px;height:30px;border-radius:7px;background:#B4E534;display:flex;align-items:center;justify-content:center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1A2005" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88"></polygon></svg></div><span style="font-size:17px;font-weight:700;">WebHub</span></div>
+    <nav style="display:flex;gap:6px;font-size:14px;"><span style="padding:6px 14px;border-radius:7px;background:#16181A;color:#fff;font-weight:500;">首页</span><span style="padding:6px 14px;border-radius:7px;color:#5E666E;">网址库</span><span style="padding:6px 14px;border-radius:7px;color:#5E666E;">Space</span></nav>
+    <div style="flex:1;"></div>
+    <div style="display:flex;align-items:center;gap:8px;width:240px;height:34px;border:1px solid #E3E6E8;border-radius:7px;padding:0 12px;background:#fff;color:#8B939B;font-size:13px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg><span style="flex:1;">精确搜索站内网址</span><span style="border:1px solid #E3E6E8;border-radius:4px;padding:0 5px;font-size:11px;">⌘K</span></div>
+    <div style="width:34px;height:34px;border:1px solid #E3E6E8;border-radius:7px;background:#fff;display:flex;align-items:center;justify-content:center;color:#5E666E;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg></div>
+    <div style="width:32px;height:32px;border-radius:50%;background:#16181A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;">林</div>
+  </div>
+  <div style="display:flex;gap:28px;padding:24px 40px 0;">
+    <div style="width:216px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;font-size:14px;">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;background:#fff;border:1px solid #E3E6E8;font-weight:500;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4F7A0B" stroke-width="2" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"></path></svg><span style="flex:1;">全部</span><span style="font-size:12px;color:#8B939B;">128</span></div>
+      <sc-for list="{{ sideCats }}" as="c" hint-placeholder-count="6">
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;color:#3D444B;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8B939B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ c.p }}"></path></svg><span style="flex:1;">{{ c.label }}</span><span style="font-size:12px;color:#B0B7BD;">{{ c.count }}</span></div>
+      </sc-for>
+      <div style="height:1px;background:#E7EAEC;margin:14px 4px;"></div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;color:#8B939B;padding:0 12px 6px;">SPACE</div>
+      <sc-for list="{{ spaces }}" as="sp" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;color:#3D444B;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8B939B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5M12 22V12"></path></svg><span style="flex:1;">{{ sp.name }}</span><span style="font-size:12px;color:#B0B7BD;">{{ sp.count }}</span></div>
+      </sc-for>
+    </div>
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:22px;">
+      <!-- Agent 会话中 -->
+      <div style="background:#fff;border:1px solid #A8D42C;border-radius:8px;box-shadow:0 2px 12px rgba(120,160,20,.10);">
+        <div style="display:flex;align-items:center;gap:12px;padding:16px 26px;border-bottom:1px solid #F0F2F4;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6CA80F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>
+          <span style="font-size:15px;font-weight:700;">Unity API 文档</span>
+          <span style="font-size:12px;color:#8B939B;">今天 14:32</span>
+          <div style="flex:1;"></div>
+          <div style="display:flex;border:1px solid #E3E6E8;border-radius:7px;overflow:hidden;font-size:12.5px;"><span style="padding:5px 12px;color:#5E666E;">仅收藏库</span><span style="padding:5px 12px;background:#16181A;color:#fff;font-weight:500;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"></path></svg>允许联网</span></div>
+          <span style="font-size:13px;color:#5E666E;">历史</span><span style="font-size:13px;color:#5E666E;">新对话</span>
+        </div>
+        <div style="padding:20px 26px;display:flex;flex-direction:column;gap:16px;">
+          <div style="align-self:flex-end;background:#F1F3F4;border-radius:8px;padding:9px 15px;font-size:14px;max-width:520px;">帮我找 Unity API 文档</div>
+          <!-- 阶段 -->
+          <div style="display:flex;align-items:center;gap:18px;font-size:13px;">
+            <span style="display:flex;align-items:center;gap:7px;color:#4F7A0B;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>已检索收藏库 · 2 条匹配</span>
+            <span style="width:22px;height:1px;background:#DDE1E4;"></span>
+            <span style="display:flex;align-items:center;gap:7px;color:#4F7A0B;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>已联网搜索 · Tavily · 3 个来源</span>
+            <span style="width:22px;height:1px;background:#DDE1E4;"></span>
+            <span style="display:flex;align-items:center;gap:7px;color:#16181A;font-weight:500;"><span style="width:13px;height:13px;border:2px solid #B4E534;border-top-color:transparent;border-radius:50%;animation:wh-spin .9s linear infinite;display:inline-block;"></span>正在整理结果…</span>
+          </div>
+          <div style="font-size:14.5px;line-height:1.7;color:#3D444B;max-width:900px;">在你的收藏库中找到 <b>2 个</b>相关网站（「学习」分类），另外从网上找到 2 个官方资源，可一键收录<span style="display:inline-block;width:8px;height:16px;background:#B4E534;vertical-align:-3px;margin-left:3px;animation:wh-blink 1s steps(1) infinite;"></span></div>
+          <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#8B939B;">来自收藏库 · 2</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <sc-for list="{{ libRes }}" as="s" hint-placeholder-count="2">
+              <div style="display:flex;align-items:center;gap:13px;border:1px solid #E3E6E8;border-radius:8px;padding:13px 16px;" style-hover="border-color:#C6CDD2;box-shadow:0 2px 8px rgba(20,24,28,.07);">
+                <img src="{{ s.icon }}" width="28" height="28" style="border-radius:6px;flex-shrink:0;" alt="{{ s.name }}">
+                <div style="flex:1;min-width:0;">
+                  <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;font-weight:700;">{{ s.name }}</span><span style="font-size:12px;color:#8B939B;">{{ s.d }}</span></div>
+                  <div style="font-size:13px;color:#5E666E;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">{{ s.desc }}</div>
+                  <div style="font-size:11.5px;color:#8B939B;margin-top:5px;display:flex;align-items:center;gap:6px;"><span style="background:#F1F3F4;border-radius:4px;padding:1px 7px;">{{ s.src }}</span></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:5px;border:1px solid #E3E6E8;border-radius:6px;padding:5px 11px;font-size:12.5px;color:#16181A;flex-shrink:0;" style-hover="border-color:#16181A;">打开<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10M7 17 17 7"></path></svg></div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#8B939B;">来自网络 · TAVILY · 2</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <sc-for list="{{ webRes }}" as="s" hint-placeholder-count="2">
+              <div style="display:flex;align-items:center;gap:13px;border:1px solid #E3E6E8;border-radius:8px;padding:13px 16px;background:#FBFDF5;" style-hover="border-color:#A8D42C;">
+                <img src="{{ s.icon }}" width="28" height="28" style="border-radius:6px;flex-shrink:0;" alt="{{ s.name }}">
+                <div style="flex:1;min-width:0;">
+                  <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;font-weight:700;">{{ s.name }}</span><span style="font-size:12px;color:#8B939B;">{{ s.d }}</span></div>
+                  <div style="font-size:13px;color:#5E666E;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">{{ s.desc }}</div>
+                  <div style="font-size:11.5px;color:#8B939B;margin-top:5px;display:flex;align-items:center;gap:6px;"><span style="background:#EDF6D4;color:#4F7A0B;border-radius:4px;padding:1px 7px;font-weight:500;">来源 · {{ s.src }}</span><span>未收录</span></div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+                  <div style="display:flex;align-items:center;gap:5px;background:#B4E534;border-radius:6px;padding:5px 11px;font-size:12.5px;font-weight:500;color:#1A2005;" style-hover="background:#A8D42C;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M12 5v14"></path></svg>收录</div>
+                  <div style="display:flex;align-items:center;gap:5px;border:1px solid #E3E6E8;border-radius:6px;padding:4px 11px;font-size:12.5px;color:#16181A;background:#fff;">打开<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10M7 17 17 7"></path></svg></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 26px 16px;border-top:1px solid #F0F2F4;">
+          <div style="flex:1;border:1px solid #E3E6E8;border-radius:7px;padding:9px 14px;font-size:13.5px;color:#8B939B;background:#FBFCFC;">继续追问，或让我把结果加入某个 Space…</div>
+          <div style="display:flex;align-items:center;gap:6px;border:1px solid #E3E6E8;border-radius:7px;padding:8px 14px;font-size:13px;color:#5E666E;" style-hover="border-color:#16181A;color:#16181A;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>停止生成</div>
+        </div>
+      </div>
+      <!-- 置顶露出 -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4F7A0B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"></path></svg>
+          <span style="font-size:15px;font-weight:700;">置顶网站</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+          <sc-for list="{{ pinned }}" as="s" hint-placeholder-count="8">
+            <div style="display:flex;align-items:center;gap:11px;background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:12px 14px;">
+              <img src="{{ s.icon }}" width="24" height="24" style="border-radius:5px;flex-shrink:0;" alt="{{ s.name }}">
+              <div style="min-width:0;"><div style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.name }}</div><div style="font-size:12px;color:#8B939B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.d }}</div></div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <!-- 最近收录露出 -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5E666E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+          <span style="font-size:15px;font-weight:700;">最近收录</span>
+          <div style="flex:1;"></div><span style="font-size:13px;color:#8B939B;">查看更多 →</span>
+        </div>
+        <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;overflow:hidden;">
+          <sc-for list="{{ recent }}" as="r" hint-placeholder-count="5">
+            <div style="display:flex;align-items:center;gap:14px;padding:13px 18px;border-bottom:1px solid #F0F2F4;font-size:13.5px;">
+              <img src="{{ r.icon }}" width="20" height="20" style="border-radius:4px;flex-shrink:0;" alt="{{ r.name }}">
+              <span style="font-weight:500;flex-shrink:0;">{{ r.name }}</span>
+              <span style="color:#8B939B;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1;">{{ r.desc }}</span>
+              <span style="font-size:12px;color:#5E666E;background:#F1F3F4;border-radius:5px;padding:2px 8px;flex-shrink:0;">{{ r.cat }}</span>
+              <span style="font-size:12px;color:#B0B7BD;flex-shrink:0;width:64px;text-align:right;">{{ r.time }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ================= 1c 首页向下滚动 ================= -->
+<div style="display:flex;flex-wrap:wrap;gap:72px;align-items:flex-start;">
+<div id="1c" style="display:flex;flex-direction:column;gap:14px;">
+<div style="display:flex;align-items:center;gap:10px;"><span style="background:#16181A;color:#fff;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">1c</span><span style="font-size:14px;color:#5E666E;font-weight:500;">首页向下滚动 · 分类导航内容（Header + 分类 Tabs 吸顶）</span></div>
+<div style="width:1920px;height:1080px;overflow:hidden;background:#F5F6F7;border:1px solid #DDE1E4;box-shadow:0 2px 16px rgba(20,24,28,.08);border-radius:8px;color:#16181A;">
+  <div style="background:rgba(255,255,255,.96);border-bottom:1px solid #E7EAEC;box-shadow:0 2px 8px rgba(20,24,28,.05);">
+    <div style="height:56px;display:flex;align-items:center;padding:0 40px;gap:36px;">
+      <div style="display:flex;align-items:center;gap:10px;"><div style="width:28px;height:28px;border-radius:7px;background:#B4E534;display:flex;align-items:center;justify-content:center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1A2005" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88"></polygon></svg></div><span style="font-size:16px;font-weight:700;">WebHub</span></div>
+      <nav style="display:flex;gap:6px;font-size:14px;"><span style="padding:5px 14px;border-radius:7px;background:#16181A;color:#fff;font-weight:500;">首页</span><span style="padding:5px 14px;color:#5E666E;">网址库</span><span style="padding:5px 14px;color:#5E666E;">Space</span></nav>
+      <div style="flex:1;"></div>
+      <div style="display:flex;align-items:center;gap:8px;border:1px solid #E3E6E8;border-radius:7px;padding:6px 14px;font-size:13px;color:#4F7A0B;background:#F7FBE9;" style-hover="border-color:#A8D42C;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>回到 Agent</div>
+      <div style="width:32px;height:32px;border-radius:50%;background:#16181A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;">林</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:0 40px 12px;font-size:13.5px;">
+      <span style="padding:6px 16px;border-radius:7px;background:#16181A;color:#fff;font-weight:500;">全部</span>
+      <sc-for list="{{ sideCats }}" as="c" hint-placeholder-count="6">
+        <span style="padding:6px 16px;border-radius:7px;color:#5E666E;border:1px solid #E7EAEC;background:#fff;" style-hover="border-color:#A8D42C;color:#16181A;">{{ c.label }}</span>
+      </sc-for>
+      <div style="flex:1;"></div>
+      <div style="display:flex;align-items:center;gap:6px;color:#5E666E;border:1px solid #E7EAEC;background:#fff;border-radius:7px;padding:6px 12px;">按最近使用<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></div>
+    </div>
+  </div>
+  <div style="padding:22px 40px 0;display:flex;flex-direction:column;gap:26px;">
+    <sc-for list="{{ cats }}" as="sec" hint-placeholder-count="3">
+      <div>
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px;">
+          <span style="width:10px;height:10px;border-radius:3px;background:#B4E534;"></span>
+          <span style="font-size:17px;font-weight:700;">{{ sec.title }}</span>
+          <span style="font-size:13px;color:#8B939B;">{{ sec.count }} 个网站</span>
+          <div style="flex:1;"></div>
+          <span style="font-size:13px;color:#8B939B;display:flex;align-items:center;gap:5px;">按最近使用<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></span>
+          <span style="font-size:13px;color:#5E666E;" style-hover="color:#4F7A0B;">查看更多 →</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+          <sc-for list="{{ sec.sites }}" as="s" hint-placeholder-count="8">
+            <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:13px 15px;transition:border-color .12s,box-shadow .12s;" style-hover="border-color:#C6CDD2;box-shadow:0 2px 8px rgba(20,24,28,.07);">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <img src="{{ s.icon }}" width="22" height="22" style="border-radius:5px;flex-shrink:0;" alt="{{ s.name }}">
+                <span style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">{{ s.name }}</span>
+                <span style="font-size:11.5px;color:#B0B7BD;">{{ s.tag }}</span>
+              </div>
+              <div style="font-size:12.5px;color:#5E666E;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.desc }}</div>
+              <div style="font-size:11.5px;color:#B0B7BD;margin-top:5px;">{{ s.d }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</div>
+
+<!-- ================= 1d 详情页 ================= -->
+<div id="1d" style="display:flex;flex-direction:column;gap:14px;">
+<div style="display:flex;align-items:center;gap:10px;"><span style="background:#16181A;color:#fff;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">1d</span><span style="font-size:14px;color:#5E666E;font-weight:500;">网站详情页 · Unity Documentation</span></div>
+<div style="width:1920px;height:1080px;overflow:hidden;background:#F5F6F7;border:1px solid #DDE1E4;box-shadow:0 2px 16px rgba(20,24,28,.08);border-radius:8px;color:#16181A;">
+  <div style="height:64px;display:flex;align-items:center;padding:0 40px;gap:36px;background:rgba(255,255,255,.92);border-bottom:1px solid #E7EAEC;">
+    <div style="display:flex;align-items:center;gap:10px;"><div style="width:30px;height:30px;border-radius:7px;background:#B4E534;display:flex;align-items:center;justify-content:center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1A2005" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88"></polygon></svg></div><span style="font-size:17px;font-weight:700;">WebHub</span></div>
+    <nav style="display:flex;gap:6px;font-size:14px;"><span style="padding:6px 14px;color:#5E666E;">首页</span><span style="padding:6px 14px;border-radius:7px;background:#16181A;color:#fff;font-weight:500;">网址库</span><span style="padding:6px 14px;color:#5E666E;">Space</span></nav>
+    <div style="flex:1;"></div>
+    <div style="display:flex;align-items:center;gap:8px;width:240px;height:34px;border:1px solid #E3E6E8;border-radius:7px;padding:0 12px;background:#fff;color:#8B939B;font-size:13px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg><span style="flex:1;">精确搜索站内网址</span><span style="border:1px solid #E3E6E8;border-radius:4px;padding:0 5px;font-size:11px;">⌘K</span></div>
+    <div style="width:32px;height:32px;border-radius:50%;background:#16181A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;">林</div>
+  </div>
+  <div style="max-width:1520px;margin:0 auto;padding:24px 40px 0;">
+    <div style="font-size:13px;color:#8B939B;display:flex;align-items:center;gap:8px;">
+      <span style-hover="color:#4F7A0B;">网址库</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg><span style-hover="color:#4F7A0B;">学习</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg><span style="color:#16181A;">Unity Documentation</span>
+    </div>
+    <div style="display:flex;gap:28px;margin-top:20px;align-items:flex-start;">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:20px;">
+        <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:28px 32px;">
+          <div style="display:flex;gap:20px;align-items:flex-start;">
+            <div style="width:64px;height:64px;border:1px solid #EDF0F1;border-radius:8px;display:flex;align-items:center;justify-content:center;background:#FAFBFB;flex-shrink:0;"><img src="{{ unityIcon }}" width="40" height="40" style="border-radius:6px;" alt="Unity"></div>
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span style="font-size:26px;font-weight:700;">Unity Documentation</span>
+                <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:#4F7A0B;background:#EDF6D4;border-radius:5px;padding:3px 9px;font-weight:500;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"></path></svg>已置顶</span>
+              </div>
+              <div style="font-size:14px;color:#4F7A0B;margin-top:4px;">docs.unity3d.com</div>
+              <div style="font-size:15px;color:#5E666E;margin-top:8px;">Unity 引擎官方手册与脚本 API 参考文档，覆盖编辑器功能、UnityEngine 与 UnityEditor 全部命名空间。</div>
+            </div>
+            <div style="display:flex;gap:10px;flex-shrink:0;">
+              <div style="display:flex;align-items:center;gap:7px;background:#16181A;color:#fff;border-radius:7px;padding:10px 20px;font-size:14px;font-weight:500;" style-hover="background:#2A2E33;">访问官网<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10M7 17 17 7"></path></svg></div>
+              <div style="display:flex;align-items:center;gap:7px;border:1px solid #E3E6E8;border-radius:7px;padding:10px 16px;font-size:14px;color:#16181A;background:#fff;" style-hover="border-color:#16181A;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path></svg>编辑</div>
+              <div style="display:flex;align-items:center;gap:7px;border:1px solid #E3E6E8;border-radius:7px;padding:10px 16px;font-size:14px;color:#16181A;background:#fff;" style-hover="border-color:#16181A;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path></svg>加入 Space</div>
+              <div style="width:42px;display:flex;align-items:center;justify-content:center;border:1px solid #E3E6E8;border-radius:7px;color:#8B939B;background:#fff;" style-hover="border-color:#D95555;color:#D95555;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"></path></svg></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:36px;margin-top:24px;padding-top:20px;border-top:1px solid #F0F2F4;font-size:13.5px;">
+            <div><div style="color:#8B939B;font-size:12px;margin-bottom:6px;">分类</div><span style="background:#F1F3F4;border-radius:5px;padding:3px 10px;">学习</span></div>
+            <div><div style="color:#8B939B;font-size:12px;margin-bottom:6px;">标签</div><div style="display:flex;gap:6px;"><span style="border:1px solid #E7EAEC;border-radius:5px;padding:3px 10px;color:#5E666E;">Unity</span><span style="border:1px solid #E7EAEC;border-radius:5px;padding:3px 10px;color:#5E666E;">游戏开发</span><span style="border:1px solid #E7EAEC;border-radius:5px;padding:3px 10px;color:#5E666E;">API</span><span style="border:1px solid #E7EAEC;border-radius:5px;padding:3px 10px;color:#5E666E;">文档</span><span style="border:1px solid #E7EAEC;border-radius:5px;padding:3px 10px;color:#5E666E;">C#</span></div></div>
+            <div><div style="color:#8B939B;font-size:12px;margin-bottom:6px;">所属 Space</div><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid #E7EAEC;border-radius:5px;padding:3px 10px;color:#5E666E;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path></svg>Unity 学习</span></div>
+            <div style="flex:1;"></div>
+            <div style="text-align:right;color:#8B939B;font-size:12.5px;line-height:1.9;">添加于 2025-11-03 · 更新于 2026-07-20<br>来源：Agent 联网收录 · Tavily</div>
+          </div>
+        </div>
+        <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:26px 32px;">
+          <div style="font-size:16px;font-weight:700;margin-bottom:12px;">详细介绍</div>
+          <div style="font-size:14.5px;line-height:1.9;color:#3D444B;max-width:980px;">
+            <p style="margin:0 0 12px;">Unity Documentation 是 Unity 引擎的官方文档站点，由两部分组成：<b>Unity 手册（Manual）</b>介绍编辑器界面、资源管线、物理、渲染与构建发布等功能；<b>脚本 API（Scripting Reference）</b>逐条列出 UnityEngine 与 UnityEditor 命名空间下的类、方法、属性和事件，并附带 C# 示例代码。</p>
+            <p style="margin:0 0 12px;">文档支持按 Unity 版本切换（2021 LTS 至 Unity 6），并提供中文等多语言界面。查 API 时建议直接使用站内搜索或以「类名 + 方法名」为关键词，例如 <span style="background:#F1F3F4;border-radius:4px;padding:1px 7px;font-size:13px;">Rigidbody.AddForce</span>。</p>
+            <p style="margin:0;">与 Unity Learn（教程）和 Unity Discussions（社区问答）搭配使用，可以覆盖从入门学习到疑难排查的完整链路。</p>
+          </div>
+        </div>
+        <!-- 收录动态露出 -->
+        <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:26px 32px;">
+          <div style="font-size:16px;font-weight:700;margin-bottom:14px;">收录动态</div>
+          <div style="display:flex;flex-direction:column;gap:0;font-size:13.5px;">
+            <div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid #F0F2F4;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4F7A0B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path></svg>
+              <span style="color:#3D444B;">Agent 更新了描述与标签（新增「C#」）</span><div style="flex:1;"></div><span style="font-size:12px;color:#B0B7BD;">2026-07-20 · 已确认</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid #F0F2F4;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4F7A0B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path></svg>
+              <span style="color:#3D444B;">加入 Space「Unity 学习」</span><div style="flex:1;"></div><span style="font-size:12px;color:#B0B7BD;">2025-12-14 · 已确认</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;padding:11px 0;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5E666E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"></path></svg>
+              <span style="color:#3D444B;">由 Agent 联网收录 · 来源 Tavily</span><div style="flex:1;"></div><span style="font-size:12px;color:#B0B7BD;">2025-11-03 · 已确认</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="width:360px;flex-shrink:0;display:flex;flex-direction:column;gap:20px;">
+        <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:20px 22px;">
+          <div style="display:flex;align-items:center;margin-bottom:12px;"><span style="font-size:15px;font-weight:700;">相关网站</span><div style="flex:1;"></div><span style="font-size:12.5px;color:#8B939B;" style-hover="color:#4F7A0B;">同分类更多 →</span></div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <sc-for list="{{ related }}" as="s" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;gap:11px;border:1px solid #EDF0F1;border-radius:7px;padding:11px 13px;" style-hover="border-color:#C6CDD2;box-shadow:0 2px 8px rgba(20,24,28,.06);">
+                <img src="{{ s.icon }}" width="22" height="22" style="border-radius:5px;flex-shrink:0;" alt="{{ s.name }}">
+                <div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:500;">{{ s.name }}</div><div style="font-size:12px;color:#8B939B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.desc }}</div></div>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B0B7BD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10M7 17 17 7"></path></svg>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:20px 22px;">
+          <div style="font-size:15px;font-weight:700;margin-bottom:10px;">让 Agent 帮你</div>
+          <div style="display:flex;flex-direction:column;gap:7px;font-size:13px;color:#5E666E;">
+            <span style="border:1px solid #EDF0F1;background:#FAFBFB;border-radius:7px;padding:8px 12px;" style-hover="border-color:#A8D42C;color:#16181A;">找几个类似的游戏引擎文档</span>
+            <span style="border:1px solid #EDF0F1;background:#FAFBFB;border-radius:7px;padding:8px 12px;" style-hover="border-color:#A8D42C;color:#16181A;">把它加到「Unity 学习」以外的 Space</span>
+            <span style="border:1px solid #EDF0F1;background:#FAFBFB;border-radius:7px;padding:8px 12px;" style-hover="border-color:#A8D42C;color:#16181A;">更新这条收录的描述和标签</span>
+          </div>
+        </div>
+        <div style="background:#fff;border:1px solid #E3E6E8;border-radius:8px;padding:20px 22px;">
+          <div style="font-size:15px;font-weight:700;margin-bottom:12px;">「学习」分类其他网站</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <sc-for list="{{ recent }}" as="s" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;gap:11px;border:1px solid #EDF0F1;border-radius:7px;padding:11px 13px;" style-hover="border-color:#C6CDD2;">
+                <img src="{{ s.icon }}" width="22" height="22" style="border-radius:5px;flex-shrink:0;" alt="{{ s.name }}">
+                <div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:500;">{{ s.name }}</div><div style="font-size:12px;color:#8B939B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.desc }}</div></div>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#B0B7BD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10M7 17 17 7"></path></svg>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<!-- ================= 1e 深色版 Agent 工作状态 ================= -->
+<div style="display:flex;flex-wrap:wrap;gap:72px;align-items:flex-start;">
+<div id="1e" style="display:flex;flex-direction:column;gap:14px;">
+<div style="display:flex;align-items:center;gap:10px;"><span style="background:#16181A;color:#fff;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">1e</span><span style="font-size:14px;color:#5E666E;font-weight:500;">首页 Agent 工作状态 · 深色主题</span></div>
+<div style="width:1920px;height:1080px;overflow:hidden;background:#0E1012;border:1px solid #26292D;box-shadow:0 2px 16px rgba(0,0,0,.3);border-radius:8px;color:#ECEEEF;">
+  <div style="height:64px;display:flex;align-items:center;padding:0 40px;gap:36px;background:rgba(22,24,27,.92);border-bottom:1px solid #22252A;">
+    <div style="display:flex;align-items:center;gap:10px;"><div style="width:30px;height:30px;border-radius:7px;background:#B9E845;display:flex;align-items:center;justify-content:center;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1A2005" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88"></polygon></svg></div><span style="font-size:17px;font-weight:700;">WebHub</span></div>
+    <nav style="display:flex;gap:6px;font-size:14px;"><span style="padding:6px 14px;border-radius:7px;background:#ECEEEF;color:#111;font-weight:500;">首页</span><span style="padding:6px 14px;color:#9AA1A9;">网址库</span><span style="padding:6px 14px;color:#9AA1A9;">Space</span></nav>
+    <div style="flex:1;"></div>
+    <div style="display:flex;align-items:center;gap:8px;width:240px;height:34px;border:1px solid #26292D;border-radius:7px;padding:0 12px;background:#16181B;color:#6E767E;font-size:13px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg><span style="flex:1;">精确搜索站内网址</span><span style="border:1px solid #26292D;border-radius:4px;padding:0 5px;font-size:11px;">⌘K</span></div>
+    <div style="width:34px;height:34px;border:1px solid #26292D;border-radius:7px;background:#16181B;display:flex;align-items:center;justify-content:center;color:#9AA1A9;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg></div>
+    <div style="width:32px;height:32px;border-radius:50%;background:#ECEEEF;color:#111;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;">林</div>
+  </div>
+  <div style="display:flex;gap:28px;padding:24px 40px 0;">
+    <div style="width:216px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;font-size:14px;">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;background:#1D2024;border:1px solid #2C3036;font-weight:500;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C9F259" stroke-width="2" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"></path></svg><span style="flex:1;">全部</span><span style="font-size:12px;color:#6E767E;">128</span></div>
+      <sc-for list="{{ sideCats }}" as="c" hint-placeholder-count="6">
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:7px;color:#B7BDC4;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6E767E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ c.p }}"></path></svg><span style="flex:1;">{{ c.label }}</span><span style="font-size:12px;color:#585F66;">{{ c.count }}</span></div>
+      </sc-for>
+      <div style="height:1px;background:#22252A;margin:14px 4px;"></div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;color:#6E767E;padding:0 12px 6px;">SPACE</div>
+      <sc-for list="{{ spaces }}" as="sp" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;color:#B7BDC4;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6E767E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5M12 22V12"></path></svg><span style="flex:1;">{{ sp.name }}</span><span style="font-size:12px;color:#585F66;">{{ sp.count }}</span></div>
+      </sc-for>
+    </div>
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:22px;">
+      <div style="background:#16181B;border:1px solid #4A5A18;border-radius:8px;box-shadow:0 2px 16px rgba(150,200,40,.07);">
+        <div style="display:flex;align-items:center;gap:12px;padding:16px 26px;border-bottom:1px solid #22252A;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C9F259" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>
+          <span style="font-size:15px;font-weight:700;">Unity API 文档</span><span style="font-size:12px;color:#6E767E;">今天 14:32</span>
+          <div style="flex:1;"></div>
+          <div style="display:flex;border:1px solid #26292D;border-radius:7px;overflow:hidden;font-size:12.5px;"><span style="padding:5px 12px;color:#9AA1A9;">仅收藏库</span><span style="padding:5px 12px;background:#ECEEEF;color:#111;font-weight:500;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"></path></svg>允许联网</span></div>
+          <span style="font-size:13px;color:#9AA1A9;">历史</span><span style="font-size:13px;color:#9AA1A9;">新对话</span>
+        </div>
+        <div style="padding:20px 26px;display:flex;flex-direction:column;gap:16px;">
+          <div style="align-self:flex-end;background:#22252A;border-radius:8px;padding:9px 15px;font-size:14px;max-width:520px;">帮我找 Unity API 文档</div>
+          <div style="display:flex;align-items:center;gap:18px;font-size:13px;">
+            <span style="display:flex;align-items:center;gap:7px;color:#C9F259;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>已检索收藏库 · 2 条匹配</span>
+            <span style="width:22px;height:1px;background:#33373D;"></span>
+            <span style="display:flex;align-items:center;gap:7px;color:#C9F259;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>已联网搜索 · Tavily · 3 个来源</span>
+            <span style="width:22px;height:1px;background:#33373D;"></span>
+            <span style="display:flex;align-items:center;gap:7px;color:#ECEEEF;font-weight:500;"><span style="width:13px;height:13px;border:2px solid #B9E845;border-top-color:transparent;border-radius:50%;animation:wh-spin .9s linear infinite;display:inline-block;"></span>正在整理结果…</span>
+          </div>
+          <div style="font-size:14.5px;line-height:1.7;color:#C4CAD0;max-width:900px;">在你的收藏库中找到 <b style="color:#ECEEEF;">2 个</b>相关网站（「学习」分类），另外从网上找到 2 个官方资源，可一键收录<span style="display:inline-block;width:8px;height:16px;background:#B9E845;vertical-align:-3px;margin-left:3px;animation:wh-blink 1s steps(1) infinite;"></span></div>
+          <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#6E767E;">来自收藏库 · 2</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <sc-for list="{{ libRes }}" as="s" hint-placeholder-count="2">
+              <div style="display:flex;align-items:center;gap:13px;border:1px solid #26292D;border-radius:8px;padding:13px 16px;background:#1A1D20;" style-hover="border-color:#3A3F45;">
+                <img src="{{ s.icon }}" width="28" height="28" style="border-radius:6px;flex-shrink:0;background:#fff;padding:2px;" alt="{{ s.name }}">
+                <div style="flex:1;min-width:0;">
+                  <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;font-weight:700;">{{ s.name }}</span><span style="font-size:12px;color:#6E767E;">{{ s.d }}</span></div>
+                  <div style="font-size:13px;color:#9AA1A9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">{{ s.desc }}</div>
+                  <div style="font-size:11.5px;color:#6E767E;margin-top:5px;"><span style="background:#22252A;border-radius:4px;padding:1px 7px;">{{ s.src }}</span></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:5px;border:1px solid #33373D;border-radius:6px;padding:5px 11px;font-size:12.5px;color:#ECEEEF;flex-shrink:0;" style-hover="border-color:#ECEEEF;">打开<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10M7 17 17 7"></path></svg></div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#6E767E;">来自网络 · TAVILY · 2</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <sc-for list="{{ webRes }}" as="s" hint-placeholder-count="2">
+              <div style="display:flex;align-items:center;gap:13px;border:1px solid #34400F;border-radius:8px;padding:13px 16px;background:#181C10;" style-hover="border-color:#5A6E1E;">
+                <img src="{{ s.icon }}" width="28" height="28" style="border-radius:6px;flex-shrink:0;background:#fff;padding:2px;" alt="{{ s.name }}">
+                <div style="flex:1;min-width:0;">
+                  <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;font-weight:700;">{{ s.name }}</span><span style="font-size:12px;color:#6E767E;">{{ s.d }}</span></div>
+                  <div style="font-size:13px;color:#9AA1A9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">{{ s.desc }}</div>
+                  <div style="font-size:11.5px;margin-top:5px;display:flex;align-items:center;gap:6px;"><span style="background:#2C3611;color:#C9F259;border-radius:4px;padding:1px 7px;font-weight:500;">来源 · {{ s.src }}</span><span style="color:#6E767E;">未收录</span></div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+                  <div style="display:flex;align-items:center;gap:5px;background:#B9E845;border-radius:6px;padding:5px 11px;font-size:12.5px;font-weight:500;color:#1A2005;" style-hover="background:#C9F259;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M12 5v14"></path></svg>收录</div>
+                  <div style="display:flex;align-items:center;gap:5px;border:1px solid #33373D;border-radius:6px;padding:4px 11px;font-size:12.5px;color:#ECEEEF;">打开<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10M7 17 17 7"></path></svg></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 26px 16px;border-top:1px solid #22252A;">
+          <div style="flex:1;border:1px solid #26292D;border-radius:7px;padding:9px 14px;font-size:13.5px;color:#6E767E;background:#111316;">继续追问，或让我把结果加入某个 Space…</div>
+          <div style="display:flex;align-items:center;gap:6px;border:1px solid #33373D;border-radius:7px;padding:8px 14px;font-size:13px;color:#9AA1A9;" style-hover="border-color:#ECEEEF;color:#ECEEEF;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>停止生成</div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#C9F259" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"></path></svg>
+          <span style="font-size:15px;font-weight:700;">置顶网站</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+          <sc-for list="{{ pinned }}" as="s" hint-placeholder-count="8">
+            <div style="display:flex;align-items:center;gap:11px;background:#16181B;border:1px solid #26292D;border-radius:8px;padding:12px 14px;" style-hover="border-color:#3A3F45;">
+              <img src="{{ s.icon }}" width="24" height="24" style="border-radius:5px;flex-shrink:0;background:#fff;padding:2px;" alt="{{ s.name }}">
+              <div style="min-width:0;"><div style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.name }}</div><div style="font-size:12px;color:#6E767E;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.d }}</div></div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <!-- 最近收录露出（深色） -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9AA1A9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+          <span style="font-size:15px;font-weight:700;">最近收录</span>
+          <div style="flex:1;"></div><span style="font-size:13px;color:#6E767E;">查看更多 →</span>
+        </div>
+        <div style="background:#16181B;border:1px solid #26292D;border-radius:8px;overflow:hidden;">
+          <sc-for list="{{ recent }}" as="r" hint-placeholder-count="5">
+            <div style="display:flex;align-items:center;gap:14px;padding:13px 18px;border-bottom:1px solid #22252A;font-size:13.5px;">
+              <img src="{{ r.icon }}" width="20" height="20" style="border-radius:4px;flex-shrink:0;background:#fff;padding:2px;" alt="{{ r.name }}">
+              <span style="font-weight:500;flex-shrink:0;">{{ r.name }}</span>
+              <span style="color:#6E767E;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1;">{{ r.desc }}</span>
+              <span style="font-size:12px;color:#9AA1A9;background:#22252A;border-radius:5px;padding:2px 8px;flex-shrink:0;">{{ r.cat }}</span>
+              <span style="font-size:12px;color:#585F66;flex-shrink:0;width:64px;text-align:right;">{{ r.time }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ================= 1f 规范板 ================= -->
+<sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+<div id="1f" style="display:flex;flex-direction:column;gap:14px;">
+<div style="display:flex;align-items:center;gap:10px;"><span style="background:#16181A;color:#fff;border-radius:6px;padding:3px 9px;font-size:12px;font-weight:700;">1f</span><span style="font-size:14px;color:#5E666E;font-weight:500;">设计规范 · 色彩 / 字体 / 栅格 / 组件状态 / 图标映射 / 动效</span></div>
+<div style="width:1400px;background:#fff;border:1px solid #DDE1E4;border-radius:8px;padding:36px 40px;color:#16181A;display:flex;flex-direction:column;gap:30px;box-shadow:0 2px 16px rgba(20,24,28,.08);">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:36px;">
+    <div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:12px;">色彩</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;font-size:11.5px;color:#5E666E;">
+        <div><div style="height:44px;border-radius:6px;background:#F5F6F7;border:1px solid #E3E6E8;"></div>页面底 #F5F6F7</div>
+        <div><div style="height:44px;border-radius:6px;background:#FFFFFF;border:1px solid #E3E6E8;"></div>表面 #FFFFFF</div>
+        <div><div style="height:44px;border-radius:6px;background:#16181A;"></div>主文字 #16181A</div>
+        <div><div style="height:44px;border-radius:6px;background:#5E666E;"></div>次文字 #5E666E</div>
+        <div><div style="height:44px;border-radius:6px;background:#E3E6E8;"></div>边框 #E3E6E8</div>
+        <div><div style="height:44px;border-radius:6px;background:#B4E534;"></div>青柠主强调 #B4E534</div>
+        <div><div style="height:44px;border-radius:6px;background:#4F7A0B;"></div>强调文字 #4F7A0B</div>
+        <div><div style="height:44px;border-radius:6px;background:#EDF6D4;border:1px solid #E3E6E8;"></div>强调底 #EDF6D4</div>
+        <div><div style="height:44px;border-radius:6px;background:#0E1012;"></div>深色底 #0E1012</div>
+        <div><div style="height:44px;border-radius:6px;background:#16181B;"></div>深色表面 #16181B</div>
+        <div><div style="height:44px;border-radius:6px;background:#26292D;"></div>深色边框 #26292D</div>
+        <div><div style="height:44px;border-radius:6px;background:#B9E845;"></div>深色强调 #B9E845</div>
+      </div>
+      <div style="font-size:12.5px;color:#8B939B;margin-top:10px;line-height:1.8;">青柠绿仅用于：Logo 底、Agent 发送/收录按钮、来源徽标、置顶标记、聚焦边框。禁止蓝/紫及蓝紫渐变；网站 favicon 保留自身品牌色。</div>
+    </div>
+    <div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:12px;">字体与栅格</div>
+      <div style="font-size:13px;line-height:2;color:#3D444B;">
+        字体：Noto Sans SC / PingFang SC / Microsoft YaHei，字距 0（无负字距）<br>
+        字阶：26 页面标题 · 21 Agent 标题 · 17 分区标题 · 15/14 正文与卡片 · 13 辅助 · 12/11.5 元信息<br>
+        栅格：1920 画布 · 页边距 40 · 侧栏 216 + 间距 28 · 内容自适应 · 卡片 4 列 grid，gap 12 · 间距基数 4/8px<br>
+        圆角：卡片与浮层 8px · 按钮/输入 7px · 徽标 4–5px（全站 ≤8px）<br>
+        边框：1px 实线 · 阴影：默认 0 1px 2px 4%，hover 0 2px 8px 7%，Agent 面板 0 2px 12px（带青柠色相 10%）
+      </div>
+      <div style="font-size:15px;font-weight:700;margin:16px 0 10px;">组件状态</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px;">
+        <span style="border:1px solid #E3E6E8;border-radius:8px;padding:8px 14px;background:#fff;">卡片 默认</span>
+        <span style="border:1px solid #C6CDD2;border-radius:8px;padding:8px 14px;background:#fff;box-shadow:0 2px 8px rgba(20,24,28,.07);">卡片 hover（不位移）</span>
+        <span style="border:1px solid #A8D42C;border-radius:8px;padding:8px 14px;background:#FBFDF5;">外部结果 / 待确认</span>
+        <span style="background:#16181A;color:#fff;border-radius:7px;padding:8px 14px;">主按钮</span>
+        <span style="background:#B4E534;color:#1A2005;border-radius:7px;padding:8px 14px;font-weight:500;">Agent 动作按钮</span>
+        <span style="border:1px solid #E3E6E8;border-radius:7px;padding:8px 14px;color:#B0B7BD;">禁用</span>
+      </div>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:36px;border-top:1px solid #F0F2F4;padding-top:26px;">
+    <div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:12px;">Lucide 图标映射</div>
+      <div style="font-size:13px;line-height:2.1;color:#3D444B;columns:2;">
+        搜索 search · 发送 arrow-up · 停止 square<br>新对话 plus · 历史 history · 联网 globe<br>Agent sparkles · 置顶 pin · 时间 clock<br>全部 layout-grid · 开发 code · AI 工具 sparkles<br>学习 book-open · 设计 palette · 日常 coffee<br>未分类 inbox · Space box · 打开 arrow-up-right<br>编辑 pencil · 删除 trash-2 · 确认 check<br>主题 sun / moon · 展开 chevron-down
+      </div>
+      <div style="font-size:12.5px;color:#8B939B;margin-top:10px;line-height:1.8;">统一 16px / stroke 2 / 圆头圆角。品牌资源（各网站 favicon，OpenAI、DeepSeek、Qwen、Kimi、Ollama、Tavily、Jina、Exa Logo）本地打包，提供浅/深两套，不走第三方 CDN；效果图中暂以 Google favicon 服务示意。禁止 Emoji 与混用图标库。</div>
+    </div>
+    <div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:12px;">动效与 Reduced Motion</div>
+      <div style="font-size:13px;line-height:2.1;color:#3D444B;">
+        输入框聚焦：边框→青柠 + 展开，180ms cubic-bezier(.2,.8,.2,1)<br>
+        Slash 面板：y 8→0 + 淡入，160ms · 阶段完成：check 弹入 240ms<br>
+        流式结果：卡片依次 y 12→0，逐张延迟 60ms · spinner 0.9s linear<br>
+        收录成功：卡片飞向左侧分类，计数 +1 脉冲，320ms<br>
+        卡片 hover：仅边框/阴影变化 120ms，不位移不缩放<br>
+        prefers-reduced-motion：全部替换为 0ms 透明度切换，spinner 改静态省略号
+      </div>
+      <div style="font-size:15px;font-weight:700;margin:16px 0 10px;">滚动 / Sticky / 响应式</div>
+      <div style="font-size:13px;line-height:2.1;color:#3D444B;">
+        正常文档流 + 主滚动条；Header 64px sticky；滚过 Agent 后分类 Tabs 吸附于 Header 下（见 <a href="#1c">1c</a>）。<br>
+        响应式（后续）：1024–1279 三列、侧栏折叠为顶部 Tabs；&lt;768 单列，Agent 收为吸底入口。
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</sc-if>
+</div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: &quot;4200px&quot;}, &quot;faviconMode&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;real&quot;, &quot;letter&quot;], &quot;default&quot;: &quot;real&quot;, &quot;tsType&quot;: &quot;'real' | 'letter'&quot;, &quot;section&quot;: &quot;内容&quot;}, &quot;showSpecs&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;内容&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const mode = this.props.faviconMode ?? 'real';
+    const I = (d, n) => {
+      if (mode === 'real') return 'https://www.google.com/s2/favicons?domain=' + d + '&sz=64';
+      const ch = (n || d).trim()[0].toUpperCase();
+      return 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" rx="12" fill="#E7ECEF"/><text x="32" y="43" font-family="Helvetica,Arial" font-size="30" font-weight="700" text-anchor="middle" fill="#5E666E">' + ch + '</text></svg>');
+    };
+    const site = s => ({ ...s, icon: I(s.d.split('/')[0], s.name) });
+    const sideCats = [
+      { label: '开发', count: 36, p: 'm16 18 6-6-6-6M8 6l-6 6 6 6' },
+      { label: 'AI 工具', count: 24, p: 'M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z' },
+      { label: '学习', count: 18, p: 'M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z' },
+      { label: '设计', count: 21, p: 'M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z' },
+      { label: '日常', count: 22, p: 'M10 2v2M14 2v2M6 2v2M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1' },
+      { label: '未分类', count: 7, p: 'M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z' }
+    ];
+    const pinned = [
+      { name: 'GitHub', d: 'github.com' }, { name: 'MDN Web Docs', d: 'developer.mozilla.org' },
+      { name: 'Figma', d: 'figma.com' }, { name: 'Stack Overflow', d: 'stackoverflow.com' },
+      { name: '知乎', d: 'zhihu.com' }, { name: 'Notion', d: 'notion.so' },
+      { name: '哔哩哔哩', d: 'bilibili.com' }, { name: 'Hugging Face', d: 'huggingface.co' }
+    ].map(site);
+    const recent = [
+      { name: 'Playwright', d: 'playwright.dev', desc: '微软开源的跨浏览器端到端测试框架', cat: '开发', time: '2 小时前' },
+      { name: 'AI 工具集', d: 'ai-bot.cn', desc: '国内常用 AI 工具与资讯导航', cat: 'AI 工具', time: '昨天' },
+      { name: '阮一峰的网络日志', d: 'ruanyifeng.com', desc: '每周科技爱好者周刊与技术随笔', cat: '学习', time: '3 天前' },
+      { name: 'Excalidraw', d: 'excalidraw.com', desc: '手绘风格的在线白板与流程图工具', cat: '设计', time: '5 天前' },
+      { name: 'Can I use', d: 'caniuse.com', desc: '前端特性浏览器兼容性查询', cat: '开发', time: '上周' }
+    ].map(site);
+    const spaces = [
+      { name: '前端开发', count: 12 }, { name: 'Unity 学习', count: 8 },
+      { name: '求职准备', count: 6 }, { name: '周末阅读', count: 9 }
+    ];
+    const cats = [
+      { title: '开发', count: 36, sites: [
+        { name: 'GitHub', d: 'github.com', desc: '代码托管与开源协作平台', tag: 'Git' },
+        { name: 'MDN Web Docs', d: 'developer.mozilla.org', desc: 'Web 技术权威参考文档', tag: '文档' },
+        { name: 'Stack Overflow', d: 'stackoverflow.com', desc: '程序员问答社区', tag: '问答' },
+        { name: 'Vercel', d: 'vercel.com', desc: '前端部署与托管平台', tag: '部署' },
+        { name: 'Playwright', d: 'playwright.dev', desc: '跨浏览器端到端测试框架', tag: '测试' },
+        { name: 'Can I use', d: 'caniuse.com', desc: '浏览器兼容性查询', tag: '兼容性' },
+        { name: 'V2EX', d: 'v2ex.com', desc: '创意工作者社区', tag: '社区' },
+        { name: 'npm', d: 'npmjs.com', desc: 'JavaScript 包管理仓库', tag: '包管理' }
+      ].map(site) },
+      { title: 'AI 工具', count: 24, sites: [
+        { name: 'Hugging Face', d: 'huggingface.co', desc: '开源模型与数据集社区', tag: '模型' },
+        { name: 'DeepSeek', d: 'deepseek.com', desc: '深度求索大模型开放平台', tag: '大模型' },
+        { name: 'Kimi', d: 'kimi.moonshot.cn', desc: '月之暗面智能助手', tag: '助手' },
+        { name: 'Ollama', d: 'ollama.com', desc: '本地大模型运行工具', tag: '本地部署' },
+        { name: 'AI 工具集', d: 'ai-bot.cn', desc: '国内 AI 工具导航', tag: '导航' },
+        { name: 'OpenAI Platform', d: 'platform.openai.com', desc: 'OpenAI 开发者平台', tag: 'API' },
+        { name: 'ModelScope', d: 'modelscope.cn', desc: '魔搭模型开放社区', tag: '模型' },
+        { name: '秘塔 AI 搜索', d: 'metaso.cn', desc: '无广告的 AI 搜索引擎', tag: '搜索' }
+      ].map(site) },
+      { title: '设计', count: 21, sites: [
+        { name: 'Figma', d: 'figma.com', desc: '协作式界面设计工具', tag: 'UI' },
+        { name: 'Dribbble', d: 'dribbble.com', desc: '设计师作品灵感社区', tag: '灵感' },
+        { name: 'Iconfont', d: 'iconfont.cn', desc: '阿里巴巴矢量图标库', tag: '图标' },
+        { name: '站酷', d: 'zcool.com.cn', desc: '中国设计师互动平台', tag: '社区' },
+        { name: 'Unsplash', d: 'unsplash.com', desc: '免费高质量图库', tag: '图库' },
+        { name: 'Coolors', d: 'coolors.co', desc: '配色方案生成器', tag: '配色' },
+        { name: 'Mobbin', d: 'mobbin.com', desc: '移动与网页设计模式库', tag: '模式库' },
+        { name: 'Behance', d: 'behance.net', desc: 'Adobe 创意作品平台', tag: '作品集' }
+      ].map(site) },
+      { title: '日常', count: 22, sites: [
+        { name: '知乎', d: 'zhihu.com', desc: '中文互联网问答社区', tag: '问答' },
+        { name: '哔哩哔哩', d: 'bilibili.com', desc: '视频弹幕网站', tag: '视频' },
+        { name: '少数派', d: 'sspai.com', desc: '高效工作与品质生活', tag: '效率' },
+        { name: '豆瓣', d: 'douban.com', desc: '书影音评分与讨论社区', tag: '书影音' },
+        { name: '下厨房', d: 'xiachufang.com', desc: '菜谱与美食社区', tag: '菜谱' },
+        { name: '什么值得买', d: 'smzdm.com', desc: '消费决策与优惠信息', tag: '购物' },
+        { name: '12306', d: '12306.cn', desc: '铁路官方购票平台', tag: '出行' },
+        { name: '网易云音乐', d: 'music.163.com', desc: '音乐流媒体平台', tag: '音乐' }
+      ].map(site) }
+    ];
+    const libRes = [
+      { name: 'Unity Documentation', d: 'docs.unity3d.com', desc: 'Unity 官方手册与脚本 API 文档', src: '收藏库 · 学习' },
+      { name: 'Unity Learn', d: 'learn.unity.com', desc: 'Unity 官方教程与学习路径', src: '收藏库 · 学习' }
+    ].map(site);
+    const webRes = [
+      { name: 'Unity Scripting API', d: 'docs.unity3d.com', desc: 'UnityEngine 全部类与方法参考', src: 'Tavily' },
+      { name: 'Unity Discussions', d: 'discussions.unity.com', desc: 'Unity 官方开发者讨论区', src: 'Tavily' }
+    ].map(site);
+    const related = [
+      { name: 'Unity Learn', d: 'learn.unity.com', desc: '官方教程与学习路径' },
+      { name: 'Unity Asset Store', d: 'assetstore.unity.com', desc: '官方资源商店' },
+      { name: 'Godot Docs', d: 'docs.godotengine.org', desc: 'Godot 引擎官方文档' },
+      { name: 'Unreal 开发者文档', d: 'dev.epicgames.com', desc: 'Epic 官方开发文档' }
+    ].map(site);
+    return {
+      sideCats, pinned, recent, spaces, cats, libRes, webRes, related,
+      unityIcon: I('docs.unity3d.com', 'Unity'),
+      showSpecs: this.props.showSpecs ?? true
+    };
+  }
+}
+</script>
+</body>
+</html>
