@@ -613,7 +613,17 @@ async def _propose_sites(context: AgentToolContext, args: ProposeSitesArgs) -> d
     }
 
 
+async def _propose_reclassify(context: AgentToolContext, _: EmptyArgs) -> dict[str, Any]:
+    """Return a draft for full-library LLM reclassification; zero model calls."""
+
+    from webhub.library import reclassify
+
+    async with context.database.sessions() as session:
+        return await reclassify.propose_reclassification(session, context.user_id)
+
+
 def build_tools(context: AgentToolContext) -> Sequence[Any]:
+
     """Build the LangChain tool list for one account-scoped turn."""
 
     from langchain_core.tools import StructuredTool
@@ -718,6 +728,14 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
             ProposeSpaceMembershipArgs,
             _propose_space_membership,
         ),
+        structured(
+            "propose_reclassify",
+            "对当前资料库里所有网站发起 LLM 批量自动分类提案。它在提案阶段零模型消耗，"
+            "会计算预估请求数与字符。未配置 Provider 时会被直接拒绝；"
+            "调用后必须说“请确认后开始分类”。",
+            EmptyArgs,
+            _propose_reclassify,
+        ),
     ]
     if context.search_binding is not None:
         tools.append(
@@ -728,6 +746,7 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
                 _web_search,
             )
         )
+
     return tools
 
 

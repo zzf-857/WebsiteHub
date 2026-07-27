@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable
 from typing import Annotated, Literal
 
+import pydantic
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from webhub.agent.provider_binding import resolve_optional_binding
@@ -361,3 +362,45 @@ async def reorder_category_sites(
             before_site_id=payload.before_site_id,
         )
     )
+
+
+class ReclassifyApplyRequest(pydantic.BaseModel):
+    expected_versions: dict[str, int]
+
+
+@router.post("/reclassify/propose")
+async def propose_library_reclassification(
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> dict[str, object]:
+    """Build a reclassification draft with token/cost estimations. Zero model calls."""
+
+    from webhub.library import reclassify
+
+    return await reclassify.propose_reclassification(session, identity.user.id)
+
+
+@router.post("/reclassify/apply")
+async def apply_library_reclassification(
+    payload: ReclassifyApplyRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> dict[str, object]:
+    """Execute LLM reclassification on the account's sites."""
+
+    from webhub.library import reclassify
+
+    try:
+        return await reclassify.apply_reclassification(
+            session,
+            identity.user.id,
+            expected_versions=payload.expected_versions,
+        )
+    except reclassify.ReclassificationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error.safe_message,
+        ) from error
+

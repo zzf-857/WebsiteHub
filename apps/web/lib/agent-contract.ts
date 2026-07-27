@@ -31,7 +31,8 @@ export type AgentToolName =
   | "propose_site"
   | "propose_site_update"
   | "propose_sites"
-  | "propose_space_membership";
+  | "propose_space_membership"
+  | "propose_reclassify";
 
 const AGENT_TOOL_LABELS: Record<string, string> = {
   search_library: "检索资料库",
@@ -44,7 +45,9 @@ const AGENT_TOOL_LABELS: Record<string, string> = {
   propose_site_update: "生成修改草稿",
   propose_sites: "生成批量收录草稿",
   propose_space_membership: "生成 Space 变更草稿",
+  propose_reclassify: "生成全库重分类草稿",
 };
+
 
 export function agentToolLabel(name: string): string {
   return AGENT_TOOL_LABELS[name] ?? name;
