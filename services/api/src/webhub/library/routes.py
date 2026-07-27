@@ -367,6 +367,7 @@ async def reorder_category_sites(
 
 
 class ReclassifyApplyRequest(pydantic.BaseModel):
+    expected_categories: dict[str, str]
     expected_versions: dict[str, int]
 
 
@@ -384,14 +385,15 @@ async def propose_library_reclassification(
         return await reclassify.propose_reclassification(session, identity.user.id)
     except Exception as error:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(error),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="暂时无法生成重分类草稿，请稍后重试。",
         ) from error
 
 
 @router.post("/reclassify/apply")
 async def apply_library_reclassification(
     payload: ReclassifyApplyRequest,
+    request: Request,
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
@@ -404,15 +406,17 @@ async def apply_library_reclassification(
         return await reclassify.apply_reclassification(
             session,
             identity.user.id,
+            expected_categories=payload.expected_categories,
             expected_versions=payload.expected_versions,
+            cancel_requested=request.is_disconnected,
         )
     except reclassify.ReclassificationError as error:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=error.status_code,
             detail=error.safe_message,
         ) from error
     except Exception as error:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(error),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="重分类暂时无法完成，结果未写入，请稍后重试。",
         ) from error

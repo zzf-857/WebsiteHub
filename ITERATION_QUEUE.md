@@ -502,7 +502,7 @@ data-compact → 计算样式正确」，两个 observer 的实际触发时机�
 
 ## Q13 · 未闭环逻辑审计与修复（含在途图标特性收尾）
 
-状态: 已完成
+状态: 已完成 · 00aa40c（第一轮）+ 本轮安全收口
 对应: 2026-07-27 接手审计
 插入原因: 接手时工作区有 82 个文件未提交，混着两件事——一次已完成且有 MANIFEST
 记录的清理，和一个未完成的「分类图标 + favicon + preview_url」特性。后者让门禁变红
@@ -517,7 +517,7 @@ data-compact → 计算样式正确」，两个 observer 的实际触发时机�
    `status="success"`。**用户花掉了 token、看到"成功"、库里一行没变。**
    现在改读 `bound.source_id` 与 `bound.mapping`，并按 `category_id`（契约里
    existing 的权威引用）而不是按名字解析目标分类。
-   已补 `test_reclassify_apply_actually_moves_sites`，并**反向验证过它真能抓到这个
+   已补 `test_reclassify_apply_moves_site_to_end_of_nonempty_category`，并**反向验证过它真能抓到这个
    bug**（把代码改回旧写法 → 测试红）。此前 3 个 Q12 测试只覆盖 propose 的
    rejected/noop，apply 零覆盖，所以门禁全绿也放过了它。
 
@@ -560,6 +560,36 @@ data-compact → 计算样式正确」，两个 observer 的实际触发时机�
 - `listing.py` 给 `SiteListAggregate` 传 `total_count`，而 schema 无此字段、
   pydantic 静默丢弃。已删并加注释。
 
+**二次安全收口（真实模型长任务暴露出的边界）**：
+- 重分类现在是严格的 category-only 任务：标签在提示词、输出校验和落库三层禁用，
+  模型即使返回标签或多余字段也不会改动用户标签。
+- 草稿同时携带完整网站 `{id: version}` 与分类法 `{category_id: name}` 快照。
+  apply 在花额度前验证一次，模型返回后在写事务中再验证一次；新增、删除、改名或版本变化
+  均返回 409，整批不写。
+- 模型 I/O 前主动结束 SQLite 读事务；返回后用 `BEGIN IMMEDIATE` 取得写保留锁，
+  再读全库快照。每条 UPDATE 还带 `user_id/id/version` 条件，任一冲突整批回滚。
+- 跨分类移动会为目标分类分配稳定且唯一的尾部 position；提交前再次检查断连，
+  防止浏览器已经看到失败后后台仍产生意外写入。
+- `run_plan` 最多 4 路并发，每批最多 2 次尝试。每次 Provider 调用由
+  `asyncio.timeout` 限制为 90 秒总 wall-clock；草稿同时披露预计请求数与含重试的最大请求数。
+- 断连会阻止后续批次和重试；同组任一任务失败时会 cancel 并 drain 其他 Provider 任务，
+  不让已失败的请求继续消耗额度。Next 外部 rewrite 窗口由默认值提升到 45 分钟，
+  覆盖 50 批、4 并发、2 次尝试的约 39 分钟最坏合法计划。
+- 预算不足或 localhost/私网隐私排除不再悄悄变成“部分全库”：propose/apply 都会在
+  调用模型前整体拒绝。数据库锁失败和未知异常只返回固定安全文案，不透出 SQL、driver
+  或厂商内容。
+- 新增迁移 `20260727_0009`，只为仍是 `Folder` 的历史分类回填名称推断图标，
+  保留明确手选图标；数据修复不可逆，downgrade 不覆盖用户选择，迁移往返已测。
+
+**真实 Provider / Chrome 验收（不要为了复核再次花额度）**：
+- 真实 Chrome 已确认首页分类和网站卡片渲染 `Folder` / `Bot` / `Gamepad2` / `Code` /
+  `PenTool` 等 Lucide 图标，AI 分类网站卡片实际为 `Bot`。
+- 一次真实 Provider 全库重分类后，网站数保持 2027，`version_sum` 从 2029 变为 2880，
+  即 851 个网站各更新一次；分类映射哈希发生变化。标签、Bookmark、analysis、source、
+  provenance 均未变化，分类内 position 零空值、零重复。
+- 首次真实长任务超过旧 20 分钟代理窗口时，前端先收到断连而后端仍继续并最终提交，
+  暴露了“失败后意外写入”的真问题；上述断连检查、任务回收和 45 分钟代理窗口已针对它闭环。
+
 **审计中被证伪、确认不是问题的（别再来一遍）**：
 - `recover_finalizing_parse_run` 无生产调用方 —— 命中 PROGRESS.md「刻意没做的」
   第 3 条（进程内 worker，不做崩溃自愈），它是给未来真 worker 预留的脚手架。
@@ -582,7 +612,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 143 测试 / 后端 441 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 147 测试 / 后端 459 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 

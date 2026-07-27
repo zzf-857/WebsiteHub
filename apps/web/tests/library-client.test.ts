@@ -5,6 +5,7 @@ import {
   buildLibrarySiteSearchParams,
   createLibraryCategory,
   createLibrarySite,
+  confirmAgentReclassify,
   deleteLibrarySite,
   LibraryApiError,
   listLibrarySites,
@@ -115,6 +116,29 @@ test("site writes serialize bodies and delete optimistic concurrency", async (co
   });
   assert.equal(requests[3]?.input, "/api/backend/library/sites/site%2Fone?expected_version=5");
   assert.equal(requests[3]?.init?.method, "DELETE");
+});
+
+test("reclassification confirmation sends both immutable snapshots", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  let requestBody: unknown;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ status: "success" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  await confirmAgentReclassify({
+    expectedCategories: { "category-1": "开发" },
+    expectedVersions: { "site-1": 3 },
+  });
+
+  assert.deepEqual(requestBody, {
+    expected_categories: { "category-1": "开发" },
+    expected_versions: { "site-1": 3 },
+  });
 });
 
 test("surfaces structured backend error codes to interaction logic", async (context) => {

@@ -354,8 +354,9 @@ function ReclassifyCard({
       </div>
       {/* 花钱提示：重分类要调用户自己的 model Provider，确认前必须先看到预估请求数。 */}
       <p className="draft-card-description">
-        将重新分类 <strong>{draft.siteCount}</strong> 个网站，预计发出{" "}
-        <strong>{draft.estimatedRequestCount}</strong> 次模型请求（约{" "}
+        将重新分类 <strong>{draft.siteCount}</strong> 个网站，模型请求预计{" "}
+        <strong>{draft.estimatedRequestCount}</strong> 次，单批失败最多重试一次，上限{" "}
+        <strong>{draft.maximumRequestCount}</strong> 次（约{" "}
         {draft.estimatedInputCharacters.toLocaleString("zh-CN")} 字符输入）。
         费用记在你自己配置的 Provider 上，不确认不会消耗任何额度。
       </p>

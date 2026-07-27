@@ -44,6 +44,12 @@ def test_relative_data_directory_is_anchored_to_repository(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("WEBHUB_DATA_DIR", "relative-data-test")
+    # This test only covers path anchoring. Supplying a fixed test key keeps the
+    # development bootstrap from writing provider-master.key into the repository.
+    monkeypatch.setenv(
+        "WEBHUB_PROVIDER_MASTER_KEY",
+        base64.urlsafe_b64encode(b"provider-config-test-key-32bytes").decode(),
+    )
     get_settings.cache_clear()
     try:
         assert get_settings().data_directory == (REPOSITORY_ROOT / "relative-data-test").resolve()

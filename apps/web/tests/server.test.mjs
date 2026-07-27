@@ -26,6 +26,15 @@ const MOCK_EXPORT = fileURLToPath(
 );
 const MOCK_EXPORT_SIZE = 1_601_123;
 const MOCK_EXPORT_SHA256 = "c3dc4d28a504d2974a16a1aea7053fdecf83e1871245d68dc9a46583346c2785";
+const MIN_EXTERNAL_REWRITE_PROXY_TIMEOUT_MS = 45 * 60 * 1000;
+
+test("keeps the Next external rewrite proxy open for long-running API work", async () => {
+  const { default: nextConfig } = await import("../next.config.ts");
+  const proxyTimeout = nextConfig.experimental?.proxyTimeout;
+
+  assert.equal(typeof proxyTimeout, "number");
+  assert.ok(proxyTimeout >= MIN_EXTERNAL_REWRITE_PROXY_TIMEOUT_MS);
+});
 
 function deferred() {
   let resolve;

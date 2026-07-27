@@ -4,10 +4,19 @@ import hashlib
 import json
 import unicodedata
 from collections.abc import Iterable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from webhub.bookmarks.privacy import agent_safe_label
 
@@ -17,6 +26,27 @@ MAX_CLASSIFICATION_PAYLOAD_BYTES = 256 * 1024
 MAX_CLASSIFICATION_BATCH_SIZE = 50
 MAX_NEW_CATEGORIES_PER_BATCH = 20
 LOW_CONFIDENCE_THRESHOLD = 0.5
+_CATEGORY_ONLY_MAPPING_FIELDS = frozenset(
+    {
+        "subject_id",
+        "category_action",
+        "category_id",
+        "category_name",
+        "tags",
+        "confidence",
+        "needs_review",
+        "reason_code",
+    }
+)
+_REASON_CODES = frozenset(
+    {
+        "folder_match",
+        "host_match",
+        "title_match",
+        "mixed_evidence",
+        "insufficient_evidence",
+    }
+)
 
 CategoryAction = Literal["existing", "propose", "uncategorized"]
 ReasonCode = Literal[
@@ -116,14 +146,18 @@ class ClassificationMapping(BaseModel):
         return tuple(normalized)
 
     @model_validator(mode="after")
-    def validate_category_shape(self) -> ClassificationMapping:
+    def validate_category_shape(self, info: ValidationInfo) -> ClassificationMapping:
         if self.category_action == "existing":
             if self.category_id is None:
                 raise ValueError("existing 分类必须提供 category_id")
         elif self.category_id is not None:
             raise ValueError("propose 或 uncategorized 分类不能提供 category_id")
 
-        if self.category_action != "uncategorized" and len(self.tags) < 2:
+        tags_disabled = bool((info.context or {}).get("tags_disabled", False))
+        if tags_disabled:
+            if self.tags:
+                raise ValueError("仅分类任务不能修改标签")
+        elif self.category_action != "uncategorized" and len(self.tags) < 2:
             raise ValueError("existing 或 propose 分类必须提供 2 到 8 个标签")
         if self.category_action == "uncategorized":
             if self.category_name != "未分类":
@@ -231,6 +265,90 @@ def _validated_categories(categories: Mapping[str, str]) -> dict[str, str]:
     return validated
 
 
+def _canonicalize_category_only_payload(
+    decoded: Mapping[str, object],
+    *,
+    categories: Mapping[str, str],
+    max_new_categories: int,
+) -> Mapping[str, object]:
+    """Discard fields a closed-taxonomy, category-only caller cannot apply.
+
+    Some otherwise usable models keep emitting tags from their general
+    classification habits or express an existing category by name. Neither
+    should invalidate fifty category decisions: tags are deliberately ignored,
+    exact existing names are rebound to their backend-owned ids, and a forbidden
+    new-category proposal safely degrades to an unapplied ``uncategorized`` row.
+    Unknown ids and out-of-batch subject ids remain untouched so the strict
+    validator below still rejects them.
+    """
+
+    raw_mappings = decoded.get("mappings")
+    if not isinstance(raw_mappings, (list, tuple)):
+        return decoded
+
+    category_id_by_name = {name.casefold(): category_id for category_id, name in categories.items()}
+    normalized_mappings: list[object] = []
+    for raw_mapping in raw_mappings:
+        if not isinstance(raw_mapping, Mapping):
+            normalized_mappings.append(raw_mapping)
+            continue
+
+        mapping = {
+            key: value
+            for key, value in raw_mapping.items()
+            if key in _CATEGORY_ONLY_MAPPING_FIELDS
+        }
+        mapping["tags"] = []
+        action = mapping.get("category_action")
+        category_id = mapping.get("category_id")
+        category_name = mapping.get("category_name")
+
+        name_key: str | None = None
+        if isinstance(category_name, str):
+            with suppress(ValueError):
+                name_key = _normalized_label(
+                    category_name,
+                    field="category_name",
+                    max_length=80,
+                ).casefold()
+
+        if action == "existing" and isinstance(category_id, str) and category_id in categories:
+            mapping["category_name"] = categories[category_id]
+        elif action == "existing" and category_id is None and name_key in category_id_by_name:
+            rebound_id = category_id_by_name[name_key]
+            mapping["category_id"] = rebound_id
+            mapping["category_name"] = categories[rebound_id]
+        elif action == "propose" and max_new_categories == 0:
+            if name_key in category_id_by_name:
+                rebound_id = category_id_by_name[name_key]
+                mapping["category_action"] = "existing"
+                mapping["category_id"] = rebound_id
+                mapping["category_name"] = categories[rebound_id]
+            else:
+                mapping.update(
+                    category_action="uncategorized",
+                    category_id=None,
+                    category_name="未分类",
+                    confidence=0.0,
+                    needs_review=True,
+                    reason_code="insufficient_evidence",
+                )
+
+        if mapping.get("reason_code") not in _REASON_CODES:
+            mapping["reason_code"] = "mixed_evidence"
+        confidence = mapping.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            mapping["confidence"] = float(confidence)
+            if confidence < LOW_CONFIDENCE_THRESHOLD:
+                mapping["needs_review"] = True
+
+        normalized_mappings.append(mapping)
+
+    canonicalized = dict(decoded)
+    canonicalized["mappings"] = normalized_mappings
+    return canonicalized
+
+
 def _canonical_json(value: object) -> str:
     return json.dumps(
         value,
@@ -247,6 +365,7 @@ def validate_classification_output(
     expected_subject_ids: Iterable[str],
     allowed_categories: Mapping[str, str],
     max_new_categories: int,
+    tags_disabled: bool = False,
 ) -> ClassificationValidationResult:
     """Validate and canonicalize one untrusted classifier response.
 
@@ -265,8 +384,17 @@ def validate_classification_output(
         raise ValueError("max_new_categories 必须在 0 到 20 之间")
 
     decoded = _decode_payload(payload)
+    if tags_disabled:
+        decoded = _canonicalize_category_only_payload(
+            decoded,
+            categories=categories,
+            max_new_categories=max_new_categories,
+        )
     try:
-        response = ClassificationResponse.model_validate(decoded)
+        response = ClassificationResponse.model_validate(
+            decoded,
+            context={"tags_disabled": tags_disabled},
+        )
     except ValidationError as error:
         raise ClassificationOutputError("分类输出结构不符合约定") from error
 

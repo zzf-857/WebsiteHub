@@ -272,6 +272,73 @@ def test_migrations_round_trip_without_schema_drift(
     assert registered.status_code == 201
 
 
+def test_category_icon_backfill_upgrades_0008_through_52_to_head(tmp_path: Path) -> None:
+    database_path = tmp_path / "category-icon-backfill.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    alembic_config = create_alembic_config(database_url)
+    command.upgrade(alembic_config, "20260727_0008")
+
+    timestamp = "2026-07-27 00:00:00+00:00"
+    categories = (
+        ("cat-ai", "人工智能研究"),
+        ("cat-database", "数据库"),
+        ("cat-tools", "mail tools"),
+        ("cat-unknown", "未识别分类"),
+        ("cat-explicit", "开发"),
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO users(id, username, display_name, password_hash, is_active, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("user", "icon-user", "Icon User", "test-hash", 1, timestamp, timestamp),
+        )
+        connection.executemany(
+            "INSERT INTO categories(id, user_id, name, normalized_name, is_default, "
+            "created_at, updated_at) VALUES (?, 'user', ?, ?, 0, ?, ?)",
+            (
+                (category_id, name, name.casefold(), timestamp, timestamp)
+                for category_id, name in categories
+            ),
+        )
+        connection.commit()
+        columns_at_0008 = {
+            row[1] for row in connection.execute("PRAGMA table_info(categories)")
+        }
+    assert "icon" not in columns_at_0008
+
+    command.upgrade(alembic_config, "52c3f6173b38")
+    with sqlite3.connect(database_path) as connection:
+        icons_at_52 = dict(connection.execute("SELECT id, icon FROM categories"))
+        connection.execute("UPDATE categories SET icon = 'Star' WHERE id = 'cat-explicit'")
+        connection.commit()
+    assert set(icons_at_52.values()) == {"Folder"}
+
+    command.upgrade(alembic_config, "head")
+    command.check(alembic_config)
+    with sqlite3.connect(database_path) as connection:
+        icons_at_head = dict(connection.execute("SELECT id, icon FROM categories"))
+        version_at_head = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+    assert icons_at_head == {
+        "cat-ai": "Bot",
+        "cat-database": "Database",
+        "cat-explicit": "Star",
+        "cat-tools": "Wrench",
+        "cat-unknown": "Folder",
+    }
+    assert version_at_head == ("20260727_0009",)
+
+    command.downgrade(alembic_config, "52c3f6173b38")
+    with sqlite3.connect(database_path) as connection:
+        icons_after_downgrade = dict(connection.execute("SELECT id, icon FROM categories"))
+    assert icons_after_downgrade == icons_at_head
+
+    command.upgrade(alembic_config, "head")
+    command.check(alembic_config)
+    with sqlite3.connect(database_path) as connection:
+        icons_after_second_upgrade = dict(connection.execute("SELECT id, icon FROM categories"))
+    assert icons_after_second_upgrade == icons_at_head
+
+
 def test_application_rejects_an_unversioned_database(tmp_path: Path) -> None:
     database_path = tmp_path / "unversioned.sqlite3"
     settings = Settings(

@@ -4,31 +4,23 @@ WebHub 是一个 Agent First 的个人网站知识中枢。它以浏览器网站
 
 ## 当前状态
 
-项目正在实施 Phase 2 后端纵向切片与网站集成：
+Q1-Q13 已完成，当前已建成九条主链路：Provider 配置、Agent 增改查、书签导入、
+网页抓取、批量入库、自定义排序、Space 一键全开、混合检索和 LLM 全库重分类。
+真实 Provider、Agent Runner、分类执行与最终入库均已接通；Q13 又补齐了重分类确认、
+分类图标、favicon/preview 元数据和并发断连保护。
 
-- Next.js 16 网站与 FastAPI 服务骨架
-- 稳定 Web 路由、站点 Header 和正常网页文档流
-- Agent 首页、Slash Command 注册入口和搜索范围切换
-- 浅色、深色、跟随系统主题基础
-- 局域网账号注册、登录、退出与 Cookie 会话闭环
-- 账号身份、主题偏好、改密、本机密码重置与跨设备持久化
-- Next.js 到 FastAPI 的同源代理与 LAN Origin 校验
-- 账号隔离的 Category、Tag、Site、Space API、FTS5 与 keyset pagination
-- 账号隔离的多会话、消息、日期分组、跨设备恢复与 Slash Command 注册表
-- AI SDK UI Message Stream v1 编码、部分消息状态和安全错误流合同
-- 浏览器书签 snapshot/job/run/checkpoint/staging 持久化内核
-- 流式上传暂存、可恢复的两阶段 intake 与严格分类输出校验
-- 书签只读预览 summary/folders/candidates/occurrences keyset API
-- 浏览器书签 dry-run 与内置导入 Skill 合同
-- 书签分类批次的隐私、预算、校验与恢复内置 Skill
-- pnpm、uv 锁文件与整仓自动检查
-
-公开书签上传/状态、会话历史和 Agent SSE HTTP 合同已通过 API 测试。Provider 账号级安全配置已完成；真实厂商适配器、Agent Runner、书签分类 worker、两次确认和最终 Site/source 入库仍未完成，继续按 [实施计划](./IMPLEMENTATION_PLAN.md) 推进。
+仍未完成的是分类图标前端选择器、Agent 聊天内确认书签导入，以及少数必须在真实
+浏览器中人工验证的 Observer 交互。准确的已完成/未完成清单、实测证据和测试基线
+以 [当前进度快照](./PROGRESS.md) 为准；下一项开发只从
+[迭代队列](./ITERATION_QUEUE.md) 领取。
 
 ## 文档
 
 - [产品需求文档](./PRD.md)
-- [正式实施计划](./IMPLEMENTATION_PLAN.md)
+- [当前进度快照](./PROGRESS.md)
+- [迭代队列](./ITERATION_QUEUE.md)
+- [Agent 执行规范](./AGENTS.md)
+- [历史架构基线](./IMPLEMENTATION_PLAN.md)
 - [浏览器书签导入 Skill](./skills/import-browser-bookmarks/SKILL.md)
 - [书签分类执行 Skill](./skills/bookmark-classification-operator/SKILL.md)
 

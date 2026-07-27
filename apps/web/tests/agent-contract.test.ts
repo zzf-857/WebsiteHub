@@ -616,19 +616,74 @@ test("propose_reclassify 草稿正确转换为 reclassify 视图", () => {
     status: "awaiting_confirmation",
     draft: {
       kind: "reclassify",
-      site_count: 5,
+      site_count: 2,
       estimated_request_count: 1,
+      maximum_request_count: 2,
       estimated_input_characters: 2900,
       allowed_categories: ["开发", "工具"],
+      expected_categories: { c1: "开发", c2: "工具" },
       expected_versions: { s1: 1, s2: 2 },
     },
   });
   assert.equal(view.kind, "reclassify");
   if (view.kind !== "reclassify") return;
-  assert.equal(view.draft.siteCount, 5);
+  assert.equal(view.draft.siteCount, 2);
   assert.equal(view.draft.estimatedRequestCount, 1);
+  assert.equal(view.draft.maximumRequestCount, 2);
   assert.equal(view.draft.estimatedInputCharacters, 2900);
   assert.deepEqual(view.draft.allowedCategories, ["开发", "工具"]);
+  assert.deepEqual(view.draft.expectedCategories, { c1: "开发", c2: "工具" });
+});
+
+test("propose_reclassify 拒绝不合法的最大请求数", () => {
+  const invalidMaximumRequestCounts = [undefined, 0, 1.5, 1];
+
+  for (const maximumRequestCount of invalidMaximumRequestCounts) {
+    const view = describeAgentToolResult("propose_reclassify", {
+      status: "awaiting_confirmation",
+      draft: {
+        kind: "reclassify",
+        site_count: 2,
+        estimated_request_count: 2,
+        ...(maximumRequestCount === undefined
+          ? {}
+          : { maximum_request_count: maximumRequestCount }),
+        estimated_input_characters: 2900,
+        allowed_categories: ["开发", "工具"],
+        expected_categories: { c1: "开发", c2: "工具" },
+        expected_versions: { s1: 1, s2: 2 },
+      },
+    });
+
+    assert.equal(view.kind, "raw");
+  }
+});
+
+test("propose_reclassify 拒绝不完整的网站或分类快照", () => {
+  const baseDraft = {
+    kind: "reclassify",
+    site_count: 2,
+    estimated_request_count: 1,
+    maximum_request_count: 2,
+    estimated_input_characters: 2900,
+    allowed_categories: ["开发", "工具"],
+    expected_categories: { c1: "开发", c2: "工具" },
+    expected_versions: { s1: 1, s2: 2 },
+  };
+  const invalidDrafts = [
+    { ...baseDraft, expected_categories: { c1: "开发" } },
+    { ...baseDraft, expected_categories: { c1: "开发", c2: 2 } },
+    { ...baseDraft, expected_versions: { s1: 1 } },
+    { ...baseDraft, expected_versions: { s1: 0, s2: 2 } },
+  ];
+
+  for (const draft of invalidDrafts) {
+    const view = describeAgentToolResult("propose_reclassify", {
+      status: "awaiting_confirmation",
+      draft,
+    });
+    assert.equal(view.kind, "raw");
+  }
 });
 
 test("propose_reclassify 拒绝与 noop 状态正常处理", () => {
@@ -647,4 +702,3 @@ test("propose_reclassify 拒绝与 noop 状态正常处理", () => {
   });
   assert.equal(noop.kind, "noop");
 });
-

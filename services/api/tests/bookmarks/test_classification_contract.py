@@ -51,6 +51,7 @@ def _validate(
     expected_batch_id: str = "batch-001",
     expected_subject_ids: tuple[str, ...] = ("cluster-1", "cluster-2", "cluster-3"),
     allowed_categories: dict[str, str] | None = None,
+    tags_disabled: bool = False,
 ):
     return validate_classification_output(
         payload,  # type: ignore[arg-type]
@@ -62,6 +63,7 @@ def _validate(
             "category-learning": "学习与文档",
         },
         max_new_categories=max_new_categories,
+        tags_disabled=tags_disabled,
     )
 
 
@@ -92,6 +94,44 @@ def test_validates_and_canonicalizes_mixed_category_actions() -> None:
     assert len(result.binding_sha256) == 64
     assert json.loads(result.response_canonical_json)["mappings"][1]["category_name"] == "研究 资料"
     assert json.loads(result.binding_canonical_json)["missing_subject_ids"] == []
+
+
+def test_category_only_mode_discards_tags_and_safely_closes_the_taxonomy() -> None:
+    payload = _payload(
+        _mapping(
+            "cluster-1",
+            category_name="模型擅自改名",
+            tags=["不应", "落库"],
+        ),
+        _mapping(
+            "cluster-2",
+            action="existing",
+            category_id=None,
+            category_name="学习与文档",
+            tags=["也不", "落库"],
+        ),
+        _mapping(
+            "cluster-3",
+            action="propose",
+            category_id=None,
+            category_name="模型新分类",
+            tags=["仍不", "落库"],
+        ),
+    )
+    payload["mappings"][0]["reason_code"] = "model_explanation"
+    payload["mappings"][0]["extra_reasoning"] = "must not enter the strict contract"
+
+    result = _validate(payload, max_new_categories=0, tags_disabled=True)
+
+    first, rebound, fallback = result.response.mappings
+    assert first.category_name == "开发与技术"
+    assert first.reason_code == "mixed_evidence"
+    assert rebound.category_action == "existing"
+    assert rebound.category_id == "category-learning"
+    assert fallback.category_action == "uncategorized"
+    assert fallback.category_name == "未分类"
+    assert fallback.needs_review is True
+    assert all(not mapping.tags for mapping in result.response.mappings)
 
 
 def test_validated_response_is_deeply_immutable_but_dumps_json_arrays() -> None:

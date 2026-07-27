@@ -29,8 +29,10 @@ Vendor failures collapse into ``ClassificationUnavailableError``; like
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Mapping
+import logging
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -44,10 +46,15 @@ from webhub.bookmarks.classification_contract import ClassificationOutputError
 # The response is a bounded JSON object; anything much larger than this is a
 # model that has stopped following the schema.
 MAX_RESPONSE_CHARS = 60_000
+CLASSIFICATION_TIMEOUT_SECONDS = 90
+MAX_CLASSIFICATION_CONCURRENCY = 4
+CLASSIFICATION_MAX_ATTEMPTS = 2
+CLASSIFICATION_RETRY_DELAY_SECONDS = 0.25
+logger = logging.getLogger(__name__)
 
 
 class ModelEndpoint(Protocol):
-    """The four things this module needs from a resolved model Provider.
+    """The three things this module needs from a resolved model Provider.
 
     Declared here rather than importing ``agent.provider_binding.ProviderBinding``:
     ``agent`` already imports ``bookmarks``, so depending on it in this direction
@@ -63,9 +70,6 @@ class ModelEndpoint(Protocol):
     def model_name(self) -> str | None: ...
 
     @property
-    def timeout_seconds(self) -> int: ...
-
-    @property
     def client_api_key(self) -> str: ...
 
 
@@ -73,6 +77,10 @@ class ClassificationUnavailableError(RuntimeError):
     """The account's model Provider could not produce a usable batch answer."""
 
     safe_message = "自动分类暂时不可用，请稍后重试或检查模型 Provider 配置。"
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +93,7 @@ class BatchRunResult:
 # Worked examples, not prose rules.  Two of them, chosen to demonstrate the two
 # decisions that actually go wrong: reusing an existing category instead of
 # minting a near-duplicate, and admitting "uncategorized" instead of guessing.
-_FEW_SHOT = """\
+_TAGGED_FEW_SHOT = """\
 示例输入（节选）：
 {"subject_id":"subject_a1","folder_labels":["开发","前端"],\
 "sample_titles":["React 文档","Vite"],\
@@ -106,7 +114,37 @@ _FEW_SHOT = """\
 注意 subject_a1 给了 2 个标签（existing 至少要 2 个）。
 注意 subject_b2：证据不足时选 uncategorized、tags 留空并标记 needs_review，不要猜。"""
 
-_SYSTEM_PROMPT = f"""你是一个网址分类器。输入是若干「主题」，每个主题代表一组网站\
+_CATEGORY_ONLY_FEW_SHOT = """\
+示例输入（节选）：
+{"subject_id":"subject_a1","folder_labels":["开发","前端"],\
+"sample_titles":["React 文档","Vite"],\
+"sample_hostnames":["react.dev","vitejs.dev"],"link_count":12}
+{"subject_id":"subject_b2","folder_labels":["临时"],\
+"sample_titles":["未命名","新建标签页"],\
+"sample_hostnames":["example.com"],"link_count":3}
+
+示例输出：
+{"schema_version":"webhub.bookmark-classification.v1","batch_id":"<原样回传>","mappings":[
+{"subject_id":"subject_a1","category_action":"existing","category_id":"c-dev",\
+"category_name":"开发与技术","tags":[],"confidence":0.9,"needs_review":false,\
+"reason_code":"folder_match"},
+{"subject_id":"subject_b2","category_action":"uncategorized","category_id":null,\
+"category_name":"未分类","tags":[],"confidence":0.2,"needs_review":true,\
+"reason_code":"insufficient_evidence"}]}
+
+注意：本任务不修改标签，每一条 mapping 的 tags 都必须是空数组。
+注意 subject_b2：证据不足时选 uncategorized、tags 留空并标记 needs_review，不要猜。"""
+
+
+def _system_prompt(include_tags: bool) -> str:
+    tag_rule = (
+        "- **tags 必须给 2 到 8 个**（category_action 为 existing 或 propose 时）。\n"
+        "  这是硬性约定，给少了整批答案都会被判为非法。uncategorized 时 tags 必须是空数组。"
+        if include_tags
+        else "- **本任务只修改分类，不修改标签**。每一条 mapping 的 tags 都必须是空数组 `[]`。"
+    )
+    few_shot = _TAGGED_FEW_SHOT if include_tags else _CATEGORY_ONLY_FEW_SHOT
+    return f"""你是一个网址分类器。输入是若干「主题」，每个主题代表一组网站\
 （一个书签文件夹，或一批同类网站）。为每个主题选一个分类。
 
 ## 规则
@@ -119,8 +157,7 @@ _SYSTEM_PROMPT = f"""你是一个网址分类器。输入是若干「主题」�
   且提出的新分类总数不得超过 max_new_categories。
 - 证据不足时用 category_action="uncategorized"、category_name="未分类"、
   needs_review=true。**猜错比承认不知道更糟。**
-- **tags 必须给 2 到 8 个**（category_action 为 existing 或 propose 时）。
-  这是硬性约定，给少了整批答案都会被判为非法。uncategorized 时 tags 必须是空数组。
+{tag_rule}
 - reason_code 只能是 folder_match / host_match / title_match / mixed_evidence /
   insufficient_evidence 五者之一。
 - confidence 是 0 到 1 的小数。
@@ -129,12 +166,13 @@ _SYSTEM_PROMPT = f"""你是一个网址分类器。输入是若干「主题」�
 输入里只有文件夹名、少量标题样本和主机名。**没有完整 URL、没有页面内容。**
 不要假装读过网页，不要基于想象补充信息。
 
-{_FEW_SHOT}"""
+{few_shot}"""
 
 
 def _messages(payload: Mapping[str, object]) -> list[dict[str, str]]:
+    include_tags = payload.get("include_tags", True) is not False
     return [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": _system_prompt(include_tags)},
         {
             "role": "user",
             "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
@@ -166,35 +204,50 @@ async def _ask_model(binding: ModelEndpoint, payload: Mapping[str, object]) -> s
         "response_format": {"type": "json_object"},
     }
     try:
-        async with httpx.AsyncClient(
-            timeout=binding.timeout_seconds,
-            follow_redirects=False,
-        ) as client:
-            response = await client.post(
-                f"{binding.base_url.rstrip('/')}/chat/completions",
-                headers={"authorization": f"Bearer {binding.client_api_key}"},
-                json=body,
-            )
-            if response.status_code != 200:
-                # Never read a vendor error body: it echoes the request and can
-                # carry a prefix of the API key.
-                raise ClassificationUnavailableError(
-                    f"classification provider returned {response.status_code}"
+        # httpx's timeout is per I/O phase/read chunk, not a wall-clock deadline.
+        # The outer deadline is what makes the synchronous 50-batch budget provable.
+        async with asyncio.timeout(CLASSIFICATION_TIMEOUT_SECONDS):
+            async with httpx.AsyncClient(
+                timeout=CLASSIFICATION_TIMEOUT_SECONDS,
+                follow_redirects=False,
+            ) as client:
+                response = await client.post(
+                    f"{binding.base_url.rstrip('/')}/chat/completions",
+                    headers={"authorization": f"Bearer {binding.client_api_key}"},
+                    json=body,
                 )
-            data = response.json()
+                if response.status_code != 200:
+                    # Never read a vendor error body: it echoes the request and can
+                    # carry a prefix of the API key.
+                    raise ClassificationUnavailableError(
+                        f"classification provider returned {response.status_code}",
+                        retryable=(
+                            response.status_code in {408, 429} or response.status_code >= 500
+                        ),
+                    )
+                data = response.json()
     except ClassificationUnavailableError:
         raise
     except Exception as error:  # noqa: BLE001 - vendor errors must not escape
-        raise ClassificationUnavailableError("classification request failed") from error
+        raise ClassificationUnavailableError(
+            "classification request failed",
+            retryable=True,
+        ) from error
 
     try:
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as error:
-        raise ClassificationUnavailableError("classification response was not usable") from error
+        raise ClassificationUnavailableError(
+            "classification response was not usable",
+            retryable=True,
+        ) from error
     if not isinstance(content, str) or not content.strip():
-        raise ClassificationUnavailableError("classification response was empty")
+        raise ClassificationUnavailableError("classification response was empty", retryable=True)
     if len(content) > MAX_RESPONSE_CHARS:
-        raise ClassificationUnavailableError("classification response was too large")
+        raise ClassificationUnavailableError(
+            "classification response was too large",
+            retryable=True,
+        )
     return _stripped_json(content)
 
 
@@ -210,7 +263,10 @@ async def run_batch(binding: ModelEndpoint, batch: ClassificationBatch) -> Batch
     try:
         validated = validate_classification_batch_output(batch, answer)
     except (ClassificationOutputError, ValueError) as error:
-        raise ClassificationUnavailableError("classification output failed validation") from error
+        raise ClassificationUnavailableError(
+            "classification output failed validation",
+            retryable=True,
+        ) from error
     return BatchRunResult(
         batch_id=batch.batch_id,
         mappings=tuple(validated.mappings),
@@ -221,17 +277,88 @@ async def run_batch(binding: ModelEndpoint, batch: ClassificationBatch) -> Batch
 async def run_plan(
     binding: ModelEndpoint,
     plan: ClassificationBatchPlan,
+    *,
+    max_concurrency: int = 1,
+    cancel_requested: Callable[[], Awaitable[bool]] | None = None,
 ) -> list[BatchRunResult]:
-    """Run every batch in a plan sequentially.
+    """Run every batch in bounded groups while preserving plan order.
 
-    Sequential on purpose: these calls spend the user's own quota, and a burst
-    of parallel requests is the fastest way to hit a vendor rate limit and lose
-    the whole run.
+    The default stays sequential because these calls spend the user's own quota.
+    Callers with a long, explicitly confirmed plan may opt into a small bounded
+    concurrency; the hard cap prevents an accidental Provider burst.
     """
 
+    if (
+        isinstance(max_concurrency, bool)
+        or not isinstance(max_concurrency, int)
+        or not 1 <= max_concurrency <= MAX_CLASSIFICATION_CONCURRENCY
+    ):
+        raise ValueError(
+            f"max_concurrency must be an integer between 1 and "
+            f"{MAX_CLASSIFICATION_CONCURRENCY}"
+        )
+
+    total_batches = len(plan.batches)
+
+    async def ensure_connected() -> None:
+        if cancel_requested is not None and await cancel_requested():
+            raise ClassificationUnavailableError("classification request disconnected")
+
+    async def run_indexed(index: int, batch: ClassificationBatch) -> BatchRunResult:
+        for attempt in range(1, CLASSIFICATION_MAX_ATTEMPTS + 1):
+            # The group-level check covers each first attempt without racing several
+            # request.is_disconnected() calls. Retries need their own fresh check.
+            if attempt > 1:
+                await ensure_connected()
+            try:
+                return await run_batch(binding, batch)
+            except ClassificationUnavailableError as error:
+                # Internal reason strings and exception class names are fixed locally;
+                # vendor response bodies are never read or logged.
+                cause_name = type(error.__cause__).__name__ if error.__cause__ else "none"
+                contract_reason = (
+                    str(error.__cause__)
+                    if isinstance(error.__cause__, ClassificationOutputError)
+                    else "none"
+                )
+                will_retry = error.retryable and attempt < CLASSIFICATION_MAX_ATTEMPTS
+                logger.warning(
+                    "classification batch %d/%d attempt %d/%d failed: %s "
+                    "(cause=%s, contract=%s, retry=%s)",
+                    index,
+                    total_batches,
+                    attempt,
+                    CLASSIFICATION_MAX_ATTEMPTS,
+                    error,
+                    cause_name,
+                    contract_reason,
+                    will_retry,
+                )
+                if not will_retry:
+                    raise
+                await asyncio.sleep(CLASSIFICATION_RETRY_DELAY_SECONDS)
+        raise AssertionError("classification retry loop exited unexpectedly")
+
     results: list[BatchRunResult] = []
-    for batch in plan.batches:
-        results.append(await run_batch(binding, batch))
+    for offset in range(0, total_batches, max_concurrency):
+        await ensure_connected()
+        group = plan.batches[offset : offset + max_concurrency]
+        tasks = [
+            asyncio.create_task(run_indexed(offset + group_index, batch))
+            for group_index, batch in enumerate(group, start=1)
+        ]
+        try:
+            group_results = await asyncio.gather(*tasks)
+        except BaseException:
+            # asyncio.gather propagates the first failure but does not cancel its
+            # siblings. Drain them explicitly so a failed group cannot keep using
+            # Provider quota after run_plan has already returned an error.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        results.extend(group_results)
+    await ensure_connected()
     return results
 
 
@@ -246,11 +373,13 @@ def estimated_input_characters(plan: ClassificationBatchPlan) -> int:
 
     return sum(
         len(json.dumps(batch.provider_payload(), ensure_ascii=False, separators=(",", ":")))
+        + len(_system_prompt(batch.include_tags))
         for batch in plan.batches
-    ) + len(_SYSTEM_PROMPT) * max(1, len(plan.batches))
+    )
 
 
 __all__ = [
+    "CLASSIFICATION_MAX_ATTEMPTS",
     "BatchRunResult",
     "ModelEndpoint",
     "ClassificationUnavailableError",

@@ -149,6 +149,7 @@ class ClassificationBatch:
     bindings: tuple[ClassificationSubjectBinding, ...]
     allowed_categories: tuple[tuple[str, str], ...]
     allowed_tags: tuple[str, ...]
+    include_tags: bool
     max_new_categories: int
     requested_language: str
     payload_bytes: int
@@ -165,6 +166,7 @@ class ClassificationBatch:
             subjects=self.subjects,
             allowed_categories=self.allowed_categories,
             allowed_tags=self.allowed_tags,
+            include_tags=self.include_tags,
             max_new_categories=self.max_new_categories,
             requested_language=self.requested_language,
         )
@@ -477,6 +479,7 @@ def _provider_payload(
     subjects: Sequence[Mapping[str, object]],
     allowed_categories: Sequence[tuple[str, str]],
     allowed_tags: Sequence[str],
+    include_tags: bool,
     max_new_categories: int,
     requested_language: str,
 ) -> dict[str, object]:
@@ -491,6 +494,7 @@ def _provider_payload(
             for category_id, category_name in allowed_categories
         ],
         "allowed_tags": list(allowed_tags),
+        "include_tags": include_tags,
         "max_new_categories": max_new_categories,
         "requested_language": requested_language,
     }
@@ -524,10 +528,13 @@ def _plan_batches(
     subject_kind: ClassificationSubjectKind,
     allowed_categories: tuple[tuple[str, str], ...],
     allowed_tags: tuple[str, ...],
+    include_tags: bool,
     max_new_categories: int,
     requested_language: str,
     budget: ClassificationBatchBudget,
 ) -> ClassificationBatchPlan:
+    if not isinstance(include_tags, bool):
+        raise ClassificationProjectionError("include_tags must be boolean")
     batches: list[ClassificationBatch] = []
     budget_exhausted: list[str] = []
     total_payload_bytes = 0
@@ -555,6 +562,7 @@ def _plan_batches(
                 subjects=candidate_subjects,
                 allowed_categories=allowed_categories,
                 allowed_tags=allowed_tags,
+                include_tags=include_tags,
                 max_new_categories=max_new_categories,
                 requested_language=requested_language,
             )
@@ -586,6 +594,7 @@ def _plan_batches(
             subjects=provider_subjects,
             allowed_categories=allowed_categories,
             allowed_tags=allowed_tags,
+            include_tags=include_tags,
             max_new_categories=max_new_categories,
             requested_language=requested_language,
         )
@@ -597,6 +606,7 @@ def _plan_batches(
             bindings=tuple(bindings),
             allowed_categories=allowed_categories,
             allowed_tags=allowed_tags,
+            include_tags=include_tags,
             max_new_categories=max_new_categories,
             requested_language=requested_language,
             payload_bytes=payload_bytes,
@@ -612,6 +622,7 @@ def _plan_batches(
             expected_subject_ids=batch.expected_subject_ids,
             allowed_categories=dict(batch.allowed_categories),
             max_new_categories=batch.max_new_categories,
+            tags_disabled=not batch.include_tags,
         )
         batches.append(batch)
         total_payload_bytes += payload_bytes
@@ -630,6 +641,7 @@ def build_folder_classification_batches(
     *,
     allowed_categories: Mapping[str, str],
     allowed_tags: Sequence[str] = (),
+    include_tags: bool = True,
     max_new_categories: int,
     requested_language: str,
     budget: ClassificationBatchBudget,
@@ -649,6 +661,7 @@ def build_folder_classification_batches(
         subject_kind="folder_cluster",
         allowed_categories=taxonomy,
         allowed_tags=tags,
+        include_tags=include_tags,
         max_new_categories=max_new_categories,
         requested_language=language,
         budget=budget,
@@ -660,6 +673,7 @@ def build_candidate_classification_batches(
     *,
     allowed_categories: Mapping[str, str],
     allowed_tags: Sequence[str] = (),
+    include_tags: bool = True,
     requested_language: str,
     budget: ClassificationBatchBudget,
 ) -> ClassificationBatchPlan:
@@ -675,6 +689,7 @@ def build_candidate_classification_batches(
         subject_kind="candidate",
         allowed_categories=taxonomy,
         allowed_tags=tags,
+        include_tags=include_tags,
         max_new_categories=0,
         requested_language=language,
         budget=budget,
@@ -692,6 +707,7 @@ def validate_classification_batch_output(
         expected_subject_ids=batch.expected_subject_ids,
         allowed_categories=dict(batch.allowed_categories),
         max_new_categories=batch.max_new_categories,
+        tags_disabled=not batch.include_tags,
     )
     mappings_by_subject = {mapping.subject_id: mapping for mapping in validation.response.mappings}
     resolved: list[BoundClassificationMapping] = []

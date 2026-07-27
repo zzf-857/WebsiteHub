@@ -101,6 +101,10 @@ function asCount(value: unknown): number | null {
   return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : null;
 }
 
+function asPositiveCount(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : null;
+}
+
 function asStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map(asTrimmed).filter((entry): entry is string => entry !== null);
@@ -229,8 +233,10 @@ export type AgentSpaceMembershipDraft = {
 export type AgentReclassifyDraft = {
   siteCount: number;
   estimatedRequestCount: number;
+  maximumRequestCount: number;
   estimatedInputCharacters: number;
   allowedCategories: string[];
+  expectedCategories: Record<string, string>;
   expectedVersions: Record<string, number>;
 };
 
@@ -405,23 +411,50 @@ function toSpaceMembershipDraft(value: unknown): AgentSpaceMembershipDraft | nul
 function toReclassifyDraft(value: unknown): AgentReclassifyDraft | null {
   const candidate = asRecord(value);
   if (candidate === null) return null;
-  const siteCount = asCount(candidate.site_count);
-  const estimatedRequestCount = asCount(candidate.estimated_request_count);
+  const siteCount = asPositiveCount(candidate.site_count);
+  const estimatedRequestCount = asPositiveCount(candidate.estimated_request_count);
+  const maximumRequestCount = asPositiveCount(candidate.maximum_request_count);
   const estimatedInputCharacters = asCount(candidate.estimated_input_characters);
-  if (siteCount === null || estimatedRequestCount === null || estimatedInputCharacters === null) return null;
+  if (
+    siteCount === null ||
+    estimatedRequestCount === null ||
+    maximumRequestCount === null ||
+    maximumRequestCount < estimatedRequestCount ||
+    estimatedInputCharacters === null
+  ) return null;
   const allowedCategories = asStringList(candidate.allowed_categories);
+  const rawCategories = asRecord(candidate.expected_categories);
   const rawVersions = asRecord(candidate.expected_versions);
+  if (rawCategories === null || rawVersions === null) return null;
+  const expectedCategories: Record<string, string> = {};
   const expectedVersions: Record<string, number> = {};
-  if (rawVersions) {
-    for (const [k, v] of Object.entries(rawVersions)) {
-      if (typeof v === "number") expectedVersions[k] = v;
-    }
+  for (const [key, value] of Object.entries(rawCategories)) {
+    const categoryId = asTrimmed(key);
+    const categoryName = asTrimmed(value);
+    if (categoryId === null || categoryName === null || categoryId !== key) return null;
+    expectedCategories[categoryId] = categoryName;
   }
+  for (const [key, value] of Object.entries(rawVersions)) {
+    const siteId = asTrimmed(key);
+    const version = asVersion(value);
+    if (siteId === null || version === null || siteId !== key) return null;
+    expectedVersions[siteId] = version;
+  }
+  if (Object.keys(expectedCategories).length !== allowedCategories.length) return null;
+  if (Object.keys(expectedVersions).length !== siteCount) return null;
+  const expectedCategoryNames = Object.values(expectedCategories);
+  if (
+    new Set(expectedCategoryNames).size !== expectedCategoryNames.length ||
+    new Set(allowedCategories).size !== allowedCategories.length ||
+    expectedCategoryNames.some((name) => !allowedCategories.includes(name))
+  ) return null;
   return {
     siteCount,
     estimatedRequestCount,
+    maximumRequestCount,
     estimatedInputCharacters,
     allowedCategories,
+    expectedCategories,
     expectedVersions,
   };
 }
