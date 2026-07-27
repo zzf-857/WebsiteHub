@@ -378,7 +378,13 @@ async def propose_library_reclassification(
 
     from webhub.library import reclassify
 
-    return await reclassify.propose_reclassification(session, identity.user.id)
+    try:
+        return await reclassify.propose_reclassification(session, identity.user.id)
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
 
 
 @router.post("/reclassify/apply")
@@ -403,4 +409,10 @@ async def apply_library_reclassification(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error.safe_message,
         ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
 
