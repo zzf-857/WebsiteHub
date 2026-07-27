@@ -500,6 +500,81 @@ data-compact → 计算样式正确」，两个 observer 的实际触发时机�
 
 ---
 
+## Q13 · 未闭环逻辑审计与修复（含在途图标特性收尾）
+
+状态: 已完成
+对应: 2026-07-27 接手审计
+插入原因: 接手时工作区有 82 个文件未提交，混着两件事——一次已完成且有 MANIFEST
+记录的清理，和一个未完成的「分类图标 + favicon + preview_url」特性。后者让门禁变红
+（后端 5 红 / 前端 9 红）并违反两条硬约束。已按用户批准拆成两个 commit。
+
+**修掉的四个真 bug（都经过独立证伪，不是靠子代理自述）**：
+
+1. **Q12 的 apply 100% 不生效**（最严重，`reclassify.py:216`）。
+   `res.mappings` 里是 `BoundClassificationMapping`（`slots=True`，只有
+   `source_id` / `mapping` / `used_fallback`），代码却 `getattr(bound, "subject_id")`
+   ——恒为 None，于是每条都 `continue`，一个站点都不更新，却仍返回
+   `status="success"`。**用户花掉了 token、看到"成功"、库里一行没变。**
+   现在改读 `bound.source_id` 与 `bound.mapping`，并按 `category_id`（契约里
+   existing 的权威引用）而不是按名字解析目标分类。
+   已补 `test_reclassify_apply_actually_moves_sites`，并**反向验证过它真能抓到这个
+   bug**（把代码改回旧写法 → 测试红）。此前 3 个 Q12 测试只覆盖 propose 的
+   rejected/noop，apply 零覆盖，所以门禁全绿也放过了它。
+
+2. **favicon 走了第三方 CDN**（`service/_common.py`）。新增的 `resolve_favicon_url`
+   在站点没有图标时回落到 `https://www.google.com/s2/favicons?domain=...`：
+   ① 直接违反「favicon 不走第三方 CDN」；② 用户书签库里每个域名都会被逐个透露给
+   第三方，是隐式浏览历史泄露；③ 它把 `favicon_url` 永久填满，导致 ingestion
+   那条「只补空字段」的规则永不触发——**真抓到的图标反而写不进去**。
+   已整个删除，没有图标就返回 None，前端 `SiteFavicon` 用首字符渲染本地字母块。
+   原有的三个 favicon 测试（本来是红的）自动转绿。
+
+3. **迁移的 downgrade 从未成功过**（`52c3f6173b38`）。autogenerate 直出的
+   `batch_alter_table` 在 SQLite 上重建表，`categories_search_rename` 触发器
+   在 RENAME 期间对已不存在的 `sites` 触发。**坑在于 upgrade 假装成功**：
+   batch 模式下纯 add_column 被优化成普通 ADD COLUMN、不重建表，所以只有
+   downgrade 会炸。改成直写 add_column；downgrade 先摘掉那一个触发器再装回。
+   上一个迁移（`20260727_0007`）的作者已踩过并写了注释，但新迁移没人看它。
+
+4. **重命名分类会抹掉用户手选的图标**（`service/categories.py:84`）。
+   `update_category` 在 `icon` 省略时也跑 `infer_category_icon` 覆盖。
+   已改回 Q3 确立的语义：**None = 别动，"" = 恢复默认推断**。
+
+**补完的断链**：
+- `reclassify` 草稿在 `agent-contract.ts` 有投影、在 `use-agent-panel` 有确认
+  handler、后端有 `/reclassify/apply` 端点，但 `conversation-thread.tsx` 缺
+  `view.kind === "reclassify"` 分支——**整张卡片什么都不渲染，确认按钮永不出现**。
+  已补 `ReclassifyCard`，并按 Q12 要求把预估请求数与字符数摆在确认按钮之前。
+- `QUICK_PROMPTS` 是空数组（`.agent-chips` 容器渲染却没有 chip）。查 git 发现
+  三条提问在 `593d4dc` 抽 hook 时被误清空，对应能力都真实可用，已恢复。
+- `list_bookmark_imports` 的任务行只有 job_id/state，走不了 `toLink`，每条都被
+  filter 掉、渲染成「没有命中任何结果」。已改为 facets 投影 + 状态中文标签。
+- `preview_url`：`og:image` 早就被 `metadata.py` 解析并转成绝对地址了，但
+  `apply_outcome` 只读 description 与 icon，抓到的图片直接丢弃。已接上（同样只补空）。
+- `summary` 列全链路无任何写入方，属于纯死字段，已从模型/schema/迁移中删除
+  ——留着只会让人以为有这个能力。
+- `run_parse` 失败时无条件 re-raise，而唯一调用方是 `asyncio.create_task` 起的
+  脱钩任务、done_callback 只 discard：抛了没人接，只产生
+  "Task exception was never retrieved" 噪声。改为只在「连失败都没记下来」时抛，
+  与 docstring 契约一致。
+- `listing.py` 给 `SiteListAggregate` 传 `total_count`，而 schema 无此字段、
+  pydantic 静默丢弃。已删并加注释。
+
+**审计中被证伪、确认不是问题的（别再来一遍）**：
+- `recover_finalizing_parse_run` 无生产调用方 —— 命中 PROGRESS.md「刻意没做的」
+  第 3 条（进程内 worker，不做崩溃自愈），它是给未来真 worker 预留的脚手架。
+- `/reclassify/propose` REST 端点无前端调用方 —— 有 HTTP 层测试覆盖，
+  且它正是「将来做非 Agent 入口」的使能者，不是障碍。
+- reclassify 路由的裸 `except Exception` 透出厂商原文 —— 不可达：
+  `classifier.py:187` 已把所有厂商异常折叠成固定文案，且非 2xx 时一个字节都不读。
+
+**未做的**：分类图标没有前端选择器，`icon` 目前只由后端按名称推断（`icons.py`）。
+`dynamic-icon.tsx` 的 ICON_MAP 与 `icons.py` 的值域已用脚本核对（icons.py 能推断出的
+36 个图标名，ICON_MAP 37 项全部覆盖，无一缺失），
+所以推断结果不会静默回落成 Folder。要让用户手选得加一块 UI，属独立条目。
+
+---
+
 ## 全量门禁（每轮提交前必须全绿）
 
 ```bash
@@ -507,7 +582,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 135 测试 / 后端 417 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 143 测试 / 后端 441 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 

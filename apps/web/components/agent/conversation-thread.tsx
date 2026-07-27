@@ -26,6 +26,7 @@ import {
   type AgentSiteDraft,
   type AgentSiteBatchDraft,
   type AgentSiteUpdateDraft,
+  type AgentReclassifyDraft,
   type AgentSpaceMembershipDraft,
   type AgentToolCall,
   type AgentToolLink,
@@ -335,6 +336,51 @@ function SpaceMembershipCard({
   );
 }
 
+function ReclassifyCard({
+  toolCallId,
+  draft,
+  state,
+  onConfirm,
+}: Readonly<{
+  toolCallId: string;
+  draft: AgentReclassifyDraft;
+  state: AgentDraftState;
+  onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
+}>) {
+  return (
+    <div className="draft-card" data-variant="reclassify">
+      <div className="draft-card-main">
+        <strong>全库重分类</strong>
+      </div>
+      {/* 花钱提示：重分类要调用户自己的 model Provider，确认前必须先看到预估请求数。 */}
+      <p className="draft-card-description">
+        将重新分类 <strong>{draft.siteCount}</strong> 个网站，预计发出{" "}
+        <strong>{draft.estimatedRequestCount}</strong> 次模型请求（约{" "}
+        {draft.estimatedInputCharacters.toLocaleString("zh-CN")} 字符输入）。
+        费用记在你自己配置的 Provider 上，不确认不会消耗任何额度。
+      </p>
+      {draft.allowedCategories.length > 0 && (
+        <div className="tool-chip-row">
+          {draft.allowedCategories.map((name) => (
+            <span className="tool-chip" key={name}>{name}</span>
+          ))}
+        </div>
+      )}
+      <p className="draft-card-description">
+        只会归入上面这些已有分类，模型不能自行新建分类。
+      </p>
+      <DraftActions
+        state={state}
+        icon={<PencilLine aria-hidden="true" />}
+        idleLabel="确认开始重分类"
+        busyLabel="重分类中…"
+        doneLabel="已完成重分类"
+        onConfirm={() => onConfirm(toolCallId, { kind: "reclassify", draft })}
+      />
+    </div>
+  );
+}
+
 function ToolCard({
   result,
   draftState,
@@ -407,6 +453,14 @@ function ToolCard({
       )}
       {view.kind === "space-membership" && (
         <SpaceMembershipCard
+          toolCallId={result.toolCallId}
+          draft={view.draft}
+          state={draftState}
+          onConfirm={onConfirmDraft}
+        />
+      )}
+      {view.kind === "reclassify" && (
+        <ReclassifyCard
           toolCallId={result.toolCallId}
           draft={view.draft}
           state={draftState}

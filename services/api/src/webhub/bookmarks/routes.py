@@ -79,6 +79,8 @@ def _schedule_parse(
     )
     _PARSE_TASKS.add(task)
     task.add_done_callback(_PARSE_TASKS.discard)
+
+
 JobId = Annotated[str, Path(max_length=128)]
 OptionalIdentifier = Annotated[str | None, Query(max_length=128)]
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]
@@ -102,9 +104,7 @@ _UPLOAD_REQUEST_BODY = {
         "required": True,
         "content": {
             "text/html": {"schema": {"type": "string", "format": "binary"}},
-            "application/octet-stream": {
-                "schema": {"type": "string", "format": "binary"}
-            },
+            "application/octet-stream": {"schema": {"type": "string", "format": "binary"}},
         },
     }
 }
@@ -117,21 +117,15 @@ _UPLOAD_RESPONSES: dict[int, dict[str, object]] = {
     status.HTTP_401_UNAUTHORIZED: {"description": "Authentication required"},
     status.HTTP_403_FORBIDDEN: {"description": "Untrusted request origin"},
     status.HTTP_409_CONFLICT: {"description": "Idempotency or publication conflict"},
-    status.HTTP_413_CONTENT_TOO_LARGE: {
-        "description": "File or account upload quota exceeded"
-    },
-    status.HTTP_415_UNSUPPORTED_MEDIA_TYPE: {
-        "description": "Unsupported upload media type"
-    },
+    status.HTTP_413_CONTENT_TOO_LARGE: {"description": "File or account upload quota exceeded"},
+    status.HTTP_415_UNSUPPORTED_MEDIA_TYPE: {"description": "Unsupported upload media type"},
     status.HTTP_429_TOO_MANY_REQUESTS: {
         "description": "Account or global upload admission limit reached"
     },
     status.HTTP_422_UNPROCESSABLE_CONTENT: {
         "description": "Invalid bookmark export or request metadata"
     },
-    status.HTTP_507_INSUFFICIENT_STORAGE: {
-        "description": "Host storage reserve is unavailable"
-    },
+    status.HTTP_507_INSUFFICIENT_STORAGE: {"description": "Host storage reserve is unavailable"},
 }
 
 
@@ -284,10 +278,7 @@ async def upload_bookmarks(
                 replayed=import_job.replayed,
                 same_source_warning=(
                     not import_job.replayed
-                    and any(
-                        item.snapshot_id != import_job.snapshot_id
-                        for item in same_source_jobs
-                    )
+                    and any(item.snapshot_id != import_job.snapshot_id for item in same_source_jobs)
                 ),
             )
     except BookmarkUploadRateLimitError as error:

@@ -72,9 +72,7 @@ def _invoke(settings: Settings, username: str, tool_name: str, **kwargs: Any) ->
         database = Database(settings.database_url)
         try:
             async with database.sessions() as session:
-                user_id = await session.scalar(
-                    select(User.id).where(User.username == username)
-                )
+                user_id = await session.scalar(select(User.id).where(User.username == username))
             assert user_id is not None
             context = AgentToolContext(
                 database=database,
@@ -204,7 +202,6 @@ def test_web_search_tool_is_absent_without_a_search_provider(tmp_path: Path) -> 
         "propose_space_membership",
         "search_library",
     ]
-
 
 
 @contextmanager
@@ -384,9 +381,7 @@ def test_propose_site_update_refuses_a_foreign_site_id(tmp_path: Path) -> None:
 def test_propose_site_update_rejects_blank_required_fields(tmp_path: Path) -> None:
     with _account_with_space(tmp_path) as settings:
         site_id = _alice_site_id(settings)
-        blank_name = _invoke(
-            settings, "alice", "propose_site_update", site_id=site_id, name="   "
-        )
+        blank_name = _invoke(settings, "alice", "propose_site_update", site_id=site_id, name="   ")
         blank_category = _invoke(
             settings, "alice", "propose_site_update", site_id=site_id, category=" "
         )

@@ -79,7 +79,9 @@ def test_every_redirect_hop_is_revalidated_not_just_the_first(
 
     def hop(request: httpx.Request) -> httpx.Response:
         if request.url.host == "short.example":
-            return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/meta-data/"})
+            return httpx.Response(
+                302, headers={"location": "http://169.254.169.254/latest/meta-data/"}
+            )
         return _html()(request)
 
     seen, outcome, checked = _run("https://short.example/x", hop, monkeypatch)
@@ -223,7 +225,7 @@ def test_page_text_never_becomes_the_failure_reason(
 
 
 def test_gb18030_pages_decode_without_mojibake(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = '<html><head><title>中文标题</title></head><body></body></html>'.encode("gb18030")
+    body = "<html><head><title>中文标题</title></head><body></body></html>".encode("gb18030")
     _, outcome, _checked = _run(
         "https://example.com/",
         lambda _r: httpx.Response(

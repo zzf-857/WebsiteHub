@@ -55,6 +55,8 @@ def _schedule_analysis(request: Request, *, user_id: str, site_id: str) -> None:
     )
     _ANALYSIS_TASKS.add(task)
     task.add_done_callback(_ANALYSIS_TASKS.discard)
+
+
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]
 
 
@@ -87,7 +89,9 @@ async def add_category(
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
 ) -> CategoryResponse:
-    return await _call(service.create_category(session, identity.user.id, payload.name))
+    return await _call(
+        service.create_category(session, identity.user.id, payload.name, payload.icon)
+    )
 
 
 @router.patch("/categories/{category_id}", response_model=CategoryResponse)
@@ -99,7 +103,7 @@ async def rename_category(
     _: WriteOriginDependency,
 ) -> CategoryResponse:
     return await _call(
-        service.update_category(session, identity.user.id, category_id, payload.name)
+        service.update_category(session, identity.user.id, category_id, payload.name, payload.icon)
     )
 
 
@@ -112,9 +116,7 @@ async def preview_category_delete(
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
 ) -> CategoryDeletePreviewResponse:
-    return await _call(
-        service.category_delete_preview(session, identity.user.id, category_id)
-    )
+    return await _call(service.category_delete_preview(session, identity.user.id, category_id))
 
 
 @router.delete("/categories/{category_id}", response_model=CategoryDeleteResponse)
@@ -414,5 +416,3 @@ async def apply_library_reclassification(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(error),
         ) from error
-
-

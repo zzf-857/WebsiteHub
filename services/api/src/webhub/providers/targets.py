@@ -56,9 +56,7 @@ def _address(hostname: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | N
 
 
 def _is_explicitly_local(hostname: str) -> bool:
-    return hostname == "localhost" or hostname.endswith(
-        (".localhost", ".local", ".internal")
-    )
+    return hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal"))
 
 
 def _allowed_address(
@@ -77,9 +75,7 @@ def _allowed_address(
         if address.is_loopback:
             return True
         private_networks = (
-            _PRIVATE_IPV4_NETWORKS
-            if address.version == 4
-            else _PRIVATE_IPV6_NETWORKS
+            _PRIVATE_IPV4_NETWORKS if address.version == 4 else _PRIVATE_IPV6_NETWORKS
         )
         return any(address in network for network in private_networks)
     return address.is_global
@@ -151,8 +147,7 @@ async def validate_connection_target(
                 "Provider 地址无法解析",
             ) from error
     if not addresses or any(
-        not _allowed_address(address, allow_private=allow_private)
-        for address in addresses
+        not _allowed_address(address, allow_private=allow_private) for address in addresses
     ):
         raise ProviderTargetError(
             "unsafe_provider_target",

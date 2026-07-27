@@ -112,9 +112,7 @@ def _destination_path(
 ) -> Path:
     account_component = _path_component(account_id, field="账号标识")
     snapshot_component = _path_component(snapshot_id, field="快照标识")
-    expected_storage_key = (
-        f"bookmark-imports/{account_component}/{snapshot_component}/source.html"
-    )
+    expected_storage_key = f"bookmark-imports/{account_component}/{snapshot_component}/source.html"
     if storage_key != expected_storage_key:
         raise persistence.BookmarkPersistenceConflictError("书签快照存储位置不合法")
 

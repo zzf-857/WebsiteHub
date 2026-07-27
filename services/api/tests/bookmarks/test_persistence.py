@@ -512,8 +512,7 @@ def test_account_scoped_staging_is_idempotent_and_switches_only_complete_runs(
                 select(BookmarkStagingCandidate.id).where(
                     BookmarkStagingCandidate.user_id == alice_id,
                     BookmarkStagingCandidate.run_id == first_run.run_id,
-                    BookmarkStagingCandidate.identity_url
-                    == "https://example.com/shared?q=2#keep",
+                    BookmarkStagingCandidate.identity_url == "https://example.com/shared?q=2#keep",
                 )
             )
         assert classification_checkpoint_count == 1

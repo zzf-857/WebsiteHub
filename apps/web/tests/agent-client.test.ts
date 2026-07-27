@@ -37,7 +37,13 @@ const storedMessage = {
   status: "complete",
 };
 
-const libraryCategory = { id: "category-1", name: "开发", is_default: false, site_count: 3 };
+const libraryCategory = {
+  id: "category-1",
+  name: "开发",
+  is_default: false,
+  icon: "Code",
+  site_count: 3,
+};
 const libraryTag = { id: "tag-react", name: "react", site_count: 2 };
 
 const librarySite = {
@@ -47,7 +53,7 @@ const librarySite = {
   identity_url: "https://developer.mozilla.org",
   description: null,
   favicon_url: null,
-  category: { id: "category-1", name: "开发", is_default: false },
+  category: { id: "category-1", name: "开发", is_default: false, icon: "Code" },
   tags: [],
   pinned: false,
   source: "manual",
@@ -92,6 +98,7 @@ function stubLibraryFetch(
         id: `category-new-${createdCategories}`,
         name: body.name,
         is_default: false,
+        icon: "Folder",
         site_count: 0,
       }, 201);
     }

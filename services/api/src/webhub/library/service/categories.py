@@ -11,6 +11,7 @@ from webhub.db.models import (
     Site,
     utc_now,
 )
+from webhub.library.icons import infer_category_icon
 from webhub.library.schemas import (
     CategoryDeletePreviewResponse,
     CategoryDeleteResponse,
@@ -53,9 +54,11 @@ async def create_category(
     session: AsyncSession,
     user_id: str,
     name: str,
+    icon: str | None = None,
 ) -> CategoryResponse:
     display, normalized = _display_name(name, maximum=80, field="分类名称")
-    category = Category(user_id=user_id, name=display, normalized_name=normalized)
+    final_icon = icon.strip() if icon and icon.strip() else infer_category_icon(display)
+    category = Category(user_id=user_id, name=display, normalized_name=normalized, icon=final_icon)
     session.add(category)
     try:
         await session.commit()
@@ -70,6 +73,7 @@ async def update_category(
     user_id: str,
     category_id: str,
     name: str,
+    icon: str | None = None,
 ) -> CategoryResponse:
     category = await _owned_category(session, user_id, category_id)
     if category.is_default:
@@ -77,6 +81,11 @@ async def update_category(
     display, normalized = _display_name(name, maximum=80, field="分类名称")
     category.name = display
     category.normalized_name = normalized
+    # 与 Q3 确立的字段语义保持一致：**None = 别动，"" = 恢复默认（按名称推断）**。
+    # 曾经这里在 icon 省略时也跑一遍 infer_category_icon，于是用户手选的图标会被
+    # 一次纯重命名悄悄抹掉——改名和换图标是两个决定，不能互相牵连。
+    if icon is not None:
+        category.icon = icon.strip() or infer_category_icon(display)
     category.updated_at = utc_now()
     now = utc_now()
     try:

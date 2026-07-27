@@ -95,9 +95,7 @@ async def preview_batch(
     for url in urls[:MAX_BATCH_URLS]:
         result = normalize_bookmark_url(url)
         if result.status is not NormalizationStatus.ACCEPTED or not result.normalized_url:
-            items.append(
-                BatchItem(url=url, status="invalid", reason="网址无效或不受支持")
-            )
+            items.append(BatchItem(url=url, status="invalid", reason="网址无效或不受支持"))
             continue
         normalized[url] = result.normalized_url
 

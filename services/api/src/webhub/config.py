@@ -55,9 +55,7 @@ def _decoded_master_key(value: str) -> bytes:
             "WEBHUB_PROVIDER_MASTER_KEY must be a base64-encoded 32-byte key"
         ) from error
     if len(decoded) != 32:
-        raise ValueError(
-            "WEBHUB_PROVIDER_MASTER_KEY must be a base64-encoded 32-byte key"
-        )
+        raise ValueError("WEBHUB_PROVIDER_MASTER_KEY must be a base64-encoded 32-byte key")
     return decoded
 
 
@@ -184,9 +182,7 @@ class Settings:
         default_factory=lambda: _positive_environment_integer("WEBHUB_AGENT_MAX_STEPS", 12)
     )
     agent_history_messages: int = field(
-        default_factory=lambda: _positive_environment_integer(
-            "WEBHUB_AGENT_HISTORY_MESSAGES", 20
-        )
+        default_factory=lambda: _positive_environment_integer("WEBHUB_AGENT_HISTORY_MESSAGES", 20)
     )
     agent_tool_result_limit: int = field(
         default_factory=lambda: _positive_environment_integer("WEBHUB_AGENT_TOOL_RESULT_LIMIT", 8)
@@ -234,9 +230,7 @@ class Settings:
             "provider_test_rate_limit_window_seconds": (
                 self.provider_test_rate_limit_window_seconds
             ),
-            "provider_test_max_tracked_accounts": (
-                self.provider_test_max_tracked_accounts
-            ),
+            "provider_test_max_tracked_accounts": (self.provider_test_max_tracked_accounts),
             "provider_test_timeout_seconds": self.provider_test_timeout_seconds,
             "agent_request_timeout_seconds": self.agent_request_timeout_seconds,
             "agent_max_steps": self.agent_max_steps,
@@ -258,25 +252,21 @@ class Settings:
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
         if self.provider_master_key is not None and (
-            not isinstance(self.provider_master_key, bytes)
-            or len(self.provider_master_key) != 32
+            not isinstance(self.provider_master_key, bytes) or len(self.provider_master_key) != 32
         ):
             raise ValueError("provider_master_key must contain exactly 32 bytes")
         if (
             self.environment.strip().casefold() in {"prod", "production"}
             and self.provider_master_key is None
         ):
-            raise ValueError(
-                "WEBHUB_PROVIDER_MASTER_KEY is required in production"
-            )
+            raise ValueError("WEBHUB_PROVIDER_MASTER_KEY is required in production")
         if self.bookmark_upload_global_concurrency > self.bookmark_upload_max_tracked_accounts:
             raise ValueError(
                 "bookmark_upload_global_concurrency cannot exceed "
                 "bookmark_upload_max_tracked_accounts"
             )
         minimum_disk_reserve = (
-            self.bookmark_upload_global_concurrency
-            * self.bookmark_upload_disk_check_interval_bytes
+            self.bookmark_upload_global_concurrency * self.bookmark_upload_disk_check_interval_bytes
         )
         if self.bookmark_upload_minimum_free_bytes < minimum_disk_reserve:
             raise ValueError(

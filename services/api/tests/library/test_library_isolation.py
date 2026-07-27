@@ -55,9 +55,7 @@ def test_cross_account_ids_are_hidden_and_relationship_tampering_is_rejected(
     alice_category = client.post(
         "/api/library/categories", json={"name": "Alice only"}, headers=ORIGIN
     ).json()
-    alice_tag = client.post(
-        "/api/library/tags", json={"name": "Alice tag"}, headers=ORIGIN
-    ).json()
+    alice_tag = client.post("/api/library/tags", json={"name": "Alice tag"}, headers=ORIGIN).json()
     alice_site = client.post(
         "/api/library/sites",
         json={
@@ -72,9 +70,7 @@ def test_cross_account_ids_are_hidden_and_relationship_tampering_is_rejected(
     client.cookies.clear()
     bob_id, bob_token = _register(client, "bob")
     bob_default = client.get("/api/library/categories").json()["items"][0]
-    bob_tag = client.post(
-        "/api/library/tags", json={"name": "Bob tag"}, headers=ORIGIN
-    ).json()
+    bob_tag = client.post("/api/library/tags", json={"name": "Bob tag"}, headers=ORIGIN).json()
 
     for method, path, kwargs in (
         ("get", f"/api/library/sites/{alice_site['id']}", {}),
@@ -130,12 +126,11 @@ def test_cross_account_ids_are_hidden_and_relationship_tampering_is_rejected(
     )
     assert wrong_category.status_code == 404
     assert wrong_tag.status_code == 404
-    assert client.get(
-        "/api/library/sites", params={"category_id": alice_category["id"]}
-    ).status_code == 404
-    assert client.get(
-        "/api/library/sites", params={"tag_id": alice_tag["id"]}
-    ).status_code == 404
+    assert (
+        client.get("/api/library/sites", params={"category_id": alice_category["id"]}).status_code
+        == 404
+    )
+    assert client.get("/api/library/sites", params={"tag_id": alice_tag["id"]}).status_code == 404
 
     bob_copy = client.post(
         "/api/library/sites",

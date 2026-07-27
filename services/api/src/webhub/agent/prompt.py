@@ -69,8 +69,7 @@ SYSTEM_PROMPT = f"""你是 WebHub 的网址管理助手。WebHub 是一个由 Ag
 
 _COMMAND_GUIDANCE: dict[str, str] = {
     "/搜索": (
-        "用户使用了 /搜索 命令，本轮必须调用 search_library 检索站内资料库，"
-        "并优先给出站内结果。"
+        "用户使用了 /搜索 命令，本轮必须调用 search_library 检索站内资料库，并优先给出站内结果。"
     ),
     "/存入": (
         "用户使用了 /存入 命令。**把用户原文整段传给 propose_sites**，"
@@ -101,8 +100,7 @@ def build_system_prompt(
             else "当前账号未配置联网搜索 Provider，本轮没有 web_search 工具。"
         )
         sections.append(
-            f"## 本轮能力\n{reason}"
-            f"站内查不到时只能凭自身知识推荐，并标注【来源：{SOURCE_MODEL}】。"
+            f"## 本轮能力\n{reason}站内查不到时只能凭自身知识推荐，并标注【来源：{SOURCE_MODEL}】。"
         )
     if slash_command is not None and slash_command.name is not None:
         guidance = _COMMAND_GUIDANCE.get(slash_command.name)

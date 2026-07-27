@@ -19,6 +19,7 @@ export type LibraryCategoryRef = {
   id: string;
   name: string;
   isDefault: boolean;
+  icon: string;
 };
 
 export type LibraryCategory = LibraryCategoryRef & {
@@ -140,6 +141,7 @@ function normalizeCategoryRefAt(value: unknown, path: string): LibraryCategoryRe
     id: identifier(candidate.id, `${path}.id`),
     name: text(candidate.name, `${path}.name`),
     isDefault: boolean(candidate.is_default, `${path}.is_default`),
+    icon: text(candidate.icon, `${path}.icon`),
   };
 }
 

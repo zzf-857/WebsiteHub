@@ -153,13 +153,9 @@ def test_registry_auth_origin_and_exact_provider_scope(tmp_path: Path) -> None:
         }
         # Only vendors that serve a model catalogue advertise a connection test;
         # search-only vendors have nothing read-only to probe.
-        supported = {
-            item["provider"] for item in items if item["connection_test_supported"]
-        }
+        supported = {item["provider"] for item in items if item["connection_test_supported"]}
         assert supported == {"openai", "deepseek", "qwen", "kimi", "ollama", "openai_compatible"}
-        assert next(item for item in items if item["provider"] == "tavily")[
-            "kinds"
-        ] == ["search"]
+        assert next(item for item in items if item["provider"] == "tavily")["kinds"] == ["search"]
 
         missing_origin = client.post(
             "/api/providers",
@@ -261,12 +257,8 @@ def test_account_isolation_optimistic_lock_and_single_enabled_per_kind(
 
         configs = client.get("/api/providers", params={"kind": "model"}).json()["items"]
         assert sum(config["enabled"] for config in configs) == 1
-        assert next(config for config in configs if config["id"] == first["id"])[
-            "version"
-        ] == 2
-        assert next(config for config in configs if config["id"] == second["id"])[
-            "enabled"
-        ] is True
+        assert next(config for config in configs if config["id"] == first["id"])["version"] == 2
+        assert next(config for config in configs if config["id"] == second["id"])["enabled"] is True
 
         stale = client.patch(
             f"/api/providers/{first['id']}",
@@ -317,10 +309,13 @@ def test_account_isolation_optimistic_lock_and_single_enabled_per_kind(
         )
         assert deleted.status_code == 200
         with sqlite3.connect(database_path) as connection:
-            assert connection.execute(
-                "SELECT COUNT(*) FROM provider_configs WHERE enabled = 1 "
-                "GROUP BY user_id, kind HAVING COUNT(*) > 1"
-            ).fetchall() == []
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM provider_configs WHERE enabled = 1 "
+                    "GROUP BY user_id, kind HAVING COUNT(*) > 1"
+                ).fetchall()
+                == []
+            )
 
 
 def test_kind_validation_embedding_and_private_url_policy(tmp_path: Path) -> None:

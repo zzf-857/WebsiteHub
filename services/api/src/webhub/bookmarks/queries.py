@@ -626,9 +626,7 @@ async def apply_import(
 
     preview = await _current_complete_preview(session, user_id, job_id)
     if preview.job.version != expected_job_version:
-        raise persistence.BookmarkPersistenceConflictError(
-            "导入任务已被更新，请刷新预览后重试"
-        )
+        raise persistence.BookmarkPersistenceConflictError("导入任务已被更新，请刷新预览后重试")
     if preview.job.state in {"committing", "cancel_requested"}:
         raise persistence.BookmarkPersistenceConflictError("该导入任务正在处理中")
 

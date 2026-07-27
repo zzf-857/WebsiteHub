@@ -78,9 +78,7 @@ def test_analysis_fills_an_empty_description_and_icon(
         site = _site(client)
         assert not site["description"]
 
-        analyzed = client.post(
-            f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN
-        )
+        analyzed = client.post(f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN)
         assert analyzed.status_code == 200, analyzed.text
         body = analyzed.json()
         assert body["analysis_status"] == "complete"
@@ -98,9 +96,7 @@ def test_analysis_never_overwrites_what_the_user_typed(
     with _client(tmp_path) as client:
         site = _site(client, description="我自己写的说明")
 
-        analyzed = client.post(
-            f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN
-        )
+        analyzed = client.post(f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN)
         assert analyzed.status_code == 200
         body = analyzed.json()
         assert body["analysis_status"] == "complete"
@@ -118,9 +114,7 @@ def test_analysis_status_reaches_a_terminal_state_on_failure(
     _stub_page(monkeypatch, status=500)
     with _client(tmp_path) as client:
         site = _site(client)
-        analyzed = client.post(
-            f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN
-        )
+        analyzed = client.post(f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN)
         assert analyzed.status_code == 200
         assert analyzed.json()["analysis_status"] == "failed"
 
@@ -132,9 +126,7 @@ def test_a_page_without_metadata_is_limited_not_failed(
     _stub_page(monkeypatch, body="<html><head></head><body><div id=root></div></body></html>")
     with _client(tmp_path) as client:
         site = _site(client)
-        analyzed = client.post(
-            f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN
-        )
+        analyzed = client.post(f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN)
         assert analyzed.json()["analysis_status"] == "limited"
 
 

@@ -152,12 +152,18 @@ def test_site_crud_search_and_stale_version(library_client: TestClient) -> None:
     assert updated.json()["version"] == 2
     assert updated.json()["tags"] == []
     assert updated.json()["identity_url"].endswith("?q=a#two")
-    assert client.get("/api/library/sites", params={"q": "更新后的接口文档"}).json()[
-        "aggregate"
-    ]["matched_count"] == 1
-    assert client.get("/api/library/sites", params={"q": "参考资料"}).json()["aggregate"][
-        "matched_count"
-    ] == 0
+    assert (
+        client.get("/api/library/sites", params={"q": "更新后的接口文档"}).json()["aggregate"][
+            "matched_count"
+        ]
+        == 1
+    )
+    assert (
+        client.get("/api/library/sites", params={"q": "参考资料"}).json()["aggregate"][
+            "matched_count"
+        ]
+        == 0
+    )
 
     stale = client.patch(
         f"/api/library/sites/{created['id']}",
@@ -194,8 +200,7 @@ def test_url_identity_is_strict_per_account(library_client: TestClient) -> None:
         "https://example.com/docs?b=2&a=1",
     )
     created = [
-        _site(client, name=f"Variant {index}", url=url)
-        for index, url in enumerate(variants)
+        _site(client, name=f"Variant {index}", url=url) for index, url in enumerate(variants)
     ]
     assert len({item["identity_url"] for item in created}) == len(variants)
 
@@ -322,9 +327,7 @@ def test_category_preview_delete_and_tag_delete_preserve_sites(
     assert preview.json()["replacement_category"]["name"] == "未分类"
     assert preview.json()["replacement_category"]["is_default"] is True
 
-    removed_category = client.delete(
-        f"/api/library/categories/{category['id']}", headers=ORIGIN
-    )
+    removed_category = client.delete(f"/api/library/categories/{category['id']}", headers=ORIGIN)
     assert removed_category.json()["reassigned_site_count"] == 2
     for site_id in (first["id"], second["id"]):
         restored = client.get(f"/api/library/sites/{site_id}")
@@ -368,9 +371,7 @@ def test_normalized_names_and_invalid_urls_return_clear_errors(
     assert duplicate_category_rename.status_code == 409
 
     _tag(client, "ＡＰＩ")
-    duplicate_tag = client.post(
-        "/api/library/tags", json={"name": "api"}, headers=ORIGIN
-    )
+    duplicate_tag = client.post("/api/library/tags", json={"name": "api"}, headers=ORIGIN)
     assert duplicate_tag.status_code == 409
     other_tag = _tag(client, "Other tag")
     duplicate_tag_rename = client.patch(
@@ -507,9 +508,7 @@ def test_delete_site_rejects_a_stale_version_without_deleting(
         "code": "version_conflict",
         "message": "网站已被修改，请刷新后重试",
     }
-    assert client.get(f"/api/library/sites/{created['id']}").json()["version"] == updated[
-        "version"
-    ]
+    assert client.get(f"/api/library/sites/{created['id']}").json()["version"] == updated["version"]
 
     deleted = client.delete(
         f"/api/library/sites/{created['id']}",

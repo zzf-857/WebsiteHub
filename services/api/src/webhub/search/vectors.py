@@ -232,9 +232,7 @@ async def drop_index(session: AsyncSession, user_id: str) -> int:
     the ``sites`` table — the vectors are a derived cache, never the record.
     """
 
-    result = await session.execute(
-        delete(SiteEmbedding).where(SiteEmbedding.user_id == user_id)
-    )
+    result = await session.execute(delete(SiteEmbedding).where(SiteEmbedding.user_id == user_id))
     await session.commit()
     return int(result.rowcount or 0)  # type: ignore[attr-defined]
 

@@ -32,16 +32,19 @@ class StrictRequest(BaseModel):
 
 class CategoryCreateRequest(StrictRequest):
     name: str = Field(min_length=1, max_length=80)
+    icon: str | None = None
 
 
 class CategoryUpdateRequest(StrictRequest):
     name: str = Field(min_length=1, max_length=80)
+    icon: str | None = None
 
 
 class CategoryReference(BaseModel):
     id: str
     name: str
     is_default: bool
+    icon: str
 
 
 class CategoryResponse(CategoryReference):
@@ -121,6 +124,7 @@ class SiteResponse(BaseModel):
     identity_url: str
     description: str
     favicon_url: FaviconUrl
+    preview_url: str | None = None
     category: CategoryReference
     tags: list[TagReference]
     pinned: bool

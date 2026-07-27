@@ -617,9 +617,7 @@ async def resolve_space_reference(
     display = " ".join(unicodedata.normalize("NFKC", reference).split())
     if not display:
         return None
-    by_id = await session.scalar(
-        select(Space).where(Space.user_id == user_id, Space.id == display)
-    )
+    by_id = await session.scalar(select(Space).where(Space.user_id == user_id, Space.id == display))
     if by_id is not None:
         return by_id
     return await session.scalar(

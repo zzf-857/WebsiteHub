@@ -160,6 +160,8 @@ async def _failed_parse_run_replay(
         and run_state == "failed"
         and run_failure == failure_code
     )
+
+
 async def begin_parse_run(
     session: AsyncSession,
     user_id: str,
@@ -276,6 +278,8 @@ async def begin_parse_run(
         job_version=expected_job_version + 1,
         replayed=False,
     )
+
+
 async def fail_parse_run(
     session: AsyncSession,
     user_id: str,

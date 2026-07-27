@@ -44,6 +44,9 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     normalized_name: Mapped[str] = mapped_column(String(80), nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    icon: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="Folder", server_default="Folder"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
@@ -121,11 +124,11 @@ class Site(Base):
     original_url: Mapped[str] = mapped_column(Text, nullable=False)
     identity_url: Mapped[str] = mapped_column(Text, nullable=False)
     # 分类内的自定义顺序；同一 (user_id, category_id) 下唯一。
-    position: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     favicon_url: Mapped[str | None] = mapped_column(Text)
+    # 抓取到的 og:image / twitter:image；没抓到就是 None，前端不渲染预览位。
+    preview_url: Mapped[str | None] = mapped_column(Text)
     pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_analyzed")
@@ -162,6 +165,8 @@ class SiteTag(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
+
+
 class SiteImportOrigin(Base):
     __tablename__ = "site_import_origins"
     __table_args__ = (

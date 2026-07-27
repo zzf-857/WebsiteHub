@@ -330,9 +330,7 @@ def test_rejects_review_semantic_bypasses(mapping: dict[str, object]) -> None:
 def test_accepts_reviewed_low_confidence_and_insufficient_evidence_fallbacks() -> None:
     assert LOW_CONFIDENCE_THRESHOLD == 0.5
     boundary = _validate(_payload(_mapping("cluster-1", confidence=0.5)))
-    reviewed = _validate(
-        _payload(_mapping("cluster-1", confidence=0.49, needs_review=True))
-    )
+    reviewed = _validate(_payload(_mapping("cluster-1", confidence=0.49, needs_review=True)))
     fallback = _validate(
         _payload(
             _mapping(
@@ -399,19 +397,22 @@ def test_binding_hash_is_order_independent_and_covers_validation_scope() -> None
 
     assert ordered.binding_sha256 == reversed_result.binding_sha256
     assert ordered.response_canonical_json != reversed_result.response_canonical_json
-    assert len(
-        {
-            _validate(
-                _payload(first),
-                expected_subject_ids=("cluster-1", "cluster-2"),
-                max_new_categories=1,
-            ).binding_sha256,
-            different_subject.binding_sha256,
-            different_taxonomy.binding_sha256,
-            different_budget.binding_sha256,
-            different_batch.binding_sha256,
-        }
-    ) == 5
+    assert (
+        len(
+            {
+                _validate(
+                    _payload(first),
+                    expected_subject_ids=("cluster-1", "cluster-2"),
+                    max_new_categories=1,
+                ).binding_sha256,
+                different_subject.binding_sha256,
+                different_taxonomy.binding_sha256,
+                different_budget.binding_sha256,
+                different_batch.binding_sha256,
+            }
+        )
+        == 5
+    )
     binding = json.loads(ordered.binding_canonical_json)
     assert binding["validator_version"] == CLASSIFICATION_VALIDATOR_VERSION
     assert binding["schema_version"] == CLASSIFICATION_SCHEMA_VERSION

@@ -1,17 +1,6 @@
 "use client";
 
-import {
-  BookOpen,
-  Box,
-  Code,
-  Coffee,
-  Folder,
-  Inbox,
-  LayoutGrid,
-  Palette,
-  Plus,
-  Sparkles,
-} from "lucide-react";
+import { Box, LayoutGrid, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -20,16 +9,7 @@ import type { LibraryCategory } from "@/lib/library-contract";
 import { listSpaces } from "@/lib/space-client";
 import type { Space } from "@/lib/space-contract";
 
-/* 分类名 → 1f 规范板约定的 lucide 图标；未约定的分类统一回落到 Folder，
-   避免后端新增分类时前端出现无图标的空洞。 */
-const CATEGORY_ICONS: Record<string, typeof Folder> = {
-  开发: Code,
-  "AI 工具": Sparkles,
-  学习: BookOpen,
-  设计: Palette,
-  日常: Coffee,
-  未分类: Inbox,
-};
+import { DynamicIcon } from "@/components/ui/dynamic-icon";
 
 /* 骨架条数量取自设计稿 hint-placeholder-count，与真实数据的常见规模一致。 */
 const CATEGORY_SKELETON_COUNT = 6;
@@ -141,7 +121,6 @@ export function LibrarySidebar({ activeCategoryId, onSelectCategory }: LibrarySi
 
       {categoryStatus === "ready" &&
         categories.map((category) => {
-          const Icon = CATEGORY_ICONS[category.name] ?? Folder;
           const isActive = category.id === activeCategoryId;
           return (
             <button
@@ -152,7 +131,7 @@ export function LibrarySidebar({ activeCategoryId, onSelectCategory }: LibrarySi
               key={category.id}
               onClick={() => onSelectCategory(category.id)}
             >
-              <Icon className="library-sidebar-icon" aria-hidden="true" />
+              <DynamicIcon name={category.icon || "Folder"} className="library-sidebar-icon" aria-hidden="true" />
               <span className="library-sidebar-label">{category.name}</span>
               <span className="library-sidebar-count">{category.siteCount}</span>
             </button>

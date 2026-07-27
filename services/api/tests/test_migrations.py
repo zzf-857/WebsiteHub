@@ -517,8 +517,7 @@ def test_complete_candidate_allows_only_display_and_action_review(
     )
     connection.commit()
     assert connection.execute(
-        "SELECT display_title, proposed_action "
-        "FROM bookmark_staging_candidates WHERE id = ?",
+        "SELECT display_title, proposed_action FROM bookmark_staging_candidates WHERE id = ?",
         (candidate_id,),
     ).fetchone() == ("Reviewed title", "needs_review")
 

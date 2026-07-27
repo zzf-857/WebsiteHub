@@ -146,9 +146,7 @@ class ClassificationResponse(BaseModel):
 
     schema_version: Literal[CLASSIFICATION_SCHEMA_VERSION]
     batch_id: str = Field(min_length=1, max_length=128)
-    mappings: tuple[ClassificationMapping, ...] = Field(
-        max_length=MAX_CLASSIFICATION_BATCH_SIZE
-    )
+    mappings: tuple[ClassificationMapping, ...] = Field(max_length=MAX_CLASSIFICATION_BATCH_SIZE)
 
     @field_validator("batch_id")
     @classmethod

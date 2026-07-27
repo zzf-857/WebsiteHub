@@ -23,13 +23,11 @@ MAX_DESCRIPTION_CHARS = 1_000
 
 
 async def _owned_site(session: AsyncSession, user_id: str, site_id: str) -> Site | None:
-    return await session.scalar(
-        select(Site).where(Site.user_id == user_id, Site.id == site_id)
-    )
+    return await session.scalar(select(Site).where(Site.user_id == user_id, Site.id == site_id))
 
 
-def _safe_icon(url: str | None) -> str | None:
-    """Only http(s) icons; the column feeds an ``img src``."""
+def _safe_image_url(url: str | None) -> str | None:
+    """Only http(s) URLs; both columns feed an ``img src``."""
 
     if not url:
         return None
@@ -57,9 +55,15 @@ async def apply_outcome(
     if not (site.description or "").strip() and metadata.description:
         site.description = metadata.description[:MAX_DESCRIPTION_CHARS]
     if not (site.favicon_url or "").strip():
-        icon = _safe_icon(metadata.icon_url)
+        icon = _safe_image_url(metadata.icon_url)
         if icon:
             site.favicon_url = icon
+    # og:image / twitter:image 已经被 metadata.py 解析并转成绝对地址了，
+    # 落到 preview_url 才算走完这条链路；同样只补空、不覆盖。
+    if not (site.preview_url or "").strip():
+        preview = _safe_image_url(metadata.image_url)
+        if preview:
+            site.preview_url = preview
 
     site.analysis_status = outcome.status
     # **不 bump version。** version 是给用户可见的并发编辑用的乐观锁；

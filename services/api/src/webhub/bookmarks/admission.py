@@ -116,8 +116,7 @@ class BookmarkUploadAdmissionManager:
         minimum_disk_reserve = global_concurrency * disk_check_interval_bytes
         if minimum_free_bytes < minimum_disk_reserve:
             raise ValueError(
-                "minimum_free_bytes must be at least "
-                "global_concurrency * disk_check_interval_bytes"
+                "minimum_free_bytes must be at least global_concurrency * disk_check_interval_bytes"
             )
 
         self.data_directory = Path(data_directory).expanduser().resolve()
@@ -328,9 +327,9 @@ class BookmarkUploadAdmissionManager:
         final_account = (imports_root / account_id).resolve(strict=False)
         self._require_within(final_account, imports_root)
         account_hash = hashlib.sha256(account_id.encode("utf-8")).hexdigest()
-        incoming_account = (
-            imports_root / "incoming" / f"account-{account_hash}"
-        ).resolve(strict=False)
+        incoming_account = (imports_root / "incoming" / f"account-{account_hash}").resolve(
+            strict=False
+        )
         self._require_within(incoming_account, imports_root)
         return self._published_source_bytes(final_account) + self._incoming_source_bytes(
             incoming_account

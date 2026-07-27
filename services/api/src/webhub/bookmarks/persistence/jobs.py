@@ -52,8 +52,7 @@ async def create_import(
         raise BookmarkPersistenceValidationError("源文件大小超出书签导入限制")
     normalized_encoding = detected_encoding.strip().casefold() if detected_encoding else None
     if normalized_encoding is not None and (
-        len(normalized_encoding) > 40
-        or re.fullmatch(r"[a-z0-9._-]+", normalized_encoding) is None
+        len(normalized_encoding) > 40 or re.fullmatch(r"[a-z0-9._-]+", normalized_encoding) is None
     ):
         raise BookmarkPersistenceValidationError("书签文件编码标识不合法")
     request_key_hash = _key_hash(idempotency_key, field="请求幂等键")

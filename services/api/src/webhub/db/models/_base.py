@@ -24,5 +24,4 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-
 __all__ = ["Base", "DEFAULT_CATEGORY_NAME", "new_id", "utc_now"]

@@ -44,11 +44,7 @@ def _mock(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Request]:
 def _vectors(count: int) -> httpx.Response:
     return httpx.Response(
         200,
-        json={
-            "data": [
-                {"index": index, "embedding": [1.0, 0.0]} for index in range(count)
-            ]
-        },
+        json={"data": [{"index": index, "embedding": [1.0, 0.0]} for index in range(count)]},
     )
 
 

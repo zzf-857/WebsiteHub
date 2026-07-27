@@ -74,8 +74,13 @@ import {
 } from "@/components/agent/agent-result-cards";
 
 /* ---------- 常量与工具 ---------- */
-// 设计稿 1a 的三条快捷提问，点击只填充输入框，发送权始终在用户手里
+// 设计稿 1a 的三条快捷提问，点击只填充输入框，发送权始终在用户手里。
+// 这三条在 593d4dc 抽 hook 时被误清空，导致 agent-panel 里的 .agent-chips 容器
+// 渲染了却一个 chip 都没有；三条对应的能力（检索 / 存入 / 改分类置顶）都真实可用。
 export const QUICK_PROMPTS = [
+  "帮我找 Unity API 文档",
+  "/存入 ai-bot.cn",
+  "把 Figma 移到「设计」并置顶",
 ] as const;
 // 输入框自动增高的上限，对应设计稿"最多约 180px"
 const MAX_TEXTAREA_HEIGHT = 180;

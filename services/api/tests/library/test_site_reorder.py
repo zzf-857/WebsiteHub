@@ -193,9 +193,7 @@ def test_reorder_is_account_scoped_and_origin_checked(tmp_path: Path) -> None:
         body = {"ordered_site_ids": [ids[1]], "before_site_id": ids[0]}
 
         assert (
-            client.post(
-                f"/api/library/categories/{category_id}/reorder", json=body
-            ).status_code
+            client.post(f"/api/library/categories/{category_id}/reorder", json=body).status_code
             == 403
         )
 

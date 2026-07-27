@@ -37,13 +37,7 @@ CHUNK_SIZE = 500
 
 
 def _snapshot_path(data_directory: Path, account_id: str, snapshot_id: str) -> Path:
-    return (
-        data_directory
-        / "bookmark-imports"
-        / account_id
-        / snapshot_id
-        / "source.html"
-    )
+    return data_directory / "bookmark-imports" / account_id / snapshot_id / "source.html"
 
 
 async def _stage_events(
@@ -179,7 +173,13 @@ async def run_parse(
                 )
         except Exception:  # noqa: BLE001 - nothing left to do but surface the original
             _LOGGER.exception("could not record parse failure for job %s", job_id)
-        raise
+            # 只有「连失败都没记下来」才往上抛——这与 docstring 的契约一致。
+            raise
+        # 失败已经写在 job 上了，用户能从预览接口看到原因。这里唯一的调用方是
+        # routes.py 里 asyncio.create_task 起的脱钩任务，它的 done_callback 只做
+        # discard、从不取回结果：再抛一次没人接，只会变成
+        # "Task exception was never retrieved" 噪声。
+        return run_id
 
 
 __all__ = ["CHUNK_SIZE", "run_parse"]

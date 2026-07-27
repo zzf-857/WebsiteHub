@@ -16,7 +16,7 @@ import {
   normalizeLibrarySitePage,
 } from "../lib/library-contract.ts";
 
-const category = { id: "category-1", name: "开发", is_default: true, site_count: 2 };
+const category = { id: "category-1", name: "开发", is_default: true, icon: "Code", site_count: 2 };
 const site = {
   id: "site-1",
   name: "MDN",
@@ -24,7 +24,7 @@ const site = {
   identity_url: "https://developer.mozilla.org",
   description: "Web documentation",
   favicon_url: "https://developer.mozilla.org/favicon.ico",
-  category: { id: "category-1", name: "开发", is_default: true },
+  category: { id: "category-1", name: "开发", is_default: true, icon: "Code" },
   tags: [{ id: "tag-1", name: "文档" }],
   pinned: true,
   source: "manual",
@@ -42,7 +42,7 @@ test("normalizes strict site and paginated list contracts", () => {
     identityUrl: "https://developer.mozilla.org",
     description: "Web documentation",
     faviconUrl: "https://developer.mozilla.org/favicon.ico",
-    category: { id: "category-1", name: "开发", isDefault: true },
+    category: { id: "category-1", name: "开发", isDefault: true, icon: "Code" },
     tags: [{ id: "tag-1", name: "文档" }],
     pinned: true,
     source: "manual",
@@ -64,7 +64,7 @@ test("normalizes strict site and paginated list contracts", () => {
 
 test("accepts the collection envelope and the explicit category delete preview", () => {
   assert.deepEqual(normalizeLibraryCategories({ items: [category] }), [
-    { id: "category-1", name: "开发", isDefault: true, siteCount: 2 },
+    { id: "category-1", name: "开发", isDefault: true, icon: "Code", siteCount: 2 },
   ]);
   assert.deepEqual(
     normalizeCategoryDeletePreview({
@@ -73,9 +73,15 @@ test("accepts the collection envelope and the explicit category delete preview",
       replacement_category: { ...category, id: "category-2", name: "未分类", site_count: 0 },
     }),
     {
-      category: { id: "category-1", name: "开发", isDefault: true, siteCount: 2 },
+      category: { id: "category-1", name: "开发", isDefault: true, icon: "Code", siteCount: 2 },
       affectedSiteCount: 2,
-      replacementCategory: { id: "category-2", name: "未分类", isDefault: true, siteCount: 0 },
+      replacementCategory: {
+        id: "category-2",
+        name: "未分类",
+        isDefault: true,
+        icon: "Code",
+        siteCount: 0,
+      },
     },
   );
 });

@@ -47,17 +47,11 @@ def test_provider_migration_preserves_one_enabled_config_and_adds_unique_guard(
         ).fetchall()
         assert rows == [("newer", 1, 1), ("older", 0, 1)]
         with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
-                "UPDATE provider_configs SET enabled = 1 WHERE id = 'older'"
-            )
+            connection.execute("UPDATE provider_configs SET enabled = 1 WHERE id = 'older'")
 
     command.downgrade(config, "20260726_0004")
     with sqlite3.connect(database_path) as connection:
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(provider_configs)")
-        }
-        indexes = {
-            row[1] for row in connection.execute("PRAGMA index_list(provider_configs)")
-        }
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(provider_configs)")}
+        indexes = {row[1] for row in connection.execute("PRAGMA index_list(provider_configs)")}
     assert "version" not in columns
     assert "uq_provider_configs_enabled_per_user_kind" not in indexes

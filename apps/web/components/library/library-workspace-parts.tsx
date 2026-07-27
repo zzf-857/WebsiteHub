@@ -11,7 +11,6 @@ import {
   ChevronsDown,
   ChevronsUp,
   ExternalLink,
-  FolderTree,
   GripVertical,
   LoaderCircle,
   Pencil,
@@ -20,6 +19,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
+import { DynamicIcon } from "@/components/ui/dynamic-icon";
 import {
   SiteFavicon,
 } from "@/components/site-favicon";
@@ -218,7 +218,7 @@ export function SiteCollection({
 
             <div className="library-site-taxonomy">
               <span className="library-category-chip">
-                <FolderTree aria-hidden="true" />
+                <DynamicIcon name={site.category.icon || "Folder"} aria-hidden="true" />
                 {site.category.name}
               </span>
               {site.tags.slice(0, 3).map((tag) => (

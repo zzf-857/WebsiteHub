@@ -9,8 +9,9 @@ import { safeNextPath } from "@/lib/auth-contract";
 
 function RouteStatus({
   error,
+  message = "正在加载账号...",
   onRetry,
-}: Readonly<{ error?: string; onRetry?: () => void }>) {
+}: Readonly<{ error?: string; message?: string; onRetry?: () => void }>) {
   return (
     <main className="route-status" aria-live="polite">
       <span className="route-status-mark" aria-hidden="true">W</span>
@@ -26,7 +27,7 @@ function RouteStatus({
       ) : (
         <>
           <LoaderCircle className="loading-spinner" aria-hidden="true" />
-          <p>正在加载账号...</p>
+          <p>{message}</p>
         </>
       )}
     </main>
@@ -53,6 +54,9 @@ export function AuthGate({ children }: Readonly<{ children: ReactNode }>) {
         onRetry={() => { void auth.refresh().catch(() => undefined); }}
       />
     );
+  }
+  if (auth.status === "anonymous") {
+    return <RouteStatus message="未登录，正在跳转到登录页..." />;
   }
   return <RouteStatus />;
 }

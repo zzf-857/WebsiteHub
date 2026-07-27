@@ -20,9 +20,7 @@ _RUN_CHILD_FREEZE_CONDITIONS = {
     "bookmark_staging_folders": "run.state != 'running'",
     "bookmark_staging_occurrences": "run.state != 'running'",
     "bookmark_staging_candidate_occurrences": "run.state != 'running'",
-    "bookmark_staging_candidate_folders": (
-        "run.state IN ('complete', 'failed', 'cancelled')"
-    ),
+    "bookmark_staging_candidate_folders": ("run.state IN ('complete', 'failed', 'cancelled')"),
 }
 
 

@@ -122,9 +122,7 @@ def test_confirming_creates_only_the_importable_items(tmp_path: Path) -> None:
         assert body["created"] == 2
         assert body["invalid"] == 1
         assert _site_count(database_path) == 2
-        assert all(
-            item["site_id"] for item in body["items"] if item["status"] == "created"
-        )
+        assert all(item["site_id"] for item in body["items"] if item["status"] == "created")
 
 
 def test_confirming_twice_never_writes_a_second_row(tmp_path: Path) -> None:

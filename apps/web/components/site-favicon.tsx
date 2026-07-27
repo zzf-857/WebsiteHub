@@ -22,6 +22,43 @@ const XML_ESCAPES: Record<string, string> = {
   "'": "&apos;",
 };
 
+const AVATAR_PALETTES = [
+  // Google 蓝
+  { bg: "linear-gradient(135deg, #4285F4, #2B66CC)", color: "#FFFFFF" },
+  // 翡翠绿
+  { bg: "linear-gradient(135deg, #0F9D58, #0B8043)", color: "#FFFFFF" },
+  // 珊瑚红
+  { bg: "linear-gradient(135deg, #DB4437, #B31412)", color: "#FFFFFF" },
+  // 暖阳金
+  { bg: "linear-gradient(135deg, #F4B400, #C58F00)", color: "#FFFFFF" },
+  // 深度紫
+  { bg: "linear-gradient(135deg, #673AB7, #512DA8)", color: "#FFFFFF" },
+  // 青瓷绿
+  { bg: "linear-gradient(135deg, #00ACC1, #00838F)", color: "#FFFFFF" },
+  // 蔷薇粉
+  { bg: "linear-gradient(135deg, #E91E63, #C2185B)", color: "#FFFFFF" },
+  // 靛青蓝
+  { bg: "linear-gradient(135deg, #3F51B5, #303F9F)", color: "#FFFFFF" },
+  // 极光青
+  { bg: "linear-gradient(135deg, #00897B, #00695C)", color: "#FFFFFF" },
+  // 活力橙
+  { bg: "linear-gradient(135deg, #FF7043, #E64A19)", color: "#FFFFFF" },
+  // 墨镜蓝
+  { bg: "linear-gradient(135deg, #5C6BC0, #3949AB)", color: "#FFFFFF" },
+  // 亮丽紫
+  { bg: "linear-gradient(135deg, #8E24AA, #6A1B9A)", color: "#FFFFFF" },
+] as const;
+
+function getAvatarPalette(name: string) {
+  let hash = 0;
+  const str = name.trim() || "?";
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) | 0;
+  }
+  const index = Math.abs(hash) % AVATAR_PALETTES.length;
+  return AVATAR_PALETTES[index] ?? AVATAR_PALETTES[0];
+}
+
 function letterMaskUri(name: string): string {
   // Array.from 按码点切分，中文等多字节字符也能取到完整首字符
   const glyph = (Array.from(name.trim())[0] ?? "?").toLocaleUpperCase();
@@ -70,6 +107,7 @@ export function SiteFavicon({ url, name, size }: Readonly<SiteFaviconProps>) {
   }
 
   const mask = letterMaskUri(name);
+  const palette = getAvatarPalette(name);
   return (
     <span
       role="img"
@@ -79,9 +117,10 @@ export function SiteFavicon({ url, name, size }: Readonly<SiteFaviconProps>) {
         height: size,
         display: "block",
         flexShrink: 0,
-        background: "var(--surface-subtle)",
+        background: palette.bg,
         borderRadius: faviconRadius(size),
         overflow: "hidden",
+        boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.15)",
       }}
     >
       <span
@@ -90,7 +129,7 @@ export function SiteFavicon({ url, name, size }: Readonly<SiteFaviconProps>) {
           display: "block",
           width: "100%",
           height: "100%",
-          backgroundColor: "var(--text-muted)",
+          backgroundColor: palette.color,
           WebkitMaskImage: mask,
           maskImage: mask,
           WebkitMaskRepeat: "no-repeat",

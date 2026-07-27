@@ -84,6 +84,15 @@ def _safe_favicon_url(value: str | None) -> str | None:
     return normalized if isinstance(normalized, str) else None
 
 
+# 注意：**绝不合成第三方 CDN 地址。** 曾经这里有个 resolve_favicon_url，在站点没有
+# 图标时回落到 `https://www.google.com/s2/favicons?domain=...`，三处不可接受：
+# ① 违反项目硬约束「favicon 不走第三方 CDN」；② 用户书签库里的每个域名都会被逐个
+# 透露给第三方，是隐式的浏览历史泄露；③ 它把 favicon_url 永久填满，使 ingestion
+# 那条「只补空字段」的抓取规则永远不触发——真实抓到的图标反而写不进去。
+# 没有图标时返回 None 才是正确答案：前端 SiteFavicon 用站点名首字符渲染本地字母块，
+# 不需要任何出站请求。
+
+
 async def _default_category(session: AsyncSession, user_id: str) -> Category:
     category = await session.scalar(
         select(Category).where(Category.user_id == user_id, Category.is_default.is_(True))
@@ -139,9 +148,7 @@ async def _owned_tags(
         return []
     tags = list(
         (
-            await session.scalars(
-                select(Tag).where(Tag.user_id == user_id, Tag.id.in_(unique_ids))
-            )
+            await session.scalars(select(Tag).where(Tag.user_id == user_id, Tag.id.in_(unique_ids)))
         ).all()
     )
     if len(tags) != len(unique_ids):
@@ -183,6 +190,7 @@ def _category_response(category: Category, site_count: int) -> CategoryResponse:
         id=category.id,
         name=category.name,
         is_default=category.is_default,
+        icon=category.icon,
         site_count=site_count,
         created_at=category.created_at,
         updated_at=category.updated_at,

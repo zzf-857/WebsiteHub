@@ -29,7 +29,7 @@ from webhub.bookmarks.classifier import (
     run_plan,
 )
 from webhub.config import get_settings
-from webhub.db.models import Category, Site
+from webhub.db.models import Category, Site, utc_now
 
 
 class ReclassificationError(RuntimeError):
@@ -116,8 +116,6 @@ async def propose_reclassification(
             "reason": "当前账号尚未配置或启用模型 Provider，无法开展全库重分类。",
         }
 
-
-
     stmt = select(Site).where(Site.user_id == user_id)
     sites = list((await session.execute(stmt)).scalars().all())
 
@@ -175,8 +173,6 @@ async def apply_reclassification(
     if binding is None:
         raise ReclassificationError("当前账号未配置或启用模型 Provider")
 
-
-
     stmt = select(Site).where(Site.user_id == user_id)
     sites = list((await session.execute(stmt)).scalars().all())
     site_map = {s.id: s for s in sites}
@@ -207,35 +203,40 @@ async def apply_reclassification(
         budget=budget,
     )
 
-
-
     try:
         batch_results = await run_plan(binding, plan)
     except ClassificationUnavailableError as err:
         raise ReclassificationError(err.safe_message) from err
 
-    existing_cats_stmt = select(Category).where(Category.user_id == user_id)
-    existing_cats = list((await session.execute(existing_cats_stmt)).scalars().all())
-    cat_by_name = {c.name: c for c in existing_cats}
+    cat_by_id = {c.id: c for c in categories}
 
     updated_count = 0
     for res in batch_results:
-        for mapping in res.mappings:
-            source_id = getattr(mapping, "subject_id", None)
-            cat_name = getattr(mapping, "category_name", None)
-            action = getattr(mapping, "category_action", "uncategorized")
-
-            if not source_id or source_id not in source_to_sites:
+        # res.mappings 里是 BoundClassificationMapping：只有 source_id / mapping /
+        # used_fallback 三个字段（slots=True）。模型给的分类结果在 .mapping 里，
+        # 不在这一层——直接 getattr(bound, "subject_id") 恒为 None，会让整个循环
+        # 每条都 continue、一个站点都不更新，却仍然返回 status="success"。
+        for bound in res.mappings:
+            site_ids = source_to_sites.get(bound.source_id)
+            if not site_ids:
                 continue
 
-            target_site_ids = source_to_sites[source_id]
-            target_cat = cat_by_name.get(cat_name) if action == "existing" and cat_name else None
+            mapping = bound.mapping
+            # 只认 existing：本路径的 max_new_categories 恒为 0（见
+            # build_candidate_classification_batches），propose 会在校验层就被拒，
+            # uncategorized 表示模型自认证据不足，不该拿它去覆盖现有分类。
+            if mapping.category_action != "existing" or not mapping.category_id:
+                continue
+            target_cat = cat_by_id.get(mapping.category_id)
+            if target_cat is None:
+                continue
 
-            for s_id in target_site_ids:
+            for s_id in site_ids:
                 site = site_map.get(s_id)
-                if site and target_cat and site.category_id != target_cat.id:
+                if site is not None and site.category_id != target_cat.id:
                     site.category_id = target_cat.id
                     site.version += 1
+                    site.updated_at = utc_now()
                     updated_count += 1
 
     await session.commit()

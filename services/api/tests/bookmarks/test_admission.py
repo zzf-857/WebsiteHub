@@ -228,10 +228,7 @@ def test_stream_can_end_with_an_empty_chunk_at_the_exact_quota_boundary(
 
     async def scenario() -> None:
         async with manager.admit("alice", declared_size_bytes=5) as admission:
-            forwarded = [
-                chunk
-                async for chunk in admission.guard_chunks(_chunks([b"12345", b""]))
-            ]
+            forwarded = [chunk async for chunk in admission.guard_chunks(_chunks([b"12345", b""]))]
         assert forwarded == [b"12345", b""]
 
     asyncio.run(scenario())

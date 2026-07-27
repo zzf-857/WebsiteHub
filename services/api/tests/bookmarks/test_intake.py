@@ -192,9 +192,9 @@ def test_replay_releases_session_transaction_before_publish_hash(
 
         async with database.sessions() as session:
             snapshot_count = await session.scalar(
-                select(func.count()).select_from(BookmarkImportSnapshot).where(
-                    BookmarkImportSnapshot.user_id == alice_id
-                )
+                select(func.count())
+                .select_from(BookmarkImportSnapshot)
+                .where(BookmarkImportSnapshot.user_id == alice_id)
             )
             job = await session.scalar(
                 select(BookmarkImportJob).where(BookmarkImportJob.user_id == alice_id)
@@ -242,9 +242,7 @@ def test_retry_recovers_database_commit_before_file_publish(
         async with database.sessions() as session:
             snapshots = (
                 await session.scalars(
-                    select(BookmarkImportSnapshot).where(
-                        BookmarkImportSnapshot.user_id == alice_id
-                    )
+                    select(BookmarkImportSnapshot).where(BookmarkImportSnapshot.user_id == alice_id)
                 )
             ).all()
             jobs = (
@@ -380,14 +378,14 @@ def test_concurrent_same_key_and_content_returns_one_snapshot_and_job(
 
         async with database.sessions() as session:
             snapshot_count = await session.scalar(
-                select(func.count()).select_from(BookmarkImportSnapshot).where(
-                    BookmarkImportSnapshot.user_id == alice_id
-                )
+                select(func.count())
+                .select_from(BookmarkImportSnapshot)
+                .where(BookmarkImportSnapshot.user_id == alice_id)
             )
             job_count = await session.scalar(
-                select(func.count()).select_from(BookmarkImportJob).where(
-                    BookmarkImportJob.user_id == alice_id
-                )
+                select(func.count())
+                .select_from(BookmarkImportJob)
+                .where(BookmarkImportJob.user_id == alice_id)
             )
         assert snapshot_count == job_count == 1
 
@@ -426,9 +424,7 @@ def test_concurrent_same_key_with_different_content_conflicts_and_never_overwrit
             )
 
         successes = [
-            outcome
-            for outcome in outcomes
-            if isinstance(outcome, persistence.ImportJobResult)
+            outcome for outcome in outcomes if isinstance(outcome, persistence.ImportJobResult)
         ]
         conflicts = [
             outcome
@@ -475,9 +471,9 @@ def test_staged_upload_cannot_be_claimed_by_another_account(
 
         async with database.sessions() as session:
             bob_snapshots = await session.scalar(
-                select(func.count()).select_from(BookmarkImportSnapshot).where(
-                    BookmarkImportSnapshot.user_id == bob_id
-                )
+                select(func.count())
+                .select_from(BookmarkImportSnapshot)
+                .where(BookmarkImportSnapshot.user_id == bob_id)
             )
         assert bob_snapshots == 0
 
@@ -539,9 +535,7 @@ def test_replay_rejects_snapshot_directory_redirect_without_reading_target(
         return receiving
 
     import_job = asyncio.run(create_published_import())
-    snapshot_directory = (
-        data_directory / "bookmark-imports" / alice_id / import_job.snapshot_id
-    )
+    snapshot_directory = data_directory / "bookmark-imports" / alice_id / import_job.snapshot_id
     saved_directory = snapshot_directory.with_name(f"{import_job.snapshot_id}-saved")
     snapshot_directory.rename(saved_directory)
     redirected_directory = data_directory / "bookmark-imports" / "other-account" / "other-snapshot"

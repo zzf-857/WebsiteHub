@@ -64,8 +64,10 @@ def rate_limit_client_host(request: Request) -> str:
         return client_host
 
     forwarded_for = request.headers.get("x-forwarded-for", "").strip()
-    if not forwarded_for or "," in forwarded_for or any(
-        character.isspace() for character in forwarded_for
+    if (
+        not forwarded_for
+        or "," in forwarded_for
+        or any(character.isspace() for character in forwarded_for)
     ):
         return client_host
     forwarded_address = _ip_address(forwarded_for)

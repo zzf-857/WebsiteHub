@@ -222,7 +222,6 @@ async def apply_candidates(
     category_cache = await _category_ids(session, user_id)
     category_positions: dict[str, int] = {}
 
-
     while True:
         conditions: list[Any] = [
             BookmarkStagingCandidate.user_id == user_id,
@@ -328,6 +327,7 @@ async def apply_candidates(
                     position=site_pos,
                     description=None,
                     favicon_url=None,
+                    preview_url=None,
                     pinned=False,
                     source="browser_import",
                     analysis_status="not_analyzed",

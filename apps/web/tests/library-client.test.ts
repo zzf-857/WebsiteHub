@@ -20,7 +20,7 @@ const site = {
   identity_url: "https://developer.mozilla.org",
   description: null,
   favicon_url: null,
-  category: { id: "category-1", name: "开发", is_default: true },
+  category: { id: "category-1", name: "开发", is_default: true, icon: "Code" },
   tags: [],
   pinned: false,
   source: "manual",

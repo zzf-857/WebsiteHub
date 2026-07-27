@@ -189,8 +189,7 @@ def test_upload_openapi_declares_raw_binary_contract_and_all_public_outcomes(
     idempotency_headers = [
         parameter
         for parameter in operation["parameters"]
-        if parameter["in"] == "header"
-        and parameter["name"].casefold() == "idempotency-key"
+        if parameter["in"] == "header" and parameter["name"].casefold() == "idempotency-key"
     ]
     assert len(idempotency_headers) == 1
     idempotency_header = idempotency_headers[0]

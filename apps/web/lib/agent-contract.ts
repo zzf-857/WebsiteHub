@@ -428,6 +428,15 @@ function toReclassifyDraft(value: unknown): AgentReclassifyDraft | null {
 
 const FACET_TOOLS = new Set(["list_categories", "list_tags", "list_spaces"]);
 
+/** 导入任务的后端状态 → 中文标签。未知状态原样显示，不猜。 */
+const IMPORT_STATE_LABELS: Record<string, string> = {
+  receiving: "上传中",
+  queued_parse: "等待解析",
+  parsing: "解析中",
+  parse_preview_ready: "预览就绪",
+  failed: "解析失败",
+};
+
 /**
  * Project one tool result into something the thread can render.
  *
@@ -511,6 +520,22 @@ export function describeAgentToolResult(name: string, result: unknown): AgentToo
       source,
       items: payload.items.map(toFacet).filter((item): item is AgentToolFacet => item !== null),
     };
+  }
+
+  // 导入任务行没有 name/url（只有 job_id / state / created_at），走不了 toLink：
+  // 每条都会被 filter 掉，结果渲染成「没有命中任何结果」——明明有任务在跑。
+  // 投影成 facets，用状态中文名当标签。
+  if (name === "list_bookmark_imports" && Array.isArray(payload.items)) {
+    const items = payload.items
+      .map((entry): AgentToolFacet | null => {
+        const row = asRecord(entry);
+        const jobId = row === null ? null : asTrimmed(row.job_id);
+        if (jobId === null) return null;
+        const state = (row !== null && asTrimmed(row.state)) || "未知状态";
+        return { id: jobId, name: IMPORT_STATE_LABELS[state] ?? state, count: null };
+      })
+      .filter((item): item is AgentToolFacet => item !== null);
+    return { kind: "facets", source, items };
   }
 
   if (Array.isArray(payload.items)) {

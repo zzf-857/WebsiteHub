@@ -31,9 +31,7 @@ def assert_upgrade_safe(database_url: str) -> None:
     with closing(_open_sqlite_read_only(database_path)) as connection:
         table_names = {
             str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
         versions = _read_alembic_versions(connection, table_names)
 
@@ -44,9 +42,7 @@ def assert_upgrade_safe(database_url: str) -> None:
     if not managed_tables:
         return
 
-    database_files = ", ".join(
-        f"`{database_path.name}{suffix}`" for suffix in ("", "-wal", "-shm")
-    )
+    database_files = ", ".join(f"`{database_path.name}{suffix}`" for suffix in ("", "-wal", "-shm"))
     table_summary = ", ".join(managed_tables[:5])
     if len(managed_tables) > 5:
         table_summary = f"{table_summary}, ..."
@@ -73,8 +69,6 @@ def _read_alembic_versions(
         return set()
     return {
         str(row[0])
-        for row in connection.execute(
-            f'SELECT version_num FROM "{ALEMBIC_VERSION_TABLE}"'
-        )
+        for row in connection.execute(f'SELECT version_num FROM "{ALEMBIC_VERSION_TABLE}"')
         if row[0]
     }

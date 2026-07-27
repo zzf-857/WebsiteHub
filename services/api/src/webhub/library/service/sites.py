@@ -48,9 +48,7 @@ async def _site_response(
     category: Category | None = None,
     tags: list[Tag] | None = None,
 ) -> SiteResponse:
-    selected_category = category or await _owned_category(
-        session, user_id, site.category_id
-    )
+    selected_category = category or await _owned_category(session, user_id, site.category_id)
     selected_tags = tags
     if selected_tags is None:
         selected_tags = list(
@@ -76,10 +74,12 @@ async def _site_response(
         identity_url=site.identity_url,
         description=site.description,
         favicon_url=_safe_favicon_url(site.favicon_url),
+        preview_url=site.preview_url,
         category=CategoryReference(
             id=selected_category.id,
             name=selected_category.name,
             is_default=selected_category.is_default,
+            icon=selected_category.icon,
         ),
         tags=[TagReference(id=tag.id, name=tag.name) for tag in selected_tags],
         pinned=site.pinned,
@@ -134,9 +134,7 @@ async def create_site(
     session.add(site)
     try:
         await session.flush()
-        session.add_all(
-            SiteTag(user_id=user_id, site_id=site.id, tag_id=tag.id) for tag in tags
-        )
+        session.add_all(SiteTag(user_id=user_id, site_id=site.id, tag_id=tag.id) for tag in tags)
         await session.commit()
     except IntegrityError as error:
         await session.rollback()
@@ -168,9 +166,7 @@ async def update_site(
     if "name" in fields:
         if payload.name is None:
             raise LibraryValidationError("网站名称不能为空")
-        name_update = _display_name(
-            payload.name, maximum=160, field="网站名称"
-        )
+        name_update = _display_name(payload.name, maximum=160, field="网站名称")
 
     url_update: tuple[str, str] | None = None
     if "url" in fields:

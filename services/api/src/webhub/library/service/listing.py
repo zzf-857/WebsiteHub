@@ -258,10 +258,12 @@ async def list_sites(
     )
     matched_count = int(
         await session.scalar(
-            select(func.count(Site.id)).join(
+            select(func.count(Site.id))
+            .join(
                 Category,
                 and_(Category.user_id == Site.user_id, Category.id == Site.category_id),
-            ).where(*filters)
+            )
+            .where(*filters)
         )
         or 0
     )
@@ -275,10 +277,12 @@ async def list_sites(
     )
     pinned_count = int(
         await session.scalar(
-            select(func.count(Site.id)).join(
+            select(func.count(Site.id))
+            .join(
                 Category,
                 and_(Category.user_id == Site.user_id, Category.id == Site.category_id),
-            ).where(*pinned_filters)
+            )
+            .where(*pinned_filters)
         )
         or 0
     )
@@ -313,10 +317,14 @@ async def list_sites(
         sort=sort,
         direction=direction,
     )
-    query = select(Site, Category).join(
-        Category,
-        and_(Category.user_id == Site.user_id, Category.id == Site.category_id),
-    ).where(*filters)
+    query = (
+        select(Site, Category)
+        .join(
+            Category,
+            and_(Category.user_id == Site.user_id, Category.id == Site.category_id),
+        )
+        .where(*filters)
+    )
     if cursor:
         raw_value, cursor_id = _decode_cursor(
             cursor,
@@ -566,10 +574,11 @@ async def _relevance_page(
     return SiteListResponse(
         items=items,
         next_cursor=_encode_relevance_cursor(offset + limit) if has_more else None,
+        # SiteListAggregate 只有 matched_count / pinned_count 两个字段，
+        # 多传的键会被 pydantic 静默丢掉——别再加 total_count 这种看起来生效的参数。
         aggregate=SiteListAggregate(
             matched_count=matched_count,
             pinned_count=pinned_count,
-            total_count=matched_count,
         ),
     )
 

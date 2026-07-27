@@ -197,7 +197,9 @@ async def _validate_complete_staging(
     )
     linked_candidate_count = int(
         await session.scalar(
-            select(func.count(func.distinct(BookmarkStagingCandidateOccurrence.candidate_id))).where(
+            select(
+                func.count(func.distinct(BookmarkStagingCandidateOccurrence.candidate_id))
+            ).where(
                 BookmarkStagingCandidateOccurrence.user_id == user_id,
                 BookmarkStagingCandidateOccurrence.run_id == run_id,
             )
@@ -269,9 +271,7 @@ async def _validate_complete_staging(
             or bool(occurrence_sensitive) != expected_sensitive
             or bool(candidate_sensitive) != expected_sensitive
         ):
-            raise BookmarkPersistenceValidationError(
-                "occurrence 与 candidate identity 投影不一致"
-            )
+            raise BookmarkPersistenceValidationError("occurrence 与 candidate identity 投影不一致")
 
 
 async def _staged_completion(
@@ -472,6 +472,8 @@ async def _rebuild_candidate_projections(
         )
         or 0
     )
+
+
 async def get_current_preview_summary(
     session: AsyncSession,
     user_id: str,

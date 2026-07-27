@@ -47,15 +47,11 @@ def create_app(
         data_directory=selected_settings.data_directory,
         global_concurrency=selected_settings.bookmark_upload_global_concurrency,
         rate_limit_attempts=selected_settings.bookmark_upload_rate_limit_attempts,
-        rate_limit_window_seconds=(
-            selected_settings.bookmark_upload_rate_limit_window_seconds
-        ),
+        rate_limit_window_seconds=(selected_settings.bookmark_upload_rate_limit_window_seconds),
         max_tracked_accounts=selected_settings.bookmark_upload_max_tracked_accounts,
         account_quota_bytes=selected_settings.bookmark_upload_account_quota_bytes,
         minimum_free_bytes=selected_settings.bookmark_upload_minimum_free_bytes,
-        disk_check_interval_bytes=(
-            selected_settings.bookmark_upload_disk_check_interval_bytes
-        ),
+        disk_check_interval_bytes=(selected_settings.bookmark_upload_disk_check_interval_bytes),
     )
     application.include_router(router)
     return application

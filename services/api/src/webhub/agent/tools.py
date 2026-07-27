@@ -590,8 +590,7 @@ async def _propose_sites(context: AgentToolContext, args: ProposeSitesArgs) -> d
             "status": "noop",
             "message": "这些网址要么资料库里已经有了，要么无法识别，没有需要新增的。",
             "items": [
-                {"url": item.url, "status": item.status, "reason": item.reason}
-                for item in items
+                {"url": item.url, "status": item.status, "reason": item.reason} for item in items
             ],
         }
 
@@ -606,8 +605,7 @@ async def _propose_sites(context: AgentToolContext, args: ProposeSitesArgs) -> d
             "duplicate": sum(1 for item in items if item.status == "duplicate"),
             "invalid": sum(1 for item in items if item.status == "invalid"),
             "items": [
-                {"url": item.url, "status": item.status, "reason": item.reason}
-                for item in items
+                {"url": item.url, "status": item.status, "reason": item.reason} for item in items
             ],
         },
     }
@@ -623,7 +621,6 @@ async def _propose_reclassify(context: AgentToolContext, _: EmptyArgs) -> dict[s
 
 
 def build_tools(context: AgentToolContext) -> Sequence[Any]:
-
     """Build the LangChain tool list for one account-scoped turn."""
 
     from langchain_core.tools import StructuredTool

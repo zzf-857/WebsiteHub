@@ -141,6 +141,8 @@ async def list_recent_messages(
     rows = list((await session.scalars(statement)).all())
     rows.reverse()
     return [_message_response(message) for message in rows]
+
+
 def _message_payload(
     *,
     role: str,

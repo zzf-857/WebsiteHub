@@ -163,9 +163,7 @@ def upgrade() -> None:
         sa.Column("is_default", sa.Boolean(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.CheckConstraint(
-            "length(name) BETWEEN 1 AND 80", name="ck_categories_valid_name_length"
-        ),
+        sa.CheckConstraint("length(name) BETWEEN 1 AND 80", name="ck_categories_valid_name_length"),
         sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name="fk_categories_user_id_users", ondelete="CASCADE"
         ),
@@ -263,9 +261,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("user_id", "site_id", "tag_id", name="pk_site_tags"),
     )
-    op.create_index(
-        "ix_site_tags_user_tag_site", "site_tags", ["user_id", "tag_id", "site_id"]
-    )
+    op.create_index("ix_site_tags_user_tag_site", "site_tags", ["user_id", "tag_id", "site_id"])
 
     bind = op.get_bind()
     now = datetime.now(UTC)
