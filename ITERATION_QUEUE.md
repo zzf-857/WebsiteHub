@@ -605,6 +605,46 @@ data-compact → 计算样式正确」，两个 observer 的实际触发时机�
 
 ---
 
+## Q14 · 用户手动排查第一轮：站点详情、真实图标与 Agent 流式富文本
+
+状态: 已完成 · 3d7ddd7
+对应: 2026-07-27 用户截图反馈
+插入原因: 用户开始逐屏手动验收，反馈 Provider 页混入书签信息、网站图标不真实、
+已收录卡片直接外跳，以及 Agent 不流式、暴露原始 Markdown、缺少可折叠 reasoning 与真实用量。
+
+本轮代码范围：
+
+- Provider 配置页只保留 Provider；语义索引状态与回填迁到独立的
+  `/settings/search-index`，账号菜单增加明确入口。
+- 单站创建、批量 URL 与书签导入后统一进入有界后台分析队列；页面声明的 favicon 优先，
+  失败只尝试同源 `/favicon.ico`，不调用第三方 CDN。图标响应经过每跳 SSRF、DNS 固定、
+  MIME、大小与图片签名校验后才落库；页面声明的安全 `og:image` / `twitter:image`
+  写入 `preview_url`。
+- 首页、资料库与 Agent 返回的已收录网站统一先进入 `/library/{siteId}`；详情页用明确的
+  “访问官网”按钮外跳，并在有 `preview_url` 时展示稳定比例预览。
+- Agent 使用 AI SDK UI Message Stream 输出 reasoning 与正文；正文由固定版本的
+  `streamdown` 渲染 Markdown/GFM，禁用 Markdown 图片，HTTP(S) 链接卡片化，未知工具载荷
+  不再显示原始 JSON。reasoning 流式时展开、结束后折叠，异常或中止不会永久显示“思考中”。
+- 服务端保存实测总耗时、首 Token 延迟、reasoning 耗时与 Provider usage；Provider 未返回
+  usage 时隐藏 Token，不做估算。内置 OpenAI/DeepSeek 开启标准流式 usage；自定义
+  `openai_compatible` 不会被盲目附加可能不兼容的 `stream_options`。
+- 补充抓取并发、SSRF/DNS 重绑定、并发编辑保护、流式协议、历史恢复、链接过滤、
+  站内导航和设置页拆分的自动化回归测试。
+
+自动化门禁：前端 TypeScript / ESLint / 159 tests / Next build；后端 Ruff / 503 tests；
+`git diff --check` 全绿。按用户要求没有执行浏览器、真实 Provider 或历史全库补全验收。
+
+本轮明确不做：
+
+- 不操作浏览器；页面布局、交互与截图由用户手动验收。
+- 不调用真实 model Provider，不消耗用户额度。
+- 不触发 2027 条历史网站的元数据补全，只交付用户可主动触发的有界入口。
+
+后续项：为自定义 `openai_compatible` 增加显式 Provider 能力开关，允许用户确认端点支持
+`stream_options.include_usage` 后再启用真实流式 usage；不能仅凭“OpenAI 兼容”名称自动判断。
+
+---
+
 ## 全量门禁（每轮提交前必须全绿）
 
 ```bash
@@ -612,7 +652,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 147 测试 / 后端 459 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 159 测试 / 后端 503 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 
