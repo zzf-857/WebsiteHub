@@ -33,6 +33,7 @@ import {
 import {
   AGENT_SOURCE_LIBRARY,
   AGENT_SOURCE_WEB,
+  MAX_AGENT_MESSAGE_LENGTH,
   describeAgentToolResult,
   normalizeAgentMessageMetadata,
   normalizeAgentStreamError,
@@ -349,6 +350,24 @@ export function AgentPanel() {
     void refreshHistory(controller.signal);
     return () => controller.abort();
   }, [refreshHistory]);
+
+  // 地址栏带 ?ask=<提问> 时把输入框预填好并聚焦，但**不自动发送**：
+  // 从站点详情跳过来的快捷入口是「帮我起个头」，不是「替我下决定」，
+  // 用户还得能改措辞。与 ?c= 同样只在挂载时读一次。
+  useEffect(() => {
+    const asked = new URLSearchParams(window.location.search).get("ask")?.trim();
+    if (!asked) return;
+    // 按码点截断：契约那边也是 Array.from().length，slice 数的是 UTF-16 单元，
+    // 两种数法在 emoji / 补充平面字符上会对不齐
+    setInput(Array.from(asked).slice(0, MAX_AGENT_MESSAGE_LENGTH).join(""));
+    window.requestAnimationFrame(() => {
+      const element = textareaRef.current;
+      if (!element) return;
+      element.focus();
+      // 光标落到末尾，用户可以直接接着补充，而不是覆盖整段
+      element.setSelectionRange(element.value.length, element.value.length);
+    });
+  }, []);
 
   // 地址栏带 ?c=<id> 时恢复历史会话。刻意不用 useSearchParams：
   // 那会要求页面套 Suspense，而这里只在挂载时读一次即可

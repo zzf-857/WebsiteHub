@@ -144,6 +144,19 @@
 
 .app-header[data-compact] {
   height: 56px;
+  /* 常态 92%，紧凑态设计稿为 rgba(255,255,255,.96)：内容已滚到身后，
+     底色要更实才压得住，同样用令牌派生保证深色模式成立 */
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+}
+
+/* 紧凑态字标 17px → 16px（设计稿 1c） */
+.app-header[data-compact] .app-brand-name {
+  font-size: 16px;
+}
+
+/* 紧凑态导航纵向 padding 6px → 5px，随 Header 一起收 */
+.app-header[data-compact] .app-nav-link {
+  padding: 5px 14px;
 }
 
 .app-header[data-compact] .app-brand-mark {

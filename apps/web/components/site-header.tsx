@@ -83,6 +83,15 @@ export function SiteHeader() {
     };
   }, []);
 
+  /* 紧凑态触发线要跟 Header 实高一致。--header-height 是唯一真源，
+     这里读它而不是复制一份 64：改了令牌不用记得回来同步这个数字。 */
+  const headerHeight = () => {
+    const token = getComputedStyle(document.documentElement)
+      .getPropertyValue("--header-height")
+      .trim();
+    return Number.parseFloat(token) || 64;
+  };
+
   /* 吸顶态观察：#agent-panel 完全滚出视口 → data-compact，滚回来 → 复原。
      首页主体是客户端组件，Agent 模块可能晚于 Header 挂载；这里选 MutationObserver
      而非 requestAnimationFrame 轮询：无需猜测重试次数与时长，元素一出现即挂上
@@ -94,9 +103,15 @@ export function SiteHeader() {
     let mutation: MutationObserver | null = null;
 
     const observePanel = (panel: Element) => {
-      intersection = new IntersectionObserver(([entry]) => {
-        setCompact(!entry.isIntersecting);
-      });
+      intersection = new IntersectionObserver(
+        ([entry]) => {
+          setCompact(!entry.isIntersecting);
+        },
+        // 面板要完全滚过 Header 才算离开视口，紧凑态因此比设计稿晚一个
+        // Header 高度才触发。上边距抵掉这段，让切换发生在面板压到 Header 时。
+        // rootMargin 只认 px/%，写不了 calc() 或 var()，所以从令牌读出数值。
+        { rootMargin: `-${headerHeight()}px 0px 0px 0px` },
+      );
       intersection.observe(panel);
     };
 

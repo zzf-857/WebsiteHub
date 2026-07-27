@@ -18,9 +18,11 @@ const EASE_STANDARD: [number, number, number, number] = [0.2, 0.8, 0.2, 1];
 export function PopCheck({ done, size = 16 }: Readonly<PopCheckProps>) {
   const reducedMotion = useReducedMotion();
 
-  // 未完成时展示加载中；Spinner 自带 reduced-motion 降级
+  // 未完成时展示加载中；Spinner 自带 reduced-motion 降级。
+  // 不透传 size：设计稿里对勾 14px、加载圆环 13px 是两个尺寸，
+  // 圆环撑到 14 会比落定后的对勾还大，看起来像先胀后缩。
   if (!done) {
-    return <Spinner size={size} />;
+    return <Spinner />;
   }
 
   if (reducedMotion) {

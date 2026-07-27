@@ -486,8 +486,6 @@
 .home-recent-favicon {
   display: inline-flex;
   flex-shrink: 0;
-  border-radius: var(--radius-xs);
-  overflow: hidden;
 }
 
 .home-recent-name {
@@ -566,8 +564,22 @@
   background: color-mix(in srgb, var(--surface) 96%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-hover) var(--ease-standard);
+}
+
+/* 投影表达的是「浮在内容之上」（1c 行 294），只有真吸住时才成立。
+   未吸顶时 Tabs 就躺在页面里，常驻投影会凭空多出一条分隔线。
+   sticky 元素没有原生的「已吸住」状态，用上方的 sentinel 判断。 */
+.home-category-tabs[data-stuck] {
   border-bottom: 1px solid var(--line-header);
   box-shadow: var(--shadow-card-hover);
+}
+
+/* 吸附哨兵：零高度，滚出视口即代表 Tabs 已经吸住 */
+.home-category-sentinel {
+  height: 0;
 }
 
 .home-category-tab {

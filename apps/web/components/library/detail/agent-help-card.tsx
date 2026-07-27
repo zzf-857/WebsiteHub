@@ -1,9 +1,9 @@
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
 
-/* 取舍说明（设计稿 1d「让 Agent 帮你」）：Agent 对话入口在首页；
-   目前首页不支持通过 URL 携带预填提问，这几条快捷入口只负责把用户
-   带到 Agent，文案本身帮助用户复述意图，不假装能直接触发任务。 */
+/* 设计稿 1d「让 Agent 帮你」：Agent 对话入口在首页，这几条快捷入口
+   通过 ?ask= 把提问带过去预填到输入框。刻意只预填、不自动发送——
+   用户点进来常常要改措辞，替他直接提交等于替他做了决定。 */
 
 type AgentHelpCardProps = {
   siteName: string;
@@ -33,7 +33,11 @@ export function AgentHelpCard({ siteName }: Readonly<AgentHelpCardProps>) {
       </header>
       <div className="sd-suggest-list">
         {suggestions.map((text) => (
-          <Link key={text} className="sd-suggest" href="/">
+          <Link
+            key={text}
+            className="sd-suggest"
+            href={`/?ask=${encodeURIComponent(text)}`}
+          >
             {text}
           </Link>
         ))}

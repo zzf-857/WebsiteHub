@@ -496,6 +496,8 @@
   color: var(--text-secondary);
   font-size: 14.5px;
   line-height: 1.7;
+  /* 行长上限：宽屏下正文会被拉到整屏宽，一行几十个字读起来要来回扫 */
+  max-width: 900px;
 }
 
 /* 流式打字光标（设计稿行 212 的 8×16 青柠方块）。回答正文由 ConversationThread
@@ -574,6 +576,8 @@
   color: var(--text-subtle);
   font-size: 12px;
   font-weight: 700;
+  /* 设计稿的小号全大写标签靠字距拉开，缺了会挤成一坨 */
+  letter-spacing: 1px;
   gap: 10px;
 }
 

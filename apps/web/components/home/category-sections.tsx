@@ -188,6 +188,33 @@ export const CategorySections = forwardRef<CategorySectionsHandle, CategorySecti
       [scrollToCategory],
     );
 
+    /* Tabs 是否已吸住：sticky 没有原生状态可读，用它上方的零高哨兵代替。
+       关键是 rootMargin 必须等于 sticky 的 top 偏移：默认视口上沿是 y=0，
+       而 Tabs 在 y=56 就吸住了，不抵掉这 56px，投影会晚 56px 才出现。
+       top 是 calc(var(--header-height) - 8px)，rootMargin 只认 px，
+       所以从令牌算出数值，避免在两处各写一份 56。 */
+    const sentinelRef = useRef<HTMLDivElement | null>(null);
+    const [stuck, setStuck] = useState(false);
+    const tabCount = state.status === "ready" ? state.categories.length : 0;
+
+    useEffect(() => {
+      const element = sentinelRef.current;
+      if (!element || typeof IntersectionObserver === "undefined") return;
+      const headerHeight =
+        Number.parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue("--header-height"),
+        ) || 64;
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          setStuck(!entry.isIntersecting);
+        },
+        { rootMargin: `-${headerHeight - 8}px 0px 0px 0px` },
+      );
+      observer.observe(element);
+      return () => observer.disconnect();
+      // 哨兵只在 ready 且有分类时渲染，依赖它以便挂载后重新接上
+    }, [tabCount]);
+
     return (
       <div className="home-category-block" ref={blockRef}>
         {state.status === "loading" && (
@@ -220,7 +247,12 @@ export const CategorySections = forwardRef<CategorySectionsHandle, CategorySecti
 
         {state.status === "ready" && state.categories.length > 0 && (
           <>
-            <nav className="home-category-tabs" aria-label="分类导航">
+            <div ref={sentinelRef} className="home-category-sentinel" aria-hidden="true" />
+            <nav
+              className="home-category-tabs"
+              aria-label="分类导航"
+              data-stuck={stuck || undefined}
+            >
               <button
                 type="button"
                 className="home-category-tab"

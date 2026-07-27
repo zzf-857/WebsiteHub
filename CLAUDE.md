@@ -24,7 +24,8 @@ Agent 主导的个人网址导航站。任何新会话（换账号、换机器�
 pnpm dev          # web 3100 + api 8100（concurrently）
 ```
 
-全量门禁（每次提交前必须全绿；基线只能涨不能降，当前前端 124 / 后端 332）：
+全量门禁（每次提交前必须全绿；基线只能涨不能降，当前前端 135 / 后端 417
+——以 `ITERATION_QUEUE.md` 文首的基线行为准，那里每轮都更新，这里容易忘）：
 
 ```bash
 cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
