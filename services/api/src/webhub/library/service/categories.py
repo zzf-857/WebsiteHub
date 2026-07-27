@@ -27,7 +27,6 @@ from ._common import (
     _owned_category,
 )
 
-SortKey = Literal["created", "updated", "name", "custom"]
 SortDirection = Literal["asc", "desc"]
 
 

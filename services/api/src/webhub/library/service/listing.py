@@ -22,12 +22,16 @@ from webhub.library.schemas import (
     SiteListAggregate,
     SiteListResponse,
 )
+from webhub.search.embeddings import EmbeddingEndpoint
+from webhub.search.fusion import Candidate
+from webhub.search.service import hybrid_search
 
 from ._common import (
     _CJK_CHARACTER,
     _SEARCH_TOKEN,
     LibraryNotFoundError,
     LibraryValidationError,
+    SortKey,
     _owned_category,
     _owned_space,
     _owned_tag,
@@ -36,7 +40,6 @@ from .sites import (
     _site_response,
 )
 
-SortKey = Literal["created", "updated", "name", "custom"]
 SortDirection = Literal["asc", "desc"]
 
 
@@ -234,6 +237,7 @@ async def list_sites(
     direction: SortDirection,
     cursor: str | None,
     limit: int,
+    embedding_binding: EmbeddingEndpoint | None = None,
 ) -> SiteListResponse:
     space_version: int | None = None
     if category_id:
@@ -278,6 +282,19 @@ async def list_sites(
         )
         or 0
     )
+
+    if sort == "relevance":
+        return await _relevance_page(
+            session,
+            user_id,
+            q=q,
+            filters=filters,
+            matched_count=matched_count,
+            pinned_count=pinned_count,
+            cursor=cursor,
+            limit=limit,
+            binding=embedding_binding,
+        )
 
     sort_column = {
         "created": Site.created_at,
@@ -455,3 +472,122 @@ async def reorder_sites(
         .execution_options(synchronize_session=False)
     )
     await session.commit()
+
+
+# ── 相关度排序 ────────────────────────────────────────────
+#
+# 为什么不复用上面的 keyset 分页：keyset 靠「排序列的值 + id」定位下一页，
+# 而融合序（RRF）不是任何一列的值，推导不出来。所以相关度排序单独走一条
+# 有界的路径：一次取够候选、融合、按序号切页。
+#
+# 有界是刻意的。搜索结果本来就是「前 N 条最相关」，不是可以无限下拉的全表扫描；
+# 硬要给融合序做无限翻页，只会得到一个每翻一页都可能自相矛盾的顺序。
+
+# 参与融合的候选上限。取值高于一页，融合才有重排的余地；
+# 又必须有界，否则一个大库的一次搜索要把整表读进内存打分。
+MAX_RELEVANCE_CANDIDATES = 200
+
+
+async def _relevance_page(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    q: str | None,
+    filters: list[object],
+    matched_count: int,
+    pinned_count: int,
+    cursor: str | None,
+    limit: int,
+    binding: EmbeddingEndpoint | None,
+) -> SiteListResponse:
+    """One page of query-relevance ordering.
+
+    ``binding`` is passed in rather than resolved here: resolving a Provider
+    lives in ``agent``, and ``library`` must not point at it.  ``None`` means
+    the account has no embedding Provider — ``hybrid_search`` then returns pure
+    keyword ordering, which is exactly the intended degradation.
+    """
+
+    if not q or not q.strip():
+        raise LibraryValidationError("按相关度排序时必须提供搜索词")
+
+    rows = (
+        await session.execute(
+            select(Site, Category)
+            .join(Category, and_(Category.user_id == Site.user_id, Category.id == Site.category_id))
+            .where(*filters)
+            # 关键词侧没有 FTS 排名可用，这里沿用全站默认的「最近更新在前」作为
+            # 关键词次序。fusion 会把精确命中提到最前，所以标题完全匹配的那条
+            # 不会因为旧就被埋掉。
+            .order_by(Site.updated_at.desc(), Site.id)
+            .limit(MAX_RELEVANCE_CANDIDATES)
+        )
+    ).all()
+
+    by_id = {site.id: (site, category) for site, category in rows}
+    keyword_ids = [site.id for site, _ in rows]
+    candidates = [Candidate(site.id, site.name) for site, _ in rows]
+    fused = await hybrid_search(
+        session,
+        user_id,
+        q,
+        keyword_ids=keyword_ids,
+        candidates=candidates,
+        binding=binding,
+    )
+
+    # 语义召回可能带回本页过滤条件之外的站点（向量索引不认识分类/标签筛选），
+    # 丢掉它们而不是显示出来——否则加了筛选反而看到不符合筛选的结果。
+    ordered = [hit.site_id for hit in fused.hits if hit.site_id in by_id]
+
+    offset = _decode_relevance_cursor(cursor) if cursor else 0
+    window = ordered[offset : offset + limit]
+    has_more = len(ordered) > offset + limit
+
+    site_ids = list(window)
+    tags_by_site: dict[str, list[Tag]] = {site_id: [] for site_id in site_ids}
+    if site_ids:
+        tag_rows = (
+            await session.execute(
+                select(SiteTag.site_id, Tag)
+                .join(Tag, and_(Tag.user_id == SiteTag.user_id, Tag.id == SiteTag.tag_id))
+                .where(SiteTag.user_id == user_id, SiteTag.site_id.in_(site_ids))
+                .order_by(SiteTag.site_id, Tag.normalized_name, Tag.id)
+            )
+        ).all()
+        for site_id, tag in tag_rows:
+            tags_by_site[site_id].append(tag)
+
+    items = []
+    for site_id in window:
+        site, category = by_id[site_id]
+        items.append(await _site_response(session, user_id, site, category, tags_by_site[site_id]))
+
+    return SiteListResponse(
+        items=items,
+        next_cursor=_encode_relevance_cursor(offset + limit) if has_more else None,
+        aggregate=SiteListAggregate(
+            matched_count=matched_count,
+            pinned_count=pinned_count,
+            total_count=matched_count,
+        ),
+    )
+
+
+def _encode_relevance_cursor(offset: int) -> str:
+    payload = json.dumps({"v": 1, "sort": "relevance", "offset": offset}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+
+
+def _decode_relevance_cursor(cursor: str) -> int:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode()))
+    except (ValueError, binascii.Error) as error:
+        raise LibraryValidationError("分页游标无效") from error
+    if not isinstance(payload, dict) or payload.get("sort") != "relevance":
+        raise LibraryValidationError("分页游标与排序方式不匹配")
+    offset = payload.get("offset")
+    if not isinstance(offset, int) or offset < 0 or offset > MAX_RELEVANCE_CANDIDATES:
+        raise LibraryValidationError("分页游标包含无效偏移")
+    return offset

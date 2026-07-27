@@ -25,7 +25,6 @@ from ._common import (
     _tag_response,
 )
 
-SortKey = Literal["created", "updated", "name", "custom"]
 SortDirection = Literal["asc", "desc"]
 
 

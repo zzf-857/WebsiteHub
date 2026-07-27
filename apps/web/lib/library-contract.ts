@@ -1,6 +1,8 @@
 import { createContractGuards } from "./contract-guards.ts";
 
-export type LibrarySort = "created" | "updated" | "name" | "custom";
+// "relevance" 只在有搜索词时可用：按相关度排「什么都没搜」是没有意义的，
+// 后端会 422。配了 embedding Provider 且建过索引时，它是唯一会带语义召回的排序。
+export type LibrarySort = "created" | "updated" | "name" | "custom" | "relevance";
 export type LibraryDirection = "asc" | "desc";
 
 const LIBRARY_SITE_SOURCES = ["manual", "agent", "browser_import", "backup"] as const;

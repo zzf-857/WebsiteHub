@@ -9,6 +9,7 @@ should not be able to tell this module exists.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,8 @@ from .vectors import nearest
 
 # How many vector hits feed the fusion.  Larger than the page size on purpose:
 # fusion re-ranks, so the semantic list needs headroom to contribute.
+_LOGGER = logging.getLogger(__name__)
+
 SEMANTIC_CANDIDATE_LIMIT = 50
 
 
@@ -51,15 +54,27 @@ async def hybrid_search(
 
     model = binding.model_name if binding is not None else None
     if binding is not None and model:
-        vector = await embed_query(binding, query)
-        if vector:
-            scored = await nearest(
-                session,
-                user_id,
-                vector,
-                model=model,
-                limit=SEMANTIC_CANDIDATE_LIMIT,
+        # 整段兜住：``embed_query`` 已经把厂商故障塌缩成 None，但 ``nearest``
+        # 打的是本地库，它抛出的 SQLAlchemyError 会一路冒到路由层变成 500——
+        # 而本模块的全部承诺就是「语义可以缺席，关键词不能」。让一次向量查询
+        # 失败带走整个搜索，就是把增强功能变成了单点故障。
+        try:
+            vector = await embed_query(binding, query)
+            scored = (
+                await nearest(
+                    session,
+                    user_id,
+                    vector,
+                    model=model,
+                    limit=SEMANTIC_CANDIDATE_LIMIT,
+                )
+                if vector
+                else []
             )
+        except Exception as error:  # noqa: BLE001 - 语义故障必须静默降级
+            _LOGGER.info("semantic recall unavailable", exc_info=error)
+            scored = []
+        else:
             semantic_ids = [item.site_id for item in scored]
             # Only claim semantic search ran if it actually contributed rows;
             # an empty index is indistinguishable from no Provider to the user,

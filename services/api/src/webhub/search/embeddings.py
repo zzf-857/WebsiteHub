@@ -98,13 +98,36 @@ async def embed_texts(
     return vectors
 
 
+# 查询向量的进程内缓存。**这是一道花钱的闸门，不是性能优化。**
+# 同一个查询词翻第二页要再嵌入一次、去抖打字连发三次要嵌入三次，
+# 每一次都是用户账上的一笔真实请求，而结果逐字节相同。
+# 键里含模型名：换模型后旧向量不可比较，必须重新嵌入。
+_QUERY_CACHE: dict[tuple[str, str, str], list[float]] = {}
+MAX_QUERY_CACHE = 256
+
+
 async def embed_query(binding: EmbeddingEndpoint, query: str) -> list[float] | None:
+    model = binding.model_name
+    if not model:
+        return None
+    key = (binding.base_url, model, query)
+    cached = _QUERY_CACHE.get(key)
+    if cached is not None:
+        return cached
     vectors = await embed_texts(binding, [query])
-    return vectors[0] if vectors else None
+    vector = vectors[0] if vectors else None
+    if vector is not None:
+        # 朴素上限：满了就整个丢弃重来。做成 LRU 需要额外簿记，
+        # 而这里的失效代价只是「下次重新嵌入一遍」，不值得。
+        if len(_QUERY_CACHE) >= MAX_QUERY_CACHE:
+            _QUERY_CACHE.clear()
+        _QUERY_CACHE[key] = vector
+    return vector
 
 
 __all__ = [
     "MAX_BATCH_INPUTS",
+    "MAX_QUERY_CACHE",
     "MAX_INPUT_CHARS",
     "EmbeddingEndpoint",
     "embed_query",

@@ -38,7 +38,6 @@ from ._common import (
     _site_url,
 )
 
-SortKey = Literal["created", "updated", "name", "custom"]
 SortDirection = Literal["asc", "desc"]
 
 

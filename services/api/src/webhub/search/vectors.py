@@ -98,7 +98,16 @@ async def store_embedding(
     model: str,
     vector: list[float],
     content_hash: str,
+    commit: bool = True,
 ) -> None:
+    """Upsert one vector.
+
+    ``commit=False`` lets a backfill write a whole batch in one transaction:
+    committing per row turns a 512-site pass into 512 transactions, which on
+    SQLite means holding and releasing the write lock 512 times while the rest
+    of the app is trying to write.
+    """
+
     existing = await session.get(SiteEmbedding, {"user_id": user_id, "site_id": site_id})
     now = utc_now()
     if existing is None:
@@ -119,7 +128,8 @@ async def store_embedding(
         existing.vector = pack_vector(vector)
         existing.content_hash = content_hash
         existing.updated_at = now
-    await session.commit()
+    if commit:
+        await session.commit()
 
 
 async def stale_sites(
@@ -160,6 +170,23 @@ async def stale_sites(
         if len(pending) >= limit:
             break
     return pending
+
+
+async def has_embeddings(session: AsyncSession, user_id: str) -> bool:
+    """Whether this account has any vector at all.
+
+    Exists to keep the search path cheap.  Resolving an embedding Provider
+    re-resolves its hostname through ``validate_connection_target`` — a real
+    DNS lookup with a multi-second timeout, which is the right price for an SSRF
+    guarantee but the wrong price to pay on every keystroke of a search box.
+    An account with no vectors cannot get anything back from semantic recall,
+    so the whole resolution is skipped rather than made unsafe.
+    """
+
+    found = await session.scalar(
+        select(SiteEmbedding.site_id).where(SiteEmbedding.user_id == user_id).limit(1)
+    )
+    return found is not None
 
 
 async def nearest(
@@ -219,6 +246,7 @@ __all__ = [
     "cosine_similarity",
     "drop_index",
     "embedding_text",
+    "has_embeddings",
     "nearest",
     "pack_vector",
     "stale_sites",

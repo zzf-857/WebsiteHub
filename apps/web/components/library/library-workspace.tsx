@@ -184,6 +184,10 @@ export function LibraryWorkspace() {
                 <option value="created">创建时间</option>
                 <option value="name">网站名称</option>
                 <option value="custom">自定义顺序</option>
+                {/* 没有搜索词时后端会 422，所以直接禁用而不是让用户选了才报错 */}
+                <option value="relevance" disabled={!searchInput.trim()}>
+                  相关度{searchInput.trim() ? "" : "（需先输入搜索词）"}
+                </option>
               </select>
             </label>
             <button

@@ -848,3 +848,32 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
+
+/* ============ 语义索引状态（Q11） ============ */
+
+/* 四个数字并排：站点总数 / 已索引 / 待索引 / 本轮预计请求。
+   「本轮预计请求」是花钱数字，和其余三个同等呈现——把它藏在小字里
+   等于让用户在不知情的情况下点下去。 */
+.provider-index-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+}
+
+.provider-index-stats dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.provider-index-stats dd {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}

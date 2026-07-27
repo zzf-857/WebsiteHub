@@ -287,7 +287,13 @@ export function SiteCollection({
   );
 }
 
-export const LIBRARY_SORTS: readonly LibrarySort[] = ["created", "updated", "name", "custom"];
+export const LIBRARY_SORTS: readonly LibrarySort[] = [
+  "created",
+  "updated",
+  "name",
+  "custom",
+  "relevance",
+];
 
 /**
  * 首页与顶栏用 query 参数把筛选意图带过来（?category= / ?pinned=1 / ?sort= / ?focus=search）。

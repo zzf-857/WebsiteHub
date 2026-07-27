@@ -149,3 +149,86 @@ def test_search_reports_semantic_as_unused_when_it_contributed_nothing(
     )
     assert result.semantic_used is False
     assert [hit.site_id for hit in result.hits] == ["b", "a"]
+
+
+def test_the_same_query_is_only_embedded_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Paginating a search must not re-buy the same query vector.
+
+    Without the cache, ``_relevance_page`` embeds on every page: four pages of
+    one search is four billable requests for a byte-identical result.
+    """
+
+    from webhub.search import embeddings
+
+    embeddings._QUERY_CACHE.clear()
+    seen = _mock(monkeypatch, lambda _r: _vectors(1))
+
+    async def scenario() -> tuple[list[float] | None, list[float] | None, int]:
+        first = await embed_query(Endpoint(), "同一个查询词")
+        second = await embed_query(Endpoint(), "同一个查询词")
+        return first, second, len(seen)
+
+    first, second, calls = asyncio.run(scenario())
+    embeddings._QUERY_CACHE.clear()
+
+    assert first == second
+    assert calls == 1, "重复查询同一个词不得重复消耗额度"
+
+
+def test_a_different_model_is_not_served_from_the_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vectors from two models are incomparable — the cache key must separate them."""
+
+    from webhub.search import embeddings
+
+    embeddings._QUERY_CACHE.clear()
+    seen = _mock(monkeypatch, lambda _r: _vectors(1))
+
+    async def scenario() -> int:
+        await embed_query(Endpoint(model_name="embed-1"), "查询")
+        await embed_query(Endpoint(model_name="embed-2"), "查询")
+        return len(seen)
+
+    calls = asyncio.run(scenario())
+    embeddings._QUERY_CACHE.clear()
+    assert calls == 2
+
+
+def test_a_broken_vector_store_still_returns_keyword_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`nearest` hits the local DB — its errors must not take down search.
+
+    `embed_texts` already collapses vendor failures, but a SQLAlchemyError from
+    the vector query would otherwise escape to the route and 500 the request,
+    turning an enhancement into a single point of failure.
+    """
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from webhub.search import embeddings
+    from webhub.search import service as search_service
+
+    embeddings._QUERY_CACHE.clear()
+    _mock(monkeypatch, lambda _r: _vectors(1))
+
+    async def exploding_nearest(*_args: object, **_kwargs: object) -> list[object]:
+        raise SQLAlchemyError("vector table is gone")
+
+    monkeypatch.setattr(search_service, "nearest", exploding_nearest)
+
+    result = asyncio.run(
+        hybrid_search(
+            session=None,  # type: ignore[arg-type]
+            user_id="alice",
+            query="站点 A",
+            keyword_ids=["b", "a"],
+            candidates=CANDIDATES,
+            binding=Endpoint(),
+        )
+    )
+    embeddings._QUERY_CACHE.clear()
+
+    assert result.semantic_used is False
+    assert [hit.site_id for hit in result.hits] == ["a", "b"], "关键词结果必须完好"

@@ -24,7 +24,10 @@ from webhub.library.schemas import (
     normalize_favicon_url,
 )
 
-SortKey = Literal["created", "updated", "name", "custom"]
+# "relevance" 只在带 q 时可用，且是唯一会走语义融合的排序。
+# 单独开一个键而不是让语义召回去改现有排序的结果顺序：现有四个键的含义
+# 是"按这一列排"，把融合塞进去会让同一个请求在配了 Provider 后悄悄换个顺序。
+SortKey = Literal["created", "updated", "name", "custom", "relevance"]
 SortDirection = Literal["asc", "desc"]
 _SEARCH_TOKEN = re.compile(r"\w+", re.UNICODE)
 _CJK_CHARACTER = re.compile(r"[\u3400-\u9fff]")

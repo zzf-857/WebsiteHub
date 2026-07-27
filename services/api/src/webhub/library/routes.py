@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from webhub.agent.provider_binding import resolve_optional_binding
 from webhub.auth.dependencies import (
     CurrentIdentityDependency,
     DatabaseSessionDependency,
@@ -35,6 +36,7 @@ from webhub.library.schemas import (
     TagResponse,
     TagUpdateRequest,
 )
+from webhub.search.vectors import has_embeddings
 
 router = APIRouter(prefix="/library", tags=["library"])
 
@@ -165,6 +167,7 @@ async def remove_tag(
 
 @router.get("/sites", response_model=SiteListResponse)
 async def sites(
+    request: Request,
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     q: Annotated[str | None, Query(max_length=300)] = None,
@@ -172,11 +175,24 @@ async def sites(
     tag_id: str | None = None,
     space_id: str | None = None,
     pinned: bool | None = None,
-    sort: Literal["created", "updated", "name", "custom"] = "updated",
+    sort: Literal["created", "updated", "name", "custom", "relevance"] = "updated",
     direction: Literal["asc", "desc"] = "desc",
     cursor: Annotated[str | None, Query(max_length=2_048)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> SiteListResponse:
+    # 解析 Provider 的代价不只是读库解密：resolve_binding 会重新做一次
+    # DNS 解析（保存后主机名可能被指向内网，这道 SSRF 校验必须留着），
+    # 默认超时以秒计。搜索是按键去抖的高频请求，不能每次都付这个代价。
+    # 所以两道门都过了才解析：① 按相关度排序 ② 该账号真有向量。
+    # 没有向量时语义召回一行都贡献不了，跳过是等价的，不是偷工减料。
+    binding = None
+    if sort == "relevance" and await has_embeddings(session, str(identity.user.id)):
+        binding = await resolve_optional_binding(
+            session,
+            request.app.state.settings,
+            user_id=str(identity.user.id),
+            kind="embedding",
+        )
     return await _call(
         service.list_sites(
             session,
@@ -190,6 +206,7 @@ async def sites(
             direction=direction,
             cursor=cursor,
             limit=limit,
+            embedding_binding=binding,
         )
     )
 
