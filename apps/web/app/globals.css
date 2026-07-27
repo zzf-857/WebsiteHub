@@ -437,43 +437,6 @@ textarea:focus-visible {
   line-height: 1.2;
 }
 
-.workspace-empty-state {
-  width: min(100%, var(--reading-max));
-  margin: 64px auto 0;
-  padding: 42px 0;
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.workspace-empty-icon {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  margin: 0 auto 14px;
-  place-items: center;
-  color: var(--text-secondary);
-  background: var(--surface-subtle);
-  border-radius: var(--radius-md);
-}
-
-.workspace-empty-icon svg {
-  width: 19px;
-  height: 19px;
-  stroke-width: 1.7;
-}
-
-.workspace-empty-state h2 {
-  margin: 0;
-  color: var(--text);
-  font-size: 17px;
-  font-weight: 650;
-}
-
-.workspace-empty-state p {
-  margin: 8px 0 0;
-  line-height: 1.65;
-}
-
 .page-kicker {
   display: block;
   margin-bottom: 4px;

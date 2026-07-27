@@ -1,5 +1,11 @@
 # Local agent state
 .workbuddy/
+# Temporary and cleanup artifacts belong in F:\AI\AgentMake\temp\WebHub
+temp/
+tmp/
+scratch/
+cookies.txt
+*.cookie-jar.txt
 # 本机开发约定（固定账号、库位置、测试素材）——只在本工作副本有效，不进仓库
 LOCAL_DEV.md
 
@@ -45,4 +51,3 @@ Thumbs.db
 Desktop.ini
 .claude/
 relative-data-test/
-
