@@ -773,7 +773,7 @@ def test_begin_parse_run_replay_reports_the_committed_job_version(
         creator_read_job = asyncio.Event()
         retry_read_job = asyncio.Event()
         creator_finished = asyncio.Event()
-        original_owned_job = persistence._owned_job
+        original_owned_job = persistence._common._owned_job
 
         async with (
             database.sessions() as creator_session,
@@ -799,7 +799,7 @@ def test_begin_parse_run_replay_reports_the_committed_job_version(
                     await asyncio.wait_for(creator_finished.wait(), timeout=5)
                 return job
 
-            monkeypatch.setattr(persistence, "_owned_job", coordinated_owned_job)
+            monkeypatch.setattr(persistence._common, "_owned_job", coordinated_owned_job)
 
             async def create_run() -> persistence.ParseRunResult:
                 try:
@@ -856,7 +856,7 @@ def test_concurrent_run_and_chunk_requests_replay_the_committed_winners(
                 idempotency_key="concurrent-upload-request-0001",
             )
 
-        original_run_replay = persistence._parse_run_replay
+        original_run_replay = persistence._common._parse_run_replay
         initial_run_lookups: set[int] = set()
         both_run_lookups_finished = asyncio.Event()
 
@@ -880,7 +880,7 @@ def test_concurrent_run_and_chunk_requests_replay_the_committed_winners(
                 await asyncio.wait_for(both_run_lookups_finished.wait(), timeout=5)
             return replay
 
-        monkeypatch.setattr(persistence, "_parse_run_replay", synchronized_run_replay)
+        monkeypatch.setattr(persistence._common, "_parse_run_replay", synchronized_run_replay)
         async with database.sessions() as first_session, database.sessions() as second_session:
 
             async def begin(session: object) -> persistence.ParseRunResult:
@@ -894,13 +894,13 @@ def test_concurrent_run_and_chunk_requests_replay_the_committed_winners(
 
             run_results = await asyncio.gather(begin(first_session), begin(second_session))
 
-        monkeypatch.setattr(persistence, "_parse_run_replay", original_run_replay)
+        monkeypatch.setattr(persistence._common, "_parse_run_replay", original_run_replay)
         assert {result.replayed for result in run_results} == {False, True}
         assert len({result.run_id for result in run_results}) == 1
         assert {result.job_version for result in run_results} == {2}
         run_id = run_results[0].run_id
 
-        original_chunk_checkpoint = persistence._parse_chunk_checkpoint
+        original_chunk_checkpoint = persistence._common._parse_chunk_checkpoint
         initial_chunk_lookups: set[int] = set()
         both_chunk_lookups_finished = asyncio.Event()
 
@@ -925,7 +925,7 @@ def test_concurrent_run_and_chunk_requests_replay_the_committed_winners(
             return checkpoint
 
         monkeypatch.setattr(
-            persistence,
+            persistence._common,
             "_parse_chunk_checkpoint",
             synchronized_chunk_checkpoint,
         )
@@ -1193,7 +1193,7 @@ def test_finalize_parse_run_serializes_with_a_late_chunk(
 
         validation_finished = asyncio.Event()
         late_append_finished = asyncio.Event()
-        original_validate = persistence._validate_complete_staging
+        original_validate = persistence.staging._validate_complete_staging
 
         async def pause_after_validation(
             session: object,
@@ -1207,7 +1207,7 @@ def test_finalize_parse_run_serializes_with_a_late_chunk(
                 await asyncio.wait_for(late_append_finished.wait(), timeout=0.5)
 
         monkeypatch.setattr(
-            persistence,
+            persistence.staging,
             "_validate_complete_staging",
             pause_after_validation,
         )
@@ -1340,13 +1340,13 @@ def test_finalizing_parse_run_recovers_after_worker_restart(
             folder_count=2,
             occurrence_count=4,
         )
-        original_validate = persistence._validate_complete_staging
+        original_validate = persistence.staging._validate_complete_staging
 
         async def interrupt_after_seal(*_: object, **__: object) -> None:
             raise asyncio.CancelledError
 
         monkeypatch.setattr(
-            persistence,
+            persistence.staging,
             "_validate_complete_staging",
             interrupt_after_seal,
         )
@@ -1361,7 +1361,7 @@ def test_finalizing_parse_run_recovers_after_worker_restart(
                     completion=completion,
                 )
         monkeypatch.setattr(
-            persistence,
+            persistence.staging,
             "_validate_complete_staging",
             original_validate,
         )
@@ -1441,8 +1441,8 @@ def test_parse_run_rejects_algorithm_version_drift(
                 idempotency_key="version-drift-parse-request-0001",
             )
 
-        active_normalizer_version = persistence.NORMALIZER_VERSION
-        monkeypatch.setattr(persistence, "NORMALIZER_VERSION", "normalizer.future")
+        active_normalizer_version = persistence._common.NORMALIZER_VERSION
+        monkeypatch.setattr(persistence._common, "NORMALIZER_VERSION", "normalizer.future")
         async with database.sessions() as session:
             with pytest.raises(
                 persistence.BookmarkPersistenceConflictError,
@@ -1457,7 +1457,7 @@ def test_parse_run_rejects_algorithm_version_drift(
                     events=events,  # type: ignore[arg-type]
                 )
 
-        monkeypatch.setattr(persistence, "NORMALIZER_VERSION", active_normalizer_version)
+        monkeypatch.setattr(persistence._common, "NORMALIZER_VERSION", active_normalizer_version)
         async with database.sessions() as session:
             await persistence.append_parse_chunk(
                 session,
@@ -1483,7 +1483,7 @@ def test_parse_run_rejects_algorithm_version_drift(
                 completion=completion,
             )
 
-        monkeypatch.setattr(persistence, "NORMALIZER_VERSION", "normalizer.future")
+        monkeypatch.setattr(persistence._common, "NORMALIZER_VERSION", "normalizer.future")
         async with database.sessions() as session:
             replayed_preview = await persistence.finalize_parse_run(
                 session,

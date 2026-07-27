@@ -241,7 +241,7 @@ def test_site_version_claim_is_atomic_across_concurrent_sessions(
     database = Database(f"sqlite+aiosqlite:///{database_path.as_posix()}")
 
     async def race_updates() -> list[tuple[str, str | None, int | None]]:
-        original_owned_site = library_service._owned_site
+        original_owned_site = library_service._common._owned_site
         ready_count = 0
         ready_lock = asyncio.Lock()
         release = asyncio.Event()
@@ -256,7 +256,7 @@ def test_site_version_claim_is_atomic_across_concurrent_sessions(
             await asyncio.wait_for(release.wait(), timeout=5)
             return site
 
-        monkeypatch.setattr(library_service, "_owned_site", synchronized_owned_site)
+        monkeypatch.setattr(library_service._common, "_owned_site", synchronized_owned_site)
 
         async def update_name(name: str) -> tuple[str, str | None, int | None]:
             async with database.sessions() as session:
@@ -301,7 +301,7 @@ def test_site_delete_version_check_is_atomic_across_concurrent_sessions(
     database = Database(f"sqlite+aiosqlite:///{database_path.as_posix()}")
 
     async def race_deletes() -> list[tuple[str, str | None]]:
-        original_owned_site = library_service._owned_site
+        original_owned_site = library_service._common._owned_site
         ready_count = 0
         ready_lock = asyncio.Lock()
         release = asyncio.Event()
@@ -316,7 +316,7 @@ def test_site_delete_version_check_is_atomic_across_concurrent_sessions(
             await asyncio.wait_for(release.wait(), timeout=5)
             return site
 
-        monkeypatch.setattr(library_service, "_owned_site", synchronized_owned_site)
+        monkeypatch.setattr(library_service._common, "_owned_site", synchronized_owned_site)
 
         async def delete_once() -> tuple[str, str | None]:
             async with database.sessions() as session:
