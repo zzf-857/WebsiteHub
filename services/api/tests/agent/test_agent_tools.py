@@ -197,12 +197,14 @@ def test_web_search_tool_is_absent_without_a_search_provider(tmp_path: Path) -> 
         "list_spaces",
         "list_tags",
         "propose_bookmark_import",
+        "propose_reclassify",
         "propose_site",
         "propose_site_update",
         "propose_sites",
         "propose_space_membership",
         "search_library",
     ]
+
 
 
 @contextmanager
