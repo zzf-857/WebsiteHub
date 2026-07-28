@@ -43,14 +43,26 @@ from webhub.library.schemas import (
 from webhub.search.vectors import has_embeddings
 
 router = APIRouter(prefix="/library", tags=["library"])
+_VISIBLE_ANALYSIS_LIMIT = 8
+_MAX_ANALYSIS_BACKFILL_REQUEST = 5_000
 
 
 def _schedule_analysis(request: Request, *, user_id: str, site_id: str) -> None:
-    ingestion_worker.schedule_analysis(
+    scheduled = ingestion_worker.schedule_analysis(
         request.app.state.database,
         user_id=str(user_id),
         site_ids=(site_id,),
+        priority=True,
     )
+    # When the foreground queue is full, leave the newly created/retargeted
+    # site to the database-driven sweep instead of silently giving up until a
+    # later list request happens to wake it.
+    if scheduled.rejected:
+        ingestion_worker.ensure_auto_backfill(
+            request.app.state.database,
+            user_id=str(user_id),
+            rescan_if_running=True,
+        )
 
 
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]
@@ -192,7 +204,7 @@ async def sites(
             user_id=str(identity.user.id),
             kind="embedding",
         )
-    return await _call(
+    result = await _call(
         service.list_sites(
             session,
             identity.user.id,
@@ -208,6 +220,21 @@ async def sites(
             embedding_binding=binding,
         )
     )
+    visible_site_ids = tuple(
+        site.id for site in result.items if site.analysis_status == "not_analyzed"
+    )[:_VISIBLE_ANALYSIS_LIMIT]
+    if visible_site_ids:
+        ingestion_worker.schedule_analysis(
+            request.app.state.database,
+            user_id=str(identity.user.id),
+            site_ids=visible_site_ids,
+            priority=True,
+        )
+    ingestion_worker.ensure_auto_backfill(
+        request.app.state.database,
+        user_id=str(identity.user.id),
+    )
+    return result
 
 
 @router.post("/sites", response_model=SiteResponse, status_code=status.HTTP_201_CREATED)
@@ -337,13 +364,19 @@ async def batch_sites(
     counts = dict.fromkeys(names, 0)
     for item in items:
         counts[item.status] = counts.get(item.status, 0) + 1
-    ingestion_worker.schedule_analysis(
+    scheduled = ingestion_worker.schedule_analysis(
         request.app.state.database,
         user_id=str(identity.user.id),
         site_ids=tuple(
             item.site_id for item in items if item.status == "created" and item.site_id is not None
         ),
     )
+    if scheduled.rejected:
+        ingestion_worker.ensure_auto_backfill(
+            request.app.state.database,
+            user_id=str(identity.user.id),
+            rescan_if_running=True,
+        )
     return SiteBatchResponse(
         confirmed=payload.confirm,
         total=len(items),
@@ -376,23 +409,31 @@ async def analyze_missing_sites(
     _: WriteOriginDependency,
     limit: Annotated[
         int,
-        Query(ge=1, le=ingestion_worker.MAX_QUEUED_ANALYSES_PER_ACCOUNT),
-    ] = ingestion_worker.MAX_QUEUED_ANALYSES_PER_ACCOUNT,
+        Query(ge=1, le=_MAX_ANALYSIS_BACKFILL_REQUEST),
+    ] = _MAX_ANALYSIS_BACKFILL_REQUEST,
 ) -> SiteAnalysisBackfillResponse:
     """Queue one bounded, user-triggered batch of historical unanalysed sites."""
 
     user_id = str(identity.user.id)
+    bounded_limit = min(limit, ingestion_worker.MAX_QUEUED_ANALYSES_PER_ACCOUNT)
     site_ids, remaining = await ingestion_service.not_analyzed_site_ids(
         session,
         user_id,
-        limit=limit,
+        limit=bounded_limit,
         excluded_site_ids=ingestion_worker.pending_site_ids(request.app.state.database, user_id),
     )
     scheduled = ingestion_worker.schedule_analysis(
         request.app.state.database,
         user_id=user_id,
         site_ids=tuple(site_ids),
+        priority=False,
     )
+    if scheduled.rejected:
+        ingestion_worker.ensure_auto_backfill(
+            request.app.state.database,
+            user_id=user_id,
+            rescan_if_running=True,
+        )
     return SiteAnalysisBackfillResponse(
         queued_count=scheduled.queued,
         active_count=len(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import logging
 import re
 from collections.abc import Awaitable
 from contextlib import suppress
@@ -52,8 +53,11 @@ from webhub.bookmarks.uploads import (
     stage_bookmark_upload,
 )
 from webhub.ingestion import worker as ingestion_worker
+from webhub.ingestion import service as ingestion_service
 
 router = APIRouter(prefix="/bookmark-imports", tags=["bookmark-imports"])
+_IMMEDIATE_IMPORTED_ANALYSIS_LIMIT = 8
+_LOGGER = logging.getLogger(__name__)
 
 # Keeps a strong reference to every detached parse task: asyncio only holds a
 # weak one, so without this a task can be garbage collected mid-parse.
@@ -448,7 +452,7 @@ async def apply_import(
     makes "确认前资料库无变化" true by construction rather than by discipline.
     """
 
-    response, created_site_ids = await _call(
+    response = await _call(
         queries.apply_import(
             session,
             identity.user.id,
@@ -456,9 +460,28 @@ async def apply_import(
             expected_job_version=payload.expected_job_version,
         )
     )
-    ingestion_worker.schedule_analysis(
+    if response.created > 0:
+        try:
+            immediate_site_ids = await ingestion_service.recent_not_analyzed_site_ids(
+                session,
+                str(identity.user.id),
+                limit=_IMMEDIATE_IMPORTED_ANALYSIS_LIMIT,
+            )
+        except Exception:  # noqa: BLE001 - import already committed; background recovery remains
+            _LOGGER.warning("could not prioritize freshly imported site analysis", exc_info=True)
+        else:
+            ingestion_worker.schedule_analysis(
+                request.app.state.database,
+                user_id=str(identity.user.id),
+                site_ids=tuple(immediate_site_ids),
+                priority=True,
+            )
+    ingestion_worker.ensure_auto_backfill(
         request.app.state.database,
         user_id=str(identity.user.id),
-        site_ids=created_site_ids,
+        # If a previous sweep is on its final empty discovery query, make it
+        # perform one more pass after this commit rather than losing every new
+        # bookmark until the next library request wakes it.
+        rescan_if_running=response.created > 0,
     )
     return response

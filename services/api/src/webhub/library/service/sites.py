@@ -231,6 +231,7 @@ async def update_site(
             site.favicon_url = None
             site.preview_url = None
             site.analysis_status = "not_analyzed"
+            site.analysis_updated_at = None
         if "description" in fields:
             site.description = (payload.description or "").strip()
         if "favicon_url" in fields and (not url_changed or explicit_new_favicon):

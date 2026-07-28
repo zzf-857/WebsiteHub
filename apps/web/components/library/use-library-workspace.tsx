@@ -28,6 +28,7 @@ import {
   listLibraryCategories,
   listLibrarySites,
   listLibraryTags,
+  MAX_LIBRARY_PAGE_SIZE,
   reorderLibrarySites,
   updateLibrarySite,
 } from "@/lib/library-client";
@@ -42,6 +43,10 @@ import type {
   LibraryTag,
 } from "@/lib/library-contract";
 import { canStartLibraryPageLoad } from "@/lib/library-pagination";
+import {
+  hasRefreshableSiteAnalysis,
+  useBoundedAnalysisRefresh,
+} from "@/lib/analysis-refresh";
 import {
   DialogState,
   EMPTY_PAGE,
@@ -59,9 +64,12 @@ import { useLibrarySelection } from "@/components/library/use-library-selection"
 // 全站统一使用共享版网站图标（size 为像素值）；
 // 旧枚举尺寸按 small=20 / medium=24 / large=32 迁移
 
-const ANALYSIS_REFRESH_DELAYS_MS = [1_000, 2_000, 3_000, 5_000, 8_000, 13_000] as const;
-
 type PageKind = "pinned" | "regular";
+
+type AnalysisRefreshWaiter = {
+  intent: number;
+  resolve: () => void;
+};
 
 export function useLibraryWorkspace() {
   const [intent] = useState(initialIntent);
@@ -87,6 +95,10 @@ export function useLibraryWorkspace() {
 
   const [pinnedPage, setPinnedPage] = useState<SitePageState>(EMPTY_PAGE);
   const [regularPage, setRegularPage] = useState<SitePageState>(EMPTY_PAGE);
+  const loadedPagesRef = useRef({ pinned: pinnedPage, regular: regularPage });
+  const preserveLoadedSitesOnRefresh = useRef(false);
+  const refreshIntentRef = useRef(0);
+  const analysisRefreshWaiterRef = useRef<AnalysisRefreshWaiter | null>(null);
   const [sitesLoading, setSitesLoading] = useState(true);
   const [sitesError, setSitesError] = useState<string | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
@@ -112,7 +124,6 @@ export function useLibraryWorkspace() {
   const [notice, setNotice] = useState<string | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
   const [analysisBackfillBusy, setAnalysisBackfillBusy] = useState(false);
-  const analysisRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadTaxonomies = useCallback(async (signal?: AbortSignal) => {
     const generation = taxonomyRequestGeneration.current + 1;
@@ -174,7 +185,11 @@ export function useLibraryWorkspace() {
   const activeSiteQueryScope = useRef(selectionScope);
   useLayoutEffect(() => {
     activeSiteQueryScope.current = selectionScope;
+    preserveLoadedSitesOnRefresh.current = false;
   }, [selectionScope]);
+  useLayoutEffect(() => {
+    loadedPagesRef.current = { pinned: pinnedPage, regular: regularPage };
+  }, [pinnedPage, regularPage]);
   const {
     allLoadedSelected,
     clearSelection,
@@ -207,34 +222,94 @@ export function useLibraryWorkspace() {
     const controller = new AbortController();
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
+    const preserveLoadedSites = preserveLoadedSitesOnRefresh.current;
+    preserveLoadedSitesOnRefresh.current = false;
+    const analysisWaiter = analysisRefreshWaiterRef.current?.intent === refreshVersion
+      ? analysisRefreshWaiterRef.current
+      : null;
+    const settleAnalysisWaiter = () => {
+      if (analysisWaiter !== null && analysisRefreshWaiterRef.current === analysisWaiter) {
+        analysisRefreshWaiterRef.current = null;
+        analysisWaiter.resolve();
+      }
+    };
 
     const load = async () => {
-      setSitesLoading(true);
+      if (!preserveLoadedSites) setSitesLoading(true);
       setSitesError(null);
-      setPinnedPage(EMPTY_PAGE);
-      setRegularPage(EMPTY_PAGE);
+      if (!preserveLoadedSites) {
+        setPinnedPage(EMPTY_PAGE);
+        setRegularPage(EMPTY_PAGE);
+      }
       try {
+        const previous = loadedPagesRef.current;
+        const loadedLimit = (kind: PageKind) => Math.min(
+          MAX_LIBRARY_PAGE_SIZE,
+          Math.max(DEFAULT_LIBRARY_PAGE_SIZE, previous[kind].items.length),
+        );
         const [pinned, regular] = await Promise.all([
-          listLibrarySites({ ...siteQuery, pinned: true }, controller.signal),
+          listLibrarySites({
+            ...siteQuery,
+            pinned: true,
+            ...(preserveLoadedSites ? { limit: loadedLimit("pinned") } : {}),
+          }, controller.signal),
           pinnedOnly
             ? Promise.resolve(null)
-            : listLibrarySites({ ...siteQuery, pinned: false }, controller.signal),
+            : listLibrarySites({
+                ...siteQuery,
+                pinned: false,
+                ...(preserveLoadedSites ? { limit: loadedLimit("regular") } : {}),
+              }, controller.signal),
         ]);
         if (controller.signal.aborted || requestGeneration.current !== generation) return;
+        const pinnedItems = preserveLoadedSites
+          ? appendUniqueSites(pinned.items, previous.pinned.items)
+          : pinned.items;
+        const regularItems = regular
+          ? (preserveLoadedSites
+              ? appendUniqueSites(regular.items, previous.regular.items)
+              : regular.items)
+          : [];
+        // A metadata refresh never changes a site's user-visible sort key. If
+        // the user already scrolled past the API's maximum one-page limit,
+        // replacing this cursor with the first page's cursor would make the
+        // next automatic load repeat an old page and stall the sentinel.
+        const pinnedNextCursor = preserveLoadedSites && previous.pinned.items.length > 0
+          ? previous.pinned.nextCursor
+          : pinned.nextCursor;
+        const regularNextCursor = regular === null
+          ? null
+          : preserveLoadedSites && previous.regular.items.length > 0
+            ? previous.regular.nextCursor
+            : regular.nextCursor;
         setPinnedPage({
-          items: pinned.items,
-          nextCursor: pinned.nextCursor,
+          items: pinnedItems,
+          nextCursor: pinnedNextCursor,
           matchedCount: pinned.aggregate.matchedCount,
           loadingMore: false,
         });
         setRegularPage(regular ? {
-          items: regular.items,
-          nextCursor: regular.nextCursor,
+          items: regularItems,
+          nextCursor: regularNextCursor,
           matchedCount: regular.aggregate.matchedCount,
           loadingMore: false,
         } : EMPTY_PAGE);
-        const refreshedSites = [...pinned.items, ...(regular?.items ?? [])];
-        retainVisibleSelection(refreshedSites);
+        loadedPagesRef.current = {
+          pinned: {
+            items: pinnedItems,
+            nextCursor: pinnedNextCursor,
+            matchedCount: pinned.aggregate.matchedCount,
+            loadingMore: false,
+          },
+          regular: regular ? {
+            items: regularItems,
+            nextCursor: regularNextCursor,
+            matchedCount: regular.aggregate.matchedCount,
+            loadingMore: false,
+          } : EMPTY_PAGE,
+        };
+        const refreshedSites = [...pinnedItems, ...regularItems];
+        if (!preserveLoadedSites) retainVisibleSelection(refreshedSites);
       } catch (error) {
         if (isAbortError(error) || controller.signal.aborted) return;
         if (requestGeneration.current === generation) {
@@ -243,12 +318,16 @@ export function useLibraryWorkspace() {
       } finally {
         if (!controller.signal.aborted && requestGeneration.current === generation) {
           setSitesLoading(false);
+          settleAnalysisWaiter();
         }
       }
     };
 
     void load();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      settleAnalysisWaiter();
+    };
   }, [
     cancelPaginationRequests,
     pinnedOnly,
@@ -260,38 +339,41 @@ export function useLibraryWorkspace() {
 
   useEffect(() => () => cancelPaginationRequests(), [cancelPaginationRequests]);
 
-  const refreshSites = useCallback(() => {
+  const triggerSitesRefresh = useCallback((preserveLoadedSites: boolean, waitForLoad = false) => {
+    preserveLoadedSitesOnRefresh.current = preserveLoadedSites;
     requestGeneration.current += 1;
     cancelPaginationRequests(true);
-    setRefreshVersion((current) => current + 1);
+    const intent = refreshIntentRef.current + 1;
+    refreshIntentRef.current = intent;
+    const previousWaiter = analysisRefreshWaiterRef.current;
+    if (previousWaiter !== null) {
+      analysisRefreshWaiterRef.current = null;
+      previousWaiter.resolve();
+    }
+    setRefreshVersion(intent);
+    if (!waitForLoad) return undefined;
+    return new Promise<void>((resolve) => {
+      analysisRefreshWaiterRef.current = { intent, resolve };
+    });
   }, [cancelPaginationRequests]);
 
-  const stopAnalysisRefresh = useCallback(() => {
-    if (analysisRefreshTimer.current !== null) {
-      clearTimeout(analysisRefreshTimer.current);
-      analysisRefreshTimer.current = null;
-    }
-  }, []);
+  const refreshSites = useCallback(() => {
+    triggerSitesRefresh(false);
+  }, [triggerSitesRefresh]);
+  const refreshSitesForAnalysis = useCallback(() => {
+    return triggerSitesRefresh(true, true);
+  }, [triggerSitesRefresh]);
 
-  const startAnalysisRefresh = useCallback(() => {
-    stopAnalysisRefresh();
-    refreshSites();
-    let index = 0;
-    const tick = () => {
-      refreshSites();
-      const delay = ANALYSIS_REFRESH_DELAYS_MS[index];
-      index += 1;
-      if (delay === undefined) {
-        analysisRefreshTimer.current = null;
-        return;
-      }
-      analysisRefreshTimer.current = setTimeout(tick, delay);
-    };
-    analysisRefreshTimer.current = setTimeout(tick, ANALYSIS_REFRESH_DELAYS_MS[index]);
-    index += 1;
-  }, [refreshSites, stopAnalysisRefresh]);
+  const analysisRefreshEnabled = useMemo(
+    () => !sitesLoading && hasRefreshableSiteAnalysis([...pinnedPage.items, ...regularPage.items]),
+    [pinnedPage.items, regularPage.items, sitesLoading],
+  );
 
-  useEffect(() => stopAnalysisRefresh, [stopAnalysisRefresh]);
+  useBoundedAnalysisRefresh({
+    scope: selectionScope,
+    enabled: analysisRefreshEnabled,
+    refresh: refreshSitesForAnalysis,
+  });
 
   const refreshAfterMutation = useCallback(() => {
     refreshSites();
@@ -315,17 +397,14 @@ export function useLibraryWorkspace() {
       } else {
         setNotice("没有待补全的网站");
       }
-      if (result.queuedCount > 0 || result.activeCount > 0) {
-        startAnalysisRefresh();
-      } else {
-        refreshSites();
-      }
+      if (result.queuedCount > 0 || result.activeCount > 0) refreshSitesForAnalysis();
+      else refreshSites();
     } catch (error) {
       setSitesError(errorMessage(error, "网站信息补全任务启动失败，请重试"));
     } finally {
       setAnalysisBackfillBusy(false);
     }
-  }, [analysisBackfillBusy, refreshSites, startAnalysisRefresh]);
+  }, [analysisBackfillBusy, refreshSites, refreshSitesForAnalysis]);
 
   const handleTaxonomyChanged = useCallback(async () => {
     try {

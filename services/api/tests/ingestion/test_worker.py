@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -230,5 +231,73 @@ def test_analysis_queue_has_a_process_wide_capacity(monkeypatch: pytest.MonkeyPa
             database, "global-one"
         ) or worker.pending_site_ids(database, "global-two"):  # type: ignore[arg-type]
             await asyncio.sleep(0)
+
+    asyncio.run(scenario())
+
+
+def test_auto_backfill_keeps_a_small_candidate_buffer_for_ten_thousand_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        class FakeDatabase:
+            @asynccontextmanager
+            async def sessions(self):
+                yield object()
+
+        database = FakeDatabase()
+        user_id = "large-auto-backfill"
+        site_ids = tuple(f"site-{index}" for index in range(10_000))
+        started: set[str] = set()
+        saturated = asyncio.Event()
+
+        async def discover(
+            _session: object,
+            selected_user_id: str,
+            *,
+            limit: int,
+            excluded_site_ids: frozenset[str],
+            stale_before: object,
+        ) -> list[str]:
+            assert selected_user_id == user_id
+            assert limit == worker.AUTO_DISCOVERY_BATCH_SIZE
+            assert stale_before is not None
+            return [
+                site_id
+                for site_id in site_ids
+                if site_id not in excluded_site_ids
+            ][:limit]
+
+        async def stalled(
+            _database: object,
+            selected_user_id: str,
+            site_id: str,
+            **kwargs: object,
+        ) -> None:
+            assert selected_user_id == user_id
+            assert kwargs["automatic"] is True
+            started.add(site_id)
+            if len(started) == worker.MAX_CONCURRENT_AUTO_ANALYSES:
+                saturated.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(worker, "auto_backfill_site_ids", discover)
+        monkeypatch.setattr(worker, "analyze_in_background", stalled)
+        worker.start(database)  # type: ignore[arg-type]
+        try:
+            assert worker.ensure_auto_backfill(database, user_id) is True  # type: ignore[arg-type]
+            assert worker.ensure_auto_backfill(database, user_id) is False  # type: ignore[arg-type]
+            await asyncio.wait_for(saturated.wait(), timeout=5)
+
+            key = (id(database), user_id)
+            state = worker._AUTO_BACKFILLS[key]  # noqa: SLF001 - bounded-state assertion
+            assert len(worker.pending_site_ids(database, user_id)) == 2  # type: ignore[arg-type]
+            assert len(state.completions) == 2
+            assert len(state.candidates) == worker.AUTO_DISCOVERY_BATCH_SIZE - 2
+            assert len(started) == 2
+        finally:
+            await worker.shutdown(database)  # type: ignore[arg-type]
+
+        assert worker.pending_site_ids(database, user_id) == frozenset()  # type: ignore[arg-type]
+        assert (id(database), user_id) not in worker._AUTO_BACKFILLS  # noqa: SLF001
 
     asyncio.run(scenario())

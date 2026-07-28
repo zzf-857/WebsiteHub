@@ -19,6 +19,10 @@ import {
   siteHostname,
 } from "@/components/home/home-shared";
 import { SiteFavicon } from "@/components/site-favicon";
+import {
+  hasRefreshableSiteAnalysis,
+  useBoundedAnalysisRefresh,
+} from "@/lib/analysis-refresh";
 import { listLibraryCategories, listLibrarySites } from "@/lib/library-client";
 import type {
   LibraryCategory,
@@ -47,7 +51,7 @@ type SectionState =
   | { status: "pending" } // 尚未进入视口
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; sites: LibrarySite[] };
+  | { status: "ready"; scope: string; sites: LibrarySite[] };
 
 const SECTION_SITE_LIMIT = 8;
 
@@ -341,60 +345,94 @@ function CategorySection({
   onSortChange,
   onRegister,
 }: Readonly<CategorySectionProps>) {
-  // 没有 IntersectionObserver 的运行时直接视为可见：宁可多请求也不能不显示
-  const [visible, setVisible] = useState(
+  // 已经加载过的分区不必在离屏后丢卡片；但后台状态刷新只该在它仍靠近视口时运行。
+  // 没有 IntersectionObserver 的运行时两者都视为 true：宁可多请求也不能不显示。
+  const [hasLoaded, setHasLoaded] = useState(
+    () => typeof IntersectionObserver === "undefined",
+  );
+  const [isNearViewport, setIsNearViewport] = useState(
     () => typeof IntersectionObserver === "undefined",
   );
   const [reloadKey, setReloadKey] = useState(0);
   const [state, setState] = useState<SectionState>({ status: "pending" });
   const sectionRef = useRef<HTMLElement | null>(null);
+  const loadControllerRef = useRef<AbortController | null>(null);
+  const loadGenerationRef = useRef(0);
 
   // 空分类不必发请求：siteCount 已由分类接口给出
   const hasSites = category.siteCount > 0;
+  const queryScope = `${category.id}:${sort}`;
 
   useEffect(() => {
-    if (!hasSites || visible) return;
+    if (!hasSites || typeof IntersectionObserver === "undefined") return;
     const element = sectionRef.current;
     if (!element) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setVisible(true);
-          observer.disconnect();
-        }
+        const nearViewport = entries.some((entry) => entry.isIntersecting);
+        setIsNearViewport(nearViewport);
+        if (nearViewport) setHasLoaded(true);
       },
       { rootMargin: "240px 0px" },
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [hasSites, visible]);
+  }, [hasSites]);
+
+  const loadSites = useCallback(async (showLoading: boolean) => {
+    loadControllerRef.current?.abort();
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
+    if (showLoading) setState({ status: "loading" });
+    try {
+      const page = await listLibrarySites(
+        {
+          categoryId: category.id,
+          limit: SECTION_SITE_LIMIT,
+          sort,
+          // 名称排序按 A→Z 才符合直觉，时间类排序保持最新在前
+          direction: sort === "name" ? "asc" : "desc",
+        },
+        controller.signal,
+      );
+      if (controller.signal.aborted || loadGenerationRef.current !== generation) return;
+      setState({ status: "ready", scope: queryScope, sites: page.items });
+    } catch (error) {
+      if (
+        isAbortError(error)
+        || controller.signal.aborted
+        || loadGenerationRef.current !== generation
+      ) return;
+      setState({ status: "error", message: errorText(error, "分类内容加载失败") });
+    } finally {
+      if (loadControllerRef.current === controller) loadControllerRef.current = null;
+    }
+  }, [category.id, queryScope, sort]);
 
   useEffect(() => {
-    if (!hasSites || !visible) return;
-    const controller = new AbortController();
-    const load = async () => {
-      setState({ status: "loading" });
-      try {
-        const page = await listLibrarySites(
-          {
-            categoryId: category.id,
-            limit: SECTION_SITE_LIMIT,
-            sort,
-            // 名称排序按 A→Z 才符合直觉，时间类排序保持最新在前
-            direction: sort === "name" ? "asc" : "desc",
-          },
-          controller.signal,
-        );
-        if (controller.signal.aborted) return;
-        setState({ status: "ready", sites: page.items });
-      } catch (error) {
-        if (isAbortError(error) || controller.signal.aborted) return;
-        setState({ status: "error", message: errorText(error, "分类内容加载失败") });
-      }
+    if (!hasSites || !hasLoaded) return;
+    void loadSites(true);
+    return () => {
+      loadGenerationRef.current += 1;
+      loadControllerRef.current?.abort();
+      loadControllerRef.current = null;
     };
-    void load();
-    return () => controller.abort();
-  }, [hasSites, visible, reloadKey, category.id, sort]);
+  }, [hasSites, hasLoaded, reloadKey, loadSites]);
+
+  const analysisRefreshEnabled = (
+    hasSites
+    && isNearViewport
+    && state.status === "ready"
+    && state.scope === queryScope
+    && hasRefreshableSiteAnalysis(state.sites)
+  );
+  useBoundedAnalysisRefresh({
+    scope: queryScope,
+    enabled: analysisRefreshEnabled,
+    refresh: () => loadSites(false),
+  });
 
   const skeletonCount = Math.min(category.siteCount, SECTION_SITE_LIMIT);
 

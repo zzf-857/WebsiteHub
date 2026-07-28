@@ -615,7 +615,7 @@ async def apply_import(
     job_id: str,
     *,
     expected_job_version: int,
-) -> tuple[BookmarkImportApplyResponse, tuple[str, ...]]:
+) -> BookmarkImportApplyResponse:
     """Write the job's staged candidates into the account's library.
 
     Account-scoped through ``_current_complete_preview``: a job id belonging to
@@ -651,4 +651,4 @@ async def apply_import(
         job_version=job.version if job is not None else expected_job_version,
         **outcome.as_dict(),
     )
-    return response, outcome.created_site_ids
+    return response

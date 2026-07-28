@@ -103,6 +103,14 @@ class Site(Base):
         Index("ix_sites_user_name_id", "user_id", "normalized_name", "id"),
         Index("ix_sites_user_category", "user_id", "category_id"),
         Index("ix_sites_user_pinned", "user_id", "pinned"),
+        Index(
+            "ix_sites_user_analysis_status_updated_created_id",
+            "user_id",
+            "analysis_status",
+            "analysis_updated_at",
+            "created_at",
+            "id",
+        ),
         # 唯一索引而不是表约束：SQLite 上加表约束要重建整表，
         # 而 FTS 触发器引用了 sites，重建时会炸。见 20260727_0007 迁移。
         Index(
@@ -132,6 +140,9 @@ class Site(Base):
     pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_analyzed")
+    # Analysis is derived data. Its lifecycle must not make an old bookmark look
+    # recently edited, so it has a separate optimistic-claim timestamp.
+    analysis_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from ipaddress import ip_address
 from urllib.parse import urldefrag, urlsplit
 
@@ -532,6 +533,318 @@ def test_one_slow_root_path_cannot_starve_later_root_candidates(
         "https://example.com/favicon.ico",
         "https://example.com/favicon.png",
     ]
+
+
+def test_same_origin_icon_discovery_is_singleflight_and_reuses_verified_declaration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def validate(
+        url: str,
+        *,
+        timeout_seconds: float,
+        allow_private: bool,
+    ) -> str | None:
+        nonlocal calls
+        assert timeout_seconds == 1
+        assert allow_private is False
+        calls += 1
+        started.set()
+        await release.wait()
+        return url
+
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", validate)
+
+    async def scenario() -> tuple[str | None, str | None]:
+        declared = ("https://video.example/assets/icon.png",)
+        first = asyncio.create_task(
+            ingestion_fetcher._discover_icon_url(
+                page_url="https://video.example/watch/one",
+                declared_urls=declared,
+                timeout_seconds=1,
+                allow_private=False,
+            )
+        )
+        await started.wait()
+        second = asyncio.create_task(
+            ingestion_fetcher._discover_icon_url(
+                page_url="https://video.example/watch/two",
+                declared_urls=declared,
+                timeout_seconds=1,
+                allow_private=False,
+            )
+        )
+        await asyncio.sleep(0)
+        gate = ingestion_fetcher._ORIGIN_ICON_GATES[("https", "video.example", 443)]
+        assert gate.references == 2
+        release.set()
+        results = await asyncio.gather(first, second)
+        return results[0], results[1]
+
+    assert asyncio.run(scenario()) == (
+        "https://video.example/assets/icon.png",
+        "https://video.example/assets/icon.png",
+    )
+    assert calls == 1
+    assert ingestion_fetcher._ORIGIN_ICON_GATES == {}
+
+
+def test_different_origins_can_discover_icons_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = 0
+    maximum_active = 0
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def validate(
+        url: str,
+        *,
+        timeout_seconds: float,
+        allow_private: bool,
+    ) -> str | None:
+        nonlocal active, maximum_active
+        assert timeout_seconds == 0.25
+        assert allow_private is False
+        active += 1
+        maximum_active = max(maximum_active, active)
+        if active == 2:
+            both_started.set()
+        try:
+            await release.wait()
+            return url
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", validate)
+
+    async def scenario() -> tuple[str | None, str | None]:
+        tasks = (
+            asyncio.create_task(
+                ingestion_fetcher._discover_icon_url(
+                    page_url="https://one.example/page",
+                    timeout_seconds=1,
+                    allow_private=False,
+                )
+            ),
+            asyncio.create_task(
+                ingestion_fetcher._discover_icon_url(
+                    page_url="https://two.example/page",
+                    timeout_seconds=1,
+                    allow_private=False,
+                )
+            ),
+        )
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        release.set()
+        results = await asyncio.gather(*tasks)
+        return results[0], results[1]
+
+    assert asyncio.run(scenario()) == (
+        "https://one.example/favicon.ico",
+        "https://two.example/favicon.ico",
+    )
+    assert maximum_active == 2
+    assert ingestion_fetcher._ORIGIN_ICON_GATES == {}
+
+
+def test_favicon_miss_cache_is_short_lived_and_avoids_repeated_root_probes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def missing(*_args: object, **_kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        return None
+
+    monkeypatch.setattr(ingestion_fetcher, "FAVICON_CACHE_MISS_TTL_SECONDS", 0.01)
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", missing)
+
+    async def discover() -> str | None:
+        return await ingestion_fetcher._discover_icon_url(
+            page_url="https://missing.example/page",
+            timeout_seconds=1,
+            allow_private=False,
+        )
+
+    async def scenario() -> None:
+        assert await discover() is None
+        assert calls == 4
+        assert await discover() is None
+        assert calls == 4
+        await asyncio.sleep(0.02)
+        assert await discover() is None
+        assert calls == 8
+
+    asyncio.run(scenario())
+
+
+def test_favicon_cache_is_lru_bounded_and_scoped_by_allow_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def validate(url: str, **_kwargs: object) -> str:
+        nonlocal calls
+        calls += 1
+        return url
+
+    monkeypatch.setattr(ingestion_fetcher, "FAVICON_CACHE_MAX_ORIGINS", 2)
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", validate)
+
+    async def discover(host: str, *, allow_private: bool = False) -> str | None:
+        return await ingestion_fetcher._discover_icon_url(
+            page_url=f"https://{host}/page",
+            timeout_seconds=1,
+            allow_private=allow_private,
+        )
+
+    async def scenario() -> None:
+        await discover("one.example")
+        await discover("two.example")
+        await discover("three.example")
+        assert len(ingestion_fetcher._FAVICON_CACHE) == 2
+        await discover("one.example")
+        assert calls == 4
+        await discover("one.example", allow_private=True)
+        assert calls == 5
+        assert len(ingestion_fetcher._FAVICON_CACHE) == 2
+
+    asyncio.run(scenario())
+
+
+def test_favicon_state_never_reuses_locks_or_cache_across_event_loops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def validate(url: str, **_kwargs: object) -> str:
+        nonlocal calls
+        calls += 1
+        return url
+
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", validate)
+
+    async def discover() -> str | None:
+        return await ingestion_fetcher._discover_icon_url(
+            page_url="https://loop.example/page",
+            timeout_seconds=1,
+            allow_private=False,
+        )
+
+    assert asyncio.run(discover()) == "https://loop.example/favicon.ico"
+    first_loop = ingestion_fetcher._FETCH_STATE_LOOP
+    assert ingestion_fetcher._ORIGIN_ICON_GATES == {}
+    assert asyncio.run(discover()) == "https://loop.example/favicon.ico"
+    assert ingestion_fetcher._FETCH_STATE_LOOP is not first_loop
+    assert ingestion_fetcher._ORIGIN_ICON_GATES == {}
+    assert calls == 2
+
+
+def test_current_page_declarations_still_precede_an_origin_cached_root_icon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+
+    async def validate(url: str, **_kwargs: object) -> str:
+        observed.append(url)
+        return url
+
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", validate)
+
+    async def scenario() -> tuple[str | None, str | None]:
+        root = await ingestion_fetcher._discover_icon_url(
+            page_url="https://priority.example/first",
+            timeout_seconds=1,
+            allow_private=False,
+        )
+        declared = await ingestion_fetcher._discover_icon_url(
+            page_url="https://priority.example/second",
+            declared_urls=("https://priority.example/special.png",),
+            timeout_seconds=1,
+            allow_private=False,
+        )
+        return root, declared
+
+    assert asyncio.run(scenario()) == (
+        "https://priority.example/favicon.ico",
+        "https://priority.example/special.png",
+    )
+    assert observed == [
+        "https://priority.example/favicon.ico",
+        "https://priority.example/special.png",
+    ]
+
+
+def test_total_wall_timeout_stops_a_slow_redirect_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    @asynccontextmanager
+    async def slow_redirect(
+        url: str,
+        **_kwargs: object,
+    ):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.03)
+        yield url, httpx.Response(302, headers={"location": "/next"})
+
+    monkeypatch.setattr(ingestion_fetcher, "_pinned_stream", slow_redirect)
+
+    async def scenario() -> tuple[object, float]:
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        outcome = await fetch_site_metadata(
+            "https://slow.example/start",
+            timeout_seconds=1,
+            total_timeout_seconds=0.05,
+        )
+        return outcome, loop.time() - started_at
+
+    outcome, elapsed = asyncio.run(scenario())
+    assert outcome.status == "failed"
+    assert outcome.reason == "访问该网站超时"
+    assert calls == 2
+    assert elapsed < 0.12
+
+
+def test_total_wall_timeout_releases_an_in_flight_origin_icon_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = b"<html><head><title>Slow icon</title></head></html>"
+
+    @asynccontextmanager
+    async def page_response(url: str, **_kwargs: object):
+        yield url, httpx.Response(
+            200,
+            content=page,
+            headers={"content-type": "text/html"},
+        )
+
+    async def slow_icon(*_args: object, **_kwargs: object) -> None:
+        await asyncio.sleep(1)
+        return None
+
+    monkeypatch.setattr(ingestion_fetcher, "_pinned_stream", page_response)
+    monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", slow_icon)
+
+    outcome = asyncio.run(
+        fetch_site_metadata(
+            "https://slow-icon.example/page",
+            timeout_seconds=1,
+            total_timeout_seconds=0.02,
+        )
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.reason == "访问该网站超时"
+    assert ingestion_fetcher._ORIGIN_ICON_GATES == {}
 
 
 def test_declared_favicon_query_is_allowed_and_fragment_is_not_sent(

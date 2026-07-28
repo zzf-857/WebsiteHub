@@ -4,6 +4,7 @@ import asyncio
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urldefrag, urlsplit
@@ -603,3 +604,174 @@ def test_explicit_backfill_retries_failed_limited_and_stale_pending_sites(
             str(sites[3]["id"]),
             str(sites[4]["id"]),
         }
+
+
+def test_auto_backfill_excludes_recent_pending_failed_and_limited_sites(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "webhub.library.routes.ingestion_worker.schedule_analysis",
+        lambda *_args, **_kwargs: AnalysisSchedule(queued=0, already_queued=0, rejected=0),
+    )
+    monkeypatch.setattr(
+        "webhub.library.routes.ingestion_worker.ensure_auto_backfill",
+        lambda *_args, **_kwargs: False,
+    )
+    with _client(tmp_path) as client:
+        sites = [
+            _site(client, name=f"Auto {index}", url=f"https://auto-{index}.example")
+            for index in range(5)
+        ]
+        cutoff = datetime.now(UTC) - timedelta(minutes=5)
+        stale = cutoff - timedelta(minutes=1)
+        recent = cutoff + timedelta(minutes=1)
+        with sqlite3.connect(tmp_path / "main.sqlite3") as connection:
+            user_id = str(
+                connection.execute(
+                    "SELECT user_id FROM sites WHERE id = ?", (sites[0]["id"],)
+                ).fetchone()[0]
+            )
+            connection.execute(
+                "UPDATE sites SET analysis_status = 'pending', analysis_updated_at = ? "
+                "WHERE id = ?",
+                (stale.isoformat(), sites[1]["id"]),
+            )
+            connection.execute(
+                "UPDATE sites SET analysis_status = 'pending', analysis_updated_at = ? "
+                "WHERE id = ?",
+                (recent.isoformat(), sites[2]["id"]),
+            )
+            connection.execute(
+                "UPDATE sites SET analysis_status = 'failed', analysis_updated_at = ? "
+                "WHERE id = ?",
+                (stale.isoformat(), sites[3]["id"]),
+            )
+            connection.execute(
+                "UPDATE sites SET analysis_status = 'limited', analysis_updated_at = ? "
+                "WHERE id = ?",
+                (stale.isoformat(), sites[4]["id"]),
+            )
+            connection.commit()
+
+        async def scenario() -> list[str]:
+            database = Database(
+                f"sqlite+aiosqlite:///{(tmp_path / 'main.sqlite3').as_posix()}"
+            )
+            try:
+                async with database.sessions() as session:
+                    return await ingestion_service.auto_backfill_site_ids(
+                        session,
+                        user_id,
+                        limit=10,
+                        stale_before=cutoff,
+                    )
+            finally:
+                await database.dispose()
+
+        selected = asyncio.run(scenario())
+        assert set(selected) == {str(sites[0]["id"]), str(sites[1]["id"])}
+
+
+def test_analysis_does_not_change_user_visible_updated_at(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "webhub.library.routes.ingestion_worker.schedule_analysis",
+        lambda *_args, **_kwargs: AnalysisSchedule(queued=0, already_queued=0, rejected=0),
+    )
+    monkeypatch.setattr(
+        "webhub.library.routes.ingestion_worker.ensure_auto_backfill",
+        lambda *_args, **_kwargs: False,
+    )
+    with _client(tmp_path) as client:
+        site = _site(client)
+        with sqlite3.connect(tmp_path / "main.sqlite3") as connection:
+            user_id, updated_before = connection.execute(
+                "SELECT user_id, updated_at FROM sites WHERE id = ?", (site["id"],)
+            ).fetchone()
+
+        async def immediate_fetch(_url: str, *, timeout_seconds: int) -> FetchOutcome:
+            assert timeout_seconds > 0
+            return FetchOutcome(
+                status="complete",
+                reason="ok",
+                metadata=SiteMetadata(description="后台补全的说明"),
+            )
+
+        monkeypatch.setattr(ingestion_service, "fetch_site_metadata", immediate_fetch)
+
+        async def scenario() -> None:
+            database = Database(
+                f"sqlite+aiosqlite:///{(tmp_path / 'main.sqlite3').as_posix()}"
+            )
+            try:
+                async with database.sessions() as session:
+                    outcome = await ingestion_service.analyze_site(
+                        session,
+                        str(user_id),
+                        str(site["id"]),
+                    )
+                    assert outcome is not None
+            finally:
+                await database.dispose()
+
+        asyncio.run(scenario())
+        with sqlite3.connect(tmp_path / "main.sqlite3") as connection:
+            updated_after, analysis_updated_at, analysis_status = connection.execute(
+                "SELECT updated_at, analysis_updated_at, analysis_status FROM sites WHERE id = ?",
+                (site["id"],),
+            ).fetchone()
+        assert updated_after == updated_before
+        assert analysis_updated_at is not None
+        assert analysis_status == "complete"
+
+
+def test_auto_backfill_shutdown_releases_claim_and_forgets_pending_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "webhub.library.routes.ingestion_worker.schedule_analysis",
+        lambda *_args, **_kwargs: AnalysisSchedule(queued=0, already_queued=0, rejected=0),
+    )
+    monkeypatch.setattr(
+        "webhub.library.routes.ingestion_worker.ensure_auto_backfill",
+        lambda *_args, **_kwargs: False,
+    )
+    with _client(tmp_path) as client:
+        site = _site(client)
+        with sqlite3.connect(tmp_path / "main.sqlite3") as connection:
+            user_id = str(
+                connection.execute(
+                    "SELECT user_id FROM sites WHERE id = ?", (site["id"],)
+                ).fetchone()[0]
+            )
+
+        async def scenario() -> None:
+            started = asyncio.Event()
+
+            async def stalled_fetch(_url: str, *, timeout_seconds: int) -> FetchOutcome:
+                assert timeout_seconds > 0
+                started.set()
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")
+
+            monkeypatch.setattr(ingestion_service, "fetch_site_metadata", stalled_fetch)
+            database = Database(
+                f"sqlite+aiosqlite:///{(tmp_path / 'main.sqlite3').as_posix()}"
+            )
+            ingestion_worker.start(database)
+            try:
+                assert ingestion_worker.ensure_auto_backfill(database, user_id) is True
+                await asyncio.wait_for(started.wait(), timeout=5)
+                assert str(site["id"]) in ingestion_worker.pending_site_ids(database, user_id)
+                await asyncio.wait_for(ingestion_worker.shutdown(database), timeout=5)
+                assert ingestion_worker.pending_site_ids(database, user_id) == frozenset()
+            finally:
+                await database.dispose()
+
+        asyncio.run(scenario())
+        stored = client.get(f"/api/library/sites/{site['id']}").json()
+        assert stored["analysis_status"] == "not_analyzed"

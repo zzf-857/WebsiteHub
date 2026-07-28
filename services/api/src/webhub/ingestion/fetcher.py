@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
@@ -46,7 +47,14 @@ MAX_BODY_BYTES = 2 * 1024 * 1024
 MAX_ICON_BYTES = 256 * 1024
 MAX_ICON_CANDIDATE_TIMEOUT_SECONDS = 2
 MAX_ROOT_ICON_RESERVED_SECONDS = 4
+MAX_ICON_DISCOVERY_SECONDS = 4
+MAX_PREVIEW_VALIDATION_SECONDS = 2
 DEFAULT_TIMEOUT_SECONDS = 8
+DEFAULT_TOTAL_TIMEOUT_SECONDS = 16
+FAVICON_CACHE_MAX_ORIGINS = 2_048
+FAVICON_DECLARATION_CACHE_MAX_ENTRIES = 2_048
+FAVICON_CACHE_SUCCESS_TTL_SECONDS = 60 * 60
+FAVICON_CACHE_MISS_TTL_SECONDS = 5 * 60
 _USER_AGENT = "WebHub/0.1 (+https://github.com/webhub)"
 _ROOT_ICON_PATHS = (
     "/favicon.ico",
@@ -112,6 +120,30 @@ class FetchOutcome:
         return self.status == "complete"
 
 
+@dataclass(slots=True)
+class _OriginGate:
+    lock: asyncio.Lock
+    references: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _FaviconCacheEntry:
+    url: str | None
+    source_url: str | None
+    expires_at: float
+
+
+_OriginKey = tuple[str, str, int]
+_FaviconCacheKey = tuple[_OriginKey, bool]
+_DeclaredFaviconCacheKey = tuple[_OriginKey, bool, str]
+_FETCH_STATE_LOOP: asyncio.AbstractEventLoop | None = None
+_ORIGIN_ICON_GATES: dict[_OriginKey, _OriginGate] = {}
+_FAVICON_CACHE: OrderedDict[_FaviconCacheKey, _FaviconCacheEntry] = OrderedDict()
+_DECLARED_FAVICON_CACHE: OrderedDict[_DeclaredFaviconCacheKey, _FaviconCacheEntry] = (
+    OrderedDict()
+)
+
+
 # Every failure the user can see, in Chinese, composed here rather than taken
 # from the remote server.  A fetched page's own error text is untrusted content.
 _REASONS: dict[str, str] = {
@@ -136,15 +168,116 @@ def _outcome(status: AnalysisStatus, code: str) -> FetchOutcome:
     return FetchOutcome(status=status, reason=_reason(code))
 
 
-def _origin(url: str) -> tuple[str, str, int | None] | None:
+def _origin(url: str) -> _OriginKey | None:
     try:
         parts = urlsplit(url)
-        if parts.scheme not in {"http", "https"} or not parts.hostname:
-            return None
         scheme = parts.scheme.lower()
-        return scheme, parts.hostname.casefold(), parts.port or (443 if scheme == "https" else 80)
-    except ValueError:
+        if scheme not in {"http", "https"} or not parts.hostname:
+            return None
+        hostname = parts.hostname.rstrip(".").encode("idna").decode("ascii").casefold()
+        if not hostname:
+            return None
+        return scheme, hostname, parts.port or (443 if scheme == "https" else 80)
+    except (UnicodeError, ValueError):
         return None
+
+
+def _loop_fetch_state() -> asyncio.AbstractEventLoop:
+    """Keep locks and monotonic TTLs scoped to the event loop that owns them."""
+
+    global _FETCH_STATE_LOOP
+
+    loop = asyncio.get_running_loop()
+    if _FETCH_STATE_LOOP is not loop:
+        _ORIGIN_ICON_GATES.clear()
+        _FAVICON_CACHE.clear()
+        _DECLARED_FAVICON_CACHE.clear()
+        _FETCH_STATE_LOOP = loop
+    return loop
+
+
+@asynccontextmanager
+async def _origin_icon_gate(page_url: str) -> AsyncIterator[None]:
+    """Serialize favicon discovery per origin without retaining idle locks."""
+
+    _loop_fetch_state()
+    key = _origin(page_url)
+    if key is None:
+        yield
+        return
+
+    gate = _ORIGIN_ICON_GATES.get(key)
+    if gate is None:
+        gate = _OriginGate(lock=asyncio.Lock())
+        _ORIGIN_ICON_GATES[key] = gate
+    gate.references += 1
+    try:
+        async with gate.lock:
+            yield
+    finally:
+        gate.references -= 1
+        if gate.references == 0 and _ORIGIN_ICON_GATES.get(key) is gate:
+            _ORIGIN_ICON_GATES.pop(key, None)
+
+
+def _favicon_cache_get(key: _FaviconCacheKey) -> _FaviconCacheEntry | None:
+    loop = _loop_fetch_state()
+    entry = _FAVICON_CACHE.get(key)
+    if entry is None:
+        return None
+    if entry.expires_at <= loop.time():
+        _FAVICON_CACHE.pop(key, None)
+        return None
+    _FAVICON_CACHE.move_to_end(key)
+    return entry
+
+
+def _favicon_cache_put(
+    key: _FaviconCacheKey,
+    *,
+    url: str | None,
+    source_url: str | None,
+) -> None:
+    loop = _loop_fetch_state()
+    ttl = (
+        FAVICON_CACHE_SUCCESS_TTL_SECONDS if url is not None else FAVICON_CACHE_MISS_TTL_SECONDS
+    )
+    _FAVICON_CACHE[key] = _FaviconCacheEntry(
+        url=url,
+        source_url=source_url if url is not None else None,
+        expires_at=loop.time() + ttl,
+    )
+    _FAVICON_CACHE.move_to_end(key)
+    while len(_FAVICON_CACHE) > FAVICON_CACHE_MAX_ORIGINS:
+        _FAVICON_CACHE.popitem(last=False)
+
+
+def _declared_favicon_cache_get(key: _DeclaredFaviconCacheKey) -> _FaviconCacheEntry | None:
+    loop = _loop_fetch_state()
+    entry = _DECLARED_FAVICON_CACHE.get(key)
+    if entry is None:
+        return None
+    if entry.expires_at <= loop.time():
+        _DECLARED_FAVICON_CACHE.pop(key, None)
+        return None
+    _DECLARED_FAVICON_CACHE.move_to_end(key)
+    return entry
+
+
+def _declared_favicon_cache_put(
+    key: _DeclaredFaviconCacheKey,
+    *,
+    url: str,
+) -> None:
+    loop = _loop_fetch_state()
+    _DECLARED_FAVICON_CACHE[key] = _FaviconCacheEntry(
+        url=url,
+        source_url=key[2],
+        expires_at=loop.time() + FAVICON_CACHE_SUCCESS_TTL_SECONDS,
+    )
+    _DECLARED_FAVICON_CACHE.move_to_end(key)
+    while len(_DECLARED_FAVICON_CACHE) > FAVICON_DECLARATION_CACHE_MAX_ENTRIES:
+        _DECLARED_FAVICON_CACHE.popitem(last=False)
 
 
 def _log_origin(url: str) -> str:
@@ -323,57 +456,111 @@ async def _discover_icon_url(
     timeout_seconds: int,
     allow_private: bool,
 ) -> str | None:
-    """Try declared icons, then a bounded same-origin root fallback list."""
+    """Try declared icons, then a cached and bounded origin-root fallback."""
 
-    if _origin(page_url) is None:
+    origin = _origin(page_url)
+    if origin is None:
         return None
-    seen: set[str] = set()
-    candidate_timeout = min(timeout_seconds, MAX_ICON_CANDIDATE_TIMEOUT_SECONDS)
+    cache_key = (origin, allow_private)
+    root_candidates = tuple(urljoin(page_url, path) for path in _ROOT_ICON_PATHS)
 
-    async def validate(candidate: str, wall_timeout: float) -> str | None:
-        try:
-            async with asyncio.timeout(wall_timeout):
-                return await _validated_icon_url(
-                    candidate,
-                    timeout_seconds=wall_timeout,
-                    allow_private=allow_private,
-                )
-        except TimeoutError:
+    # The worker already holds the process-wide network semaphore.  Gate only
+    # favicon discovery here: wrapping the whole page fetch would let four
+    # same-origin waiters occupy all global slots while only one makes progress.
+    async with _origin_icon_gate(page_url):
+        cached_root = _favicon_cache_get(cache_key)
+        seen: set[str] = set()
+        candidate_timeout = min(timeout_seconds, MAX_ICON_CANDIDATE_TIMEOUT_SECONDS)
+
+        async def validate(candidate: str, wall_timeout: float) -> str | None:
+            try:
+                async with asyncio.timeout(wall_timeout):
+                    return await _validated_icon_url(
+                        candidate,
+                        timeout_seconds=wall_timeout,
+                        allow_private=allow_private,
+                    )
+            except TimeoutError:
+                return None
+
+        async def first_valid(
+            candidates: tuple[str, ...],
+            wall_timeout: float,
+            *,
+            declared: bool,
+        ) -> tuple[str, str, bool] | None:
+            for candidate in candidates:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                if declared:
+                    cached_declaration = _declared_favicon_cache_get(
+                        (origin, allow_private, candidate)
+                    )
+                    if cached_declaration is not None and cached_declaration.url is not None:
+                        return cached_declaration.url, candidate, True
+                elif (
+                    cached_root is not None
+                    and cached_root.url is not None
+                    and cached_root.source_url == candidate
+                ):
+                    return cached_root.url, candidate, True
+                icon_url = await validate(candidate, wall_timeout)
+                if icon_url is not None:
+                    return icon_url, candidate, False
             return None
 
-    async def first_valid(candidates: tuple[str, ...], wall_timeout: float) -> str | None:
-        for candidate in candidates:
-            if candidate in seen:
-                continue
-            seen.add(candidate)
-            icon_url = await validate(candidate, wall_timeout)
-            if icon_url is not None:
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                root_budget = timeout_seconds
+                if declared_urls:
+                    root_reserve = min(MAX_ROOT_ICON_RESERVED_SECONDS, timeout_seconds / 2)
+                    declared_budget = timeout_seconds - root_reserve
+                    root_budget = root_reserve
+                    try:
+                        async with asyncio.timeout(declared_budget):
+                            declared_icon = await first_valid(
+                                declared_urls,
+                                candidate_timeout,
+                                declared=True,
+                            )
+                    except TimeoutError:
+                        declared_icon = None
+                    if declared_icon is not None:
+                        icon_url, source_url, from_cache = declared_icon
+                        if not from_cache:
+                            _declared_favicon_cache_put(
+                                (origin, allow_private, source_url),
+                                url=icon_url,
+                            )
+                        return icon_url
+                    # A page declaration is scoped to that exact URL. Only a
+                    # root icon is safe to reuse for another subpage.
+                    if cached_root is not None:
+                        return cached_root.url
+                elif cached_root is not None:
+                    return cached_root.url
+
+                root_candidate_timeout = min(
+                    candidate_timeout,
+                    root_budget / len(root_candidates),
+                )
+                root_icon = await first_valid(
+                    root_candidates,
+                    root_candidate_timeout,
+                    declared=False,
+                )
+                if root_icon is None:
+                    _favicon_cache_put(cache_key, url=None, source_url=None)
+                    return None
+                icon_url, source_url, _from_cache = root_icon
+                _favicon_cache_put(cache_key, url=icon_url, source_url=source_url)
                 return icon_url
-        return None
-
-    try:
-        async with asyncio.timeout(timeout_seconds):
-            root_budget = timeout_seconds
-            if declared_urls:
-                root_reserve = min(MAX_ROOT_ICON_RESERVED_SECONDS, timeout_seconds / 2)
-                declared_budget = timeout_seconds - root_reserve
-                root_budget = root_reserve
-                try:
-                    async with asyncio.timeout(declared_budget):
-                        declared_icon = await first_valid(declared_urls, candidate_timeout)
-                except TimeoutError:
-                    declared_icon = None
-                if declared_icon is not None:
-                    return declared_icon
-
-            root_candidates = tuple(urljoin(page_url, path) for path in _ROOT_ICON_PATHS)
-            root_candidate_timeout = min(
-                candidate_timeout,
-                root_budget / len(root_candidates),
-            )
-            return await first_valid(root_candidates, root_candidate_timeout)
-    except TimeoutError:
-        return None
+        except TimeoutError:
+            if cached_root is not None:
+                return cached_root.url
+            _favicon_cache_put(cache_key, url=None, source_url=None)
+            return None
 
 
 async def _attach_root_icon(
@@ -383,9 +570,10 @@ async def _attach_root_icon(
     timeout_seconds: int,
     allow_private: bool,
 ) -> FetchOutcome:
+    icon_timeout = min(timeout_seconds, MAX_ICON_DISCOVERY_SECONDS)
     icon_url = await _discover_icon_url(
         page_url=page_url,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=icon_timeout,
         allow_private=allow_private,
     )
     if icon_url is None:
@@ -418,7 +606,7 @@ async def _decoded(body: bytes, content_type: str) -> str:
     return body.decode("utf-8", errors="replace")
 
 
-async def fetch_site_metadata(
+async def _fetch_site_metadata(
     url: str,
     *,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -501,15 +689,20 @@ async def fetch_site_metadata(
             final_url = request_url
             html = await _decoded(bytes(body), content_type)
             parsed = parse_metadata(html, base_url=final_url)
-            image_url = await _validated_public_resource_url(
-                parsed.image_url,
-                timeout_seconds=timeout_seconds,
-            )
+            # The site icon is both more useful in a dense bookmark library and
+            # much cheaper to validate than a social preview image. Give it a
+            # bounded first chance; otherwise one slow og:image DNS lookup can
+            # consume the whole analysis deadline and erase already-parsed page
+            # metadata from the outcome.
             icon_url = await _discover_icon_url(
                 page_url=final_url,
                 declared_urls=tuple(parsed.icon_hrefs),
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=min(timeout_seconds, MAX_ICON_DISCOVERY_SECONDS),
                 allow_private=allow_private,
+            )
+            image_url = await _validated_public_resource_url(
+                parsed.image_url,
+                timeout_seconds=min(timeout_seconds, MAX_PREVIEW_VALIDATION_SECONDS),
             )
             metadata = SiteMetadata(
                 title=parsed.best_title,
@@ -563,13 +756,50 @@ async def fetch_site_metadata(
         )
 
 
+async def fetch_site_metadata(
+    url: str,
+    *,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    total_timeout_seconds: float | None = None,
+    allow_private: bool = False,
+) -> FetchOutcome:
+    """Fetch one site's metadata under one total wall-clock deadline.
+
+    ``timeout_seconds`` remains the DNS/connect/read budget for an individual
+    request.  The outer deadline prevents redirects, preview validation and
+    favicon fallbacks from multiplying that budget indefinitely.
+    """
+
+    total_timeout = (
+        DEFAULT_TOTAL_TIMEOUT_SECONDS
+        if total_timeout_seconds is None
+        else total_timeout_seconds
+    )
+    try:
+        async with asyncio.timeout(total_timeout):
+            return await _fetch_site_metadata(
+                url,
+                timeout_seconds=timeout_seconds,
+                allow_private=allow_private,
+            )
+    except TimeoutError:
+        return _outcome("failed", "timeout")
+
+
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
+    "DEFAULT_TOTAL_TIMEOUT_SECONDS",
+    "FAVICON_CACHE_MAX_ORIGINS",
+    "FAVICON_CACHE_MISS_TTL_SECONDS",
+    "FAVICON_CACHE_SUCCESS_TTL_SECONDS",
+    "FAVICON_DECLARATION_CACHE_MAX_ENTRIES",
     "MAX_BODY_BYTES",
     "MAX_ICON_CANDIDATE_TIMEOUT_SECONDS",
+    "MAX_ICON_DISCOVERY_SECONDS",
     "MAX_ICON_BYTES",
     "MAX_REDIRECTS",
     "MAX_ROOT_ICON_RESERVED_SECONDS",
+    "MAX_PREVIEW_VALIDATION_SECONDS",
     "AnalysisStatus",
     "FetchOutcome",
     "SiteMetadata",

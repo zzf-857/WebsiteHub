@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.db.database import Database
@@ -23,6 +23,8 @@ from .fetcher import DEFAULT_TIMEOUT_SECONDS, FetchOutcome, fetch_site_metadata
 _LOGGER = logging.getLogger(__name__)
 
 MAX_DESCRIPTION_CHARS = 1_000
+AUTO_PENDING_STALE_AFTER = timedelta(minutes=5)
+AUTO_PARTIAL_RETRY_AFTER = timedelta(minutes=30)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +34,9 @@ class AnalysisClaim:
     url: str
     version: int
     claimed_at: datetime
+    partial_retry: bool = False
+    missing_description: bool = False
+    missing_icon: bool = False
 
 
 _ACTIVE_CLAIMS: dict[tuple[str, str], datetime] = {}
@@ -51,6 +56,49 @@ def _release_claim(claim: AnalysisClaim) -> None:
         _ACTIVE_CLAIMS.pop(key, None)
 
 
+def _blank(value: str | None) -> bool:
+    return value is None or not value.strip()
+
+
+def _partial_metadata_condition() -> object:
+    """Sites whose basic library identity is still visibly incomplete."""
+
+    return or_(
+        Site.description.is_(None),
+        func.trim(Site.description) == "",
+        Site.favicon_url.is_(None),
+        func.trim(Site.favicon_url) == "",
+    )
+
+
+def _automatic_partial_retry_condition(*, partial_before: datetime) -> object:
+    """Retry derived blanks once, but never overwrite a later user decision."""
+
+    return and_(
+        Site.analysis_status == "complete",
+        _partial_metadata_condition(),
+        Site.analysis_updated_at.is_not(None),
+        Site.analysis_updated_at < partial_before,
+        # `analysis_updated_at` is derived-only. A later user edit, including
+        # an intentional clear, must keep the record out of automatic retries.
+        Site.updated_at <= Site.analysis_updated_at,
+    )
+
+
+def _automatic_eligibility(*, stale_before: datetime, partial_before: datetime) -> object:
+    return or_(
+        Site.analysis_status == "not_analyzed",
+        and_(
+            Site.analysis_status == "pending",
+            or_(
+                Site.analysis_updated_at.is_(None),
+                Site.analysis_updated_at < stale_before,
+            ),
+        ),
+        _automatic_partial_retry_condition(partial_before=partial_before),
+    )
+
+
 async def _owned_site(session: AsyncSession, user_id: str, site_id: str) -> Site | None:
     return await session.scalar(select(Site).where(Site.user_id == user_id, Site.id == site_id))
 
@@ -59,8 +107,20 @@ async def _claim_analysis(
     session: AsyncSession,
     user_id: str,
     site_id: str,
+    *,
+    automatic: bool = False,
+    stale_before: datetime | None = None,
 ) -> AnalysisClaim | None:
-    site = await _owned_site(session, user_id, site_id)
+    ownership = [Site.user_id == user_id, Site.id == site_id]
+    if automatic:
+        cutoff = stale_before or (utc_now() - AUTO_PENDING_STALE_AFTER)
+        ownership.append(
+            _automatic_eligibility(
+                stale_before=cutoff,
+                partial_before=utc_now() - AUTO_PARTIAL_RETRY_AFTER,
+            )
+        )
+    site = await session.scalar(select(Site).where(*ownership))
     if site is None:
         return None
 
@@ -71,8 +131,30 @@ async def _claim_analysis(
         claimed_at = previous + timedelta(microseconds=1)
     _ACTIVE_CLAIMS[key] = claimed_at
     try:
-        site.analysis_status = "pending"
-        site.updated_at = claimed_at
+        claimed = await session.execute(
+            update(Site)
+            .where(
+                *ownership,
+                Site.original_url == site.original_url,
+                Site.version == site.version,
+            )
+            .values(
+                analysis_status="pending",
+                analysis_updated_at=claimed_at,
+                # ``updated_at`` has a Python onupdate default. Explicitly keep
+                # it unchanged: derived analysis is not a user edit.
+                updated_at=Site.updated_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if claimed.rowcount != 1:  # type: ignore[attr-defined]
+            await session.rollback()
+            if _ACTIVE_CLAIMS.get(key) == claimed_at:
+                if previous is None:
+                    _ACTIVE_CLAIMS.pop(key, None)
+                else:
+                    _ACTIVE_CLAIMS[key] = previous
+            return None
         await session.commit()
     except BaseException:
         if _ACTIVE_CLAIMS.get(key) == claimed_at:
@@ -87,6 +169,113 @@ async def _claim_analysis(
         url=site.original_url,
         version=site.version,
         claimed_at=claimed_at,
+        partial_retry=automatic and site.analysis_status == "complete",
+        missing_description=_blank(site.description),
+        missing_icon=_blank(site.favicon_url),
+    )
+
+
+async def auto_backfill_site_ids(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    limit: int,
+    excluded_site_ids: frozenset[str] = frozenset(),
+    stale_before: datetime | None = None,
+) -> list[str]:
+    """Discover fresh, abandoned, and once-retryable partial analysis work."""
+
+    cutoff = stale_before or (utc_now() - AUTO_PENDING_STALE_AFTER)
+    partial_cutoff = utc_now() - AUTO_PARTIAL_RETRY_AFTER
+    selected: list[str] = []
+    excluded = set(excluded_site_ids)
+
+    async def extend(
+        eligibility: object,
+        *ordering: object,
+    ) -> None:
+        remaining = limit - len(selected)
+        if remaining <= 0:
+            return
+        conditions = [Site.user_id == user_id, eligibility]
+        if excluded:
+            conditions.append(Site.id.not_in(excluded))
+        site_ids = list(
+            (
+                await session.scalars(
+                    select(Site.id)
+                    .where(*conditions)
+                    .order_by(*ordering)
+                    .limit(remaining)
+                )
+            ).all()
+        )
+        selected.extend(site_ids)
+        excluded.update(site_ids)
+
+    # These are deliberately separate indexed queries rather than one
+    # `OR` plus conditional ordering expression. A sweep over 10,000 old
+    # bookmarks otherwise asks SQLite to scan and sort the remaining corpus for
+    # every tiny discovery batch. The model index orders exactly these columns.
+    await extend(
+        Site.analysis_status == "not_analyzed",
+        Site.analysis_updated_at,
+        Site.created_at,
+        Site.id,
+    )
+    await extend(
+        and_(
+            Site.analysis_status == "pending",
+            Site.analysis_updated_at.is_(None),
+        ),
+        Site.created_at,
+        Site.id,
+    )
+    await extend(
+        and_(
+            Site.analysis_status == "pending",
+            Site.analysis_updated_at < cutoff,
+        ),
+        Site.analysis_updated_at,
+        Site.created_at,
+        Site.id,
+    )
+    await extend(
+        _automatic_partial_retry_condition(partial_before=partial_cutoff),
+        Site.analysis_updated_at,
+        Site.created_at,
+        Site.id,
+    )
+    return selected
+
+
+async def recent_not_analyzed_site_ids(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    limit: int,
+) -> list[str]:
+    """Return a tiny newest-first slice for a just-completed import.
+
+    This is deliberately separate from the oldest-first background sweep.  A
+    large historical library must make forward progress fairly, while the few
+    links the user just imported should begin showing basic metadata promptly.
+    """
+
+    if limit <= 0:
+        return []
+    return list(
+        (
+            await session.scalars(
+                select(Site.id)
+                .where(
+                    Site.user_id == user_id,
+                    Site.analysis_status == "not_analyzed",
+                )
+                .order_by(Site.created_at.desc(), Site.id.desc())
+                .limit(limit)
+            )
+        ).all()
     )
 
 
@@ -97,11 +286,11 @@ async def not_analyzed_site_ids(
     limit: int,
     excluded_site_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[str], int]:
-    """Select incomplete or retryable work without re-queueing active tasks."""
+    """Select manual retry work without stealing a fresh background claim."""
 
     conditions = [
         Site.user_id == user_id,
-        Site.analysis_status.in_(("not_analyzed", "pending", "failed", "limited")),
+        Site.analysis_status.in_(("not_analyzed", "failed", "limited")),
     ]
     if excluded_site_ids:
         conditions.append(Site.id.not_in(excluded_site_ids))
@@ -140,9 +329,11 @@ async def apply_outcome(
         return await _owned_site(session, claim.user_id, claim.site_id)
 
     completed_at = utc_now()
+    final_status = outcome.status
     values: dict[str, object] = {
-        "analysis_status": outcome.status,
-        "updated_at": completed_at,
+        "analysis_status": final_status,
+        "analysis_updated_at": completed_at,
+        "updated_at": Site.updated_at,
     }
     metadata = outcome.metadata
     if metadata.description:
@@ -169,6 +360,17 @@ async def apply_outcome(
             else_=Site.preview_url,
         )
 
+    # A first pass can reach a page while its favicon endpoint is briefly down.
+    # Give a complete-but-incomplete record one delayed automatic retry. If the
+    # retry still cannot fill the fields it was missing, make it terminal so a
+    # library with thousands of links never circles forever on the same hosts.
+    if claim.partial_retry and outcome.status == "complete":
+        repaired_description = not claim.missing_description or bool(metadata.description)
+        repaired_icon = not claim.missing_icon or icon is not None
+        if not repaired_description or not repaired_icon:
+            final_status = "limited"
+            values["analysis_status"] = final_status
+
     # Do not load the row and mutate an ORM object here. Sessions deliberately
     # use expire_on_commit=False, so a fetch that took several seconds would be
     # writing decisions based on a stale identity-map snapshot. Every blank
@@ -182,7 +384,7 @@ async def apply_outcome(
             Site.original_url == claim.url,
             Site.version == claim.version,
             Site.analysis_status == "pending",
-            Site.updated_at == claim.claimed_at,
+            Site.analysis_updated_at == claim.claimed_at,
         )
         .values(**values)
         .execution_options(synchronize_session=False)
@@ -200,13 +402,15 @@ async def apply_outcome(
                 Site.user_id == claim.user_id,
                 Site.id == claim.site_id,
                 Site.analysis_status == "pending",
+                Site.analysis_updated_at == claim.claimed_at,
             )
             .values(
                 analysis_status=case(
-                    (Site.original_url == claim.url, outcome.status),
+                    (Site.original_url == claim.url, final_status),
                     else_="not_analyzed",
                 ),
-                updated_at=completed_at,
+                analysis_updated_at=completed_at,
+                updated_at=Site.updated_at,
             )
             .execution_options(synchronize_session=False)
         )
@@ -240,19 +444,20 @@ async def _record_claim_terminal(
             Site.user_id == claim.user_id,
             Site.id == claim.site_id,
             Site.analysis_status == "pending",
-            Site.updated_at == claim.claimed_at,
+            Site.analysis_updated_at == claim.claimed_at,
         )
         .values(
             analysis_status=case(
                 (Site.original_url == claim.url, status),
                 else_="not_analyzed",
             ),
-            updated_at=completed_at,
+            analysis_updated_at=completed_at,
+            updated_at=Site.updated_at,
         )
         .execution_options(synchronize_session=False)
     )
     if strict.rowcount != 1 and _claim_is_current(claim):  # type: ignore[attr-defined]
-        # A user edit updates `updated_at` and invalidates the strict database
+        # A user edit changes the version or URL while analysis has its own
         # token. The in-process owner check still proves no newer run exists.
         await session.execute(
             update(Site)
@@ -260,13 +465,15 @@ async def _record_claim_terminal(
                 Site.user_id == claim.user_id,
                 Site.id == claim.site_id,
                 Site.analysis_status == "pending",
+                Site.analysis_updated_at == claim.claimed_at,
             )
             .values(
                 analysis_status=case(
                     (Site.original_url == claim.url, status),
                     else_="not_analyzed",
                 ),
-                updated_at=completed_at,
+                analysis_updated_at=completed_at,
+                updated_at=Site.updated_at,
             )
             .execution_options(synchronize_session=False)
         )
@@ -279,6 +486,8 @@ async def analyze_site(
     site_id: str,
     *,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    automatic: bool = False,
+    stale_before: datetime | None = None,
 ) -> FetchOutcome | None:
     """Mark the site pending, fetch it, and store the result.
 
@@ -286,7 +495,13 @@ async def analyze_site(
     answer a missing site gives, so a probe cannot distinguish the two.
     """
 
-    claim = await _claim_analysis(session, user_id, site_id)
+    claim = await _claim_analysis(
+        session,
+        user_id,
+        site_id,
+        automatic=automatic,
+        stale_before=stale_before,
+    )
     if claim is None:
         return None
 
@@ -316,6 +531,8 @@ async def analyze_in_background(
     site_id: str,
     *,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    automatic: bool = False,
+    stale_before: datetime | None = None,
 ) -> FetchOutcome | None:
     """Run one analysis detached from the request that triggered it.
 
@@ -325,7 +542,14 @@ async def analyze_in_background(
 
     try:
         async with database.sessions() as session:
-            return await analyze_site(session, user_id, site_id, timeout_seconds=timeout_seconds)
+            return await analyze_site(
+                session,
+                user_id,
+                site_id,
+                timeout_seconds=timeout_seconds,
+                automatic=automatic,
+                stale_before=stale_before,
+            )
     except asyncio.CancelledError:
         raise
     except Exception as error:  # noqa: BLE001 - a background failure must stay contained
@@ -337,6 +561,10 @@ __all__ = [
     "analyze_in_background",
     "analyze_site",
     "AnalysisClaim",
+    "AUTO_PENDING_STALE_AFTER",
+    "AUTO_PARTIAL_RETRY_AFTER",
     "apply_outcome",
+    "auto_backfill_site_ids",
     "not_analyzed_site_ids",
+    "recent_not_analyzed_site_ids",
 ]

@@ -75,7 +75,6 @@ class ApplyOutcome:
     skipped_existing: int
     skipped_needs_review: int
     failed: int
-    created_site_ids: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -219,7 +218,6 @@ async def apply_candidates(
         or 0
     )
     created = skipped_existing = skipped_needs_review = failed = 0
-    created_site_ids: list[str] = []
     cursor: tuple[int, str] | None = None
     category_cache = await _category_ids(session, user_id)
     category_positions: dict[str, int] = {}
@@ -276,7 +274,6 @@ async def apply_candidates(
         # Guards against the same URL appearing twice inside one batch, which
         # would otherwise trip the unique index mid-transaction.
         claimed: set[str] = set()
-        claimed_site_ids: list[str] = []
         for row in actionable:
             if row.identity_url in present or row.identity_url in claimed:
                 skipped_existing += 1
@@ -342,7 +339,6 @@ async def apply_candidates(
             )
 
             claimed.add(identity_url)
-            claimed_site_ids.append(site_id)
             created += 1
 
         try:
@@ -360,15 +356,12 @@ async def apply_candidates(
                 "bookmark_apply_conflict",
                 "导入过程中资料库发生了并发修改，请重新发起导入",
             ) from error
-        created_site_ids.extend(claimed_site_ids)
-
     return ApplyOutcome(
         total_candidates=total,
         created=created,
         skipped_existing=skipped_existing,
         skipped_needs_review=skipped_needs_review,
         failed=failed,
-        created_site_ids=tuple(created_site_ids),
     )
 
 
