@@ -671,19 +671,22 @@ data-compact → 计算样式正确」，两个 observer 的实际触发时机�
      远程图片失败时同时关闭放大层并移除预览。
 
 3. **资料库大列表管理**
-   - 增加显式选择模式、卡片 checkbox、“全选当前已加载”与选中计数；选择态不触发详情导航或
-     拖拽，筛选 scope 改变立即失效，同 scope 刷新只保留仍可见的选择。
-   - 单批最多 100 条批量删除；请求携带每条 `{site_id, expected_version}`，服务端按账号预检、
-     条件 DELETE 与 rowcount 二次校验，任一缺失或版本冲突则整批回滚。确认弹层只出现一次，
-     `bulk_delete_conflict` 会清空选择、刷新并明确要求重选。
+   - 增加显式选择模式、卡片 checkbox、“全选”和“全选（已加载）”双入口与选中计数；后者选择
+     当前实际加载的全部网站且不按 100 截断，前者通过无分析副作用的轻量接口冻结当前筛选命中
+     的完整账号内版本快照。选择态不触发详情导航或拖拽，筛选 scope 改变立即失效，同 scope
+     刷新只保留仍可见的选择且不得静默升级勾选时冻结的版本。
+   - 删除请求仍单批最多 100 条，每条携带 `{site_id, expected_version}`；超过 100 条时只确认一次
+     并由前端串行分批，展示已完成数量。服务端逐批按账号预检、条件 DELETE 与 rowcount 二次
+     校验，任一缺失或版本冲突则当前批整批回滚并停止后续批次；未知网络结果也停止，不盲目重试。
    - 置顶与普通列表各自使用 `IntersectionObserver` 静默加载，提前 640px 预取；现代浏览器
      主路径移除手动“加载更多”按钮，不支持 Observer 的环境保留可操作降级，并对重复游标、
      并发请求、失败游标、筛选切换和陈旧响应做防护。
 
 自动化门禁：前端 TypeScript / ESLint / **169 tests** / Next build；后端 Ruff /
-**520 tests**；`git diff --check` 全绿。新增覆盖包括多 favicon 候选、页面失败后根图标、
-generic MIME + magic、批量删除账号隔离/原子回滚/Space 版本、超过 100 条全选语义、
-同 scope 选择保留，以及自动分页的游标与陈旧请求防护。
+**520 tests**；`git diff --check` 全绿。当时新增覆盖包括多 favicon 候选、页面失败后根图标、
+generic MIME + magic、批量删除账号隔离/原子回滚/Space 版本、旧版 100 条选择边界、
+同 scope 选择保留，以及自动分页的游标与陈旧请求防护。本轮双全选和串行分批语义已取代旧
+选择边界，遵照用户要求只做静态复核，尚未重新运行自动门禁。
 
 本轮没有操作浏览器、调用真实 Provider 或触发 2027 条历史网站的全量元数据补全。
 
@@ -721,6 +724,84 @@ Space 可能不在旧快照中而漏涨 `Space.version`。当前账号隔离、�
 本轮仅执行静态代码审阅与 `git diff --check`，按用户要求没有运行测试、构建、浏览器、截图或真实
 Provider。手动验收：打开首页或资料库并等待历史卡片逐步补全；导入后观察最新少量网址优先；确认
 详情页手动重新分析在后台繁忙时仍可完成；滚动很长的资料库后，元数据刷新不重复或卡住分页。
+
+---
+
+## Q17 · 持久化全库元数据回填与首页进度工具栏
+
+状态: 代码完成，待用户手动验收（未提交）
+对应: 2026-07-28 用户要求“首页一键批量回填、有进度、数千到上万网址不拖垮电脑”
+
+旧 `/sites/analyze-missing` 只会把最多 256 个网站 ID 放入当前 API 进程内存，响应是启动时的
+排队快照；它既不能给进度条固定分母，也无法在重启后继续。因此首页不能直接复用该接口。
+
+本轮交付：
+
+- 新增 `site_metadata_backfill_runs` / `site_metadata_backfill_items` 迁移，以及
+  `site_metadata_preferences`。run 固定目标总数；item 保存 `site_id`、版本、初始分析状态、origin
+  与本批 pending claim 时间，不对 `sites` 建级联外键，删除的网站以 `skipped` 计入既定分母。每账号
+  通过 SQLite 部分唯一索引最多一个活跃 run。run 的 six-way 状态计数有总数守恒约束，进度读取不再
+  `GROUP BY` 扫描整批 item，即使万条任务也只读一行。
+- 新增 `POST /library/metadata-backfills`、`GET /library/metadata-backfills/{run_id}` 与
+  `GET /library/metadata-backfills/active`。重复点击、多标签或刷新后均加入/恢复同一 run；响应严格拆分
+  queued/running/completed 和 complete/limited/failed/skipped，前端无需猜测真实进度。
+- worker 每次只从数据库领取一个 item，不把全库 ID 预读到内存；同一 origin 串行，显式任务最多
+  两个消费者。自动扫尾与显式任务共享最多 3 个后台网络槽，全局第四槽留给用户交互式分析。
+- item 领取同时检查快照版本、初始状态和陈旧 pending 边界。pending 状态写入 item 的同一事务中，
+  重启仅可恢复该批自己的遗留 claim；用户之后改网址、修改资料或主动清空字段时只记 `skipped`，不允许
+  旧抓取结果回写。run/item 使用租约，应用启动恢复、正常关闭立即归还，异常进程由过期租约回收。
+- 描述或 favicon 的用户填写、覆盖、主动清空均有偏好记录保护；历史 Google S2 伪 favicon 会被真实
+  图标替换，抓不到真实图标时清除而不继续渲染第三方 URL。完整读取 HTML 却没有 `og:image` /
+  `twitter:image` 时只记录一次“已检查无预览”；超时、失败、截断页面，或已声明图片但安全验证暂时
+  未通过时不会被误标记为已检查。
+- 首页 `AgentPanel` 下方新增紧凑工具栏。前台 2.5 秒、后台页 15 秒顺序轮询单个 status 接口；
+  完成时刷新首页数据区，不为每个网站建立浏览器端请求。
+
+本轮按用户要求未运行测试、构建、迁移、浏览器、截图或真实网站抓取，仅进行代码静态审阅和
+`git diff --check`。用户验收前需执行数据库迁移。预览图只使用站点公开声明的 `og:image` /
+`twitter:image`；未声明预览图是正常完成，不为填满而引入截图浏览器或第三方 favicon CDN。
+
+性能结论：页面简介与预览属于具体 URL，逐页读取 HTML 仍有价值；favicon 属于 origin 级数据。
+当前已通过同源 singleflight/LRU 和 Q17 同源串行避免对子页重复轰炸。对现库 2,027 条 URL / 1,456 个
+host，持久 origin favicon 缓存可进一步消除约 571 次重复发现；这应作为独立的缓存层改造，不应通过
+提高并发或把用户域名交给第三方图标 CDN 达成。当前快照仍在一个 SQLite 事务中写入所有 item：万级
+任务的下一步应引入不可领取的 `snapshotting` 状态后分段提交，不能直接拆事务而让 worker 处理半份快照。
+
+---
+
+## Q18 · LLM 网站资料三工具分析与原子回填闭环
+
+状态: 代码完成，待用户手动验收（未提交）
+对应: 2026-07-28 用户要求把“分类、标签、详细介绍”做成 LLM 可调用的站内工具并规范化回填
+
+本轮交付：
+
+- 新增 `choose_site_category`、`set_site_tags`、`write_site_description` 三个账号内受限工具。模型只生成
+  内存草稿，不接触数据库 Session；输入包含安全投影后的分类/标签/书签名，以及最多 12,000 字可见
+  正文。输出在工具层和最终提交层重复校验标签数量、纯文本、Markdown/HTML/裸网址和账号 taxonomy。
+- Provider I/O 前冻结网站、版本、分类、标签、偏好和来源快照；I/O 后取得账号 taxonomy 写锁，按
+  `User -> Category -> Site` 固定顺序重读并验证，再把说明、分类、标签、favicon、preview 与分析状态
+  一次提交。新增 `description_is_llm` / `category_is_llm` / `tags_are_llm`，只有可证明由 LLM 生成的旧值
+  才允许下一轮覆盖；人工填写、主动清空、删标签和 URL 改址语义均保持优先。
+- Q17 item 持久化 `requires_llm`，网络并发与 LLM 并发分离，模型最多 2 路。租约 heartbeat 明确失效时
+  会取消仍在等待或执行的 Provider 调用；取得信号量后再次检查 run fuse、item lease 和最新
+  `llm_analyzed_at`，避免重复花额度。metadata-only item 不占模型槽。
+- run 新增连续 Provider 失败计数和持久冷却：429、5xx、连接错误、超时及异常工具行为不会因单次失败
+  清空全批；一次成功即清零，连续三次失败才原子设置 `stop_requested` 并结束未领取 item。401/403/404、
+  无 Provider 和明确不支持工具调用仍立即熔断，重启后也不会重新轰炸同一坏 Provider。
+- item 每次领取递增 `attempt_count` 并参与后续 claim/defer/release/finish 的全部条件，旧协程即使晚醒也
+  不能命中新领取；这些收尾与 `stop_requested` 在同一写事务串行，熔断后的 queued、running 和 Site
+  pending claim 都会归入确定终态。`provider_retry_at` 在领取、网页抓取后以及 Provider 调用前重复复核。
+- Provider 成功、失败和致命信号独立于 Site 回填 CAS 先行提交，并在释放模型并发槽前完成；付费调用返回后
+  的短数据库收尾受 `shield` 保护。heartbeat 以本地单调时钟限定硬租期，续租持续异常会取消旧分析，避免
+  两个进程长期同时认为自己持有同一 item。未知本地 enrichment 异常立即停止批次，但不污染 Provider
+  连续失败计数；Provider 返回后的本地落盘异常同样立即持久熔断，避免系统性提交故障继续消耗额度。
+- 普通分类、标签、书签 apply、网站移动、排序和全库重分类统一使用同一账号 taxonomy mutex；分类删除
+  按稳定 ID 顺序锁 source/replacement 后再锁 Site。创建/移动目标分类 reservation 均检查 rowcount，
+  分类并发消失返回 `category_conflict`，不再误报 `duplicate_url`。
+
+本轮按用户要求未运行测试、lint、构建、迁移、浏览器或真实 Provider 请求，只做代码静态复核。
+`20260728_0011` 尚未在本地数据库执行，迁移文件已同时包含 Q17 与 Q18 的新表和状态字段。
 
 ---
 
