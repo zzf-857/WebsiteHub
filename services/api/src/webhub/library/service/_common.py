@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.bookmarks.models import NormalizationStatus
 from webhub.bookmarks.normalization import normalize_bookmark_url
+from webhub.db.locking import reserve_account_taxonomy
 from webhub.db.models import (
     DEFAULT_CATEGORY_NAME,
     Category,
@@ -97,6 +98,17 @@ async def _default_category(session: AsyncSession, user_id: str) -> Category:
     category = await session.scalar(
         select(Category).where(Category.user_id == user_id, Category.is_default.is_(True))
     )
+    if category is None:
+        if not await reserve_account_taxonomy(session, user_id):
+            raise LibraryConflictError("账号状态已发生变化，请刷新后重试")
+        # The mutex may have waited behind the writer that repaired this legacy
+        # account. Re-read before inserting so recovery is idempotent.
+        category = await session.scalar(
+            select(Category).where(
+                Category.user_id == user_id,
+                Category.is_default.is_(True),
+            )
+        )
     if category is None:
         category = Category(
             user_id=user_id,

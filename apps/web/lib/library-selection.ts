@@ -1,11 +1,9 @@
-import { MAX_LIBRARY_BULK_DELETE_SITES } from "./library-contract.ts";
-
 type SelectableSite = { id: string };
 
 export function selectableLoadedLibrarySites<T extends SelectableSite>(
   loadedSites: readonly T[],
 ): T[] {
-  return loadedSites.slice(0, MAX_LIBRARY_BULK_DELETE_SITES);
+  return [...loadedSites];
 }
 
 export function areAllLoadedLibrarySitesSelected(
@@ -20,8 +18,13 @@ export function toggleAllLoadedLibrarySites(
   selectableSites: readonly SelectableSite[],
   selectedSiteIds: ReadonlySet<string>,
 ): Set<string> {
-  if (areAllLoadedLibrarySitesSelected(selectableSites, selectedSiteIds)) return new Set();
-  return new Set(selectableSites.map((site) => site.id));
+  const next = new Set(selectedSiteIds);
+  if (areAllLoadedLibrarySitesSelected(selectableSites, selectedSiteIds)) {
+    for (const site of selectableSites) next.delete(site.id);
+  } else {
+    for (const site of selectableSites) next.add(site.id);
+  }
+  return next;
 }
 
 export function retainLoadedLibrarySiteIds(

@@ -35,6 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from webhub.db.locking import reserve_account_taxonomy
 from webhub.db.models import (
     DEFAULT_CATEGORY_NAME,
     BookmarkStagingCandidate,
@@ -219,9 +220,6 @@ async def apply_candidates(
     )
     created = skipped_existing = skipped_needs_review = failed = 0
     cursor: tuple[int, str] | None = None
-    category_cache = await _category_ids(session, user_id)
-    category_positions: dict[str, int] = {}
-
     while True:
         conditions: list[Any] = [
             BookmarkStagingCandidate.user_id == user_id,
@@ -264,11 +262,22 @@ async def apply_candidates(
             run_id,
             [row.id for row in actionable],
         )
+        if actionable and not await reserve_account_taxonomy(session, user_id):
+            await session.rollback()
+            raise BookmarkApplyError(
+                409,
+                "bookmark_apply_conflict",
+                "账号状态已发生变化，请重新发起导入",
+            )
         present = await _existing_identity_urls(
             session,
             user_id,
             [row.identity_url for row in actionable],
         )
+        # Another writer may have committed between chunks. Refresh taxonomy
+        # and category tails only after reacquiring the shared account mutex.
+        category_cache = await _category_ids(session, user_id)
+        category_positions: dict[str, int] = {}
 
         now = utc_now()
         # Guards against the same URL appearing twice inside one batch, which

@@ -11,6 +11,7 @@ from typing import Literal
 from sqlalchemy import and_, case, exists, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from webhub.db.locking import reserve_account_taxonomy
 from webhub.db.models import (
     Category,
     Site,
@@ -21,6 +22,8 @@ from webhub.db.models import (
 from webhub.library.schemas import (
     SiteListAggregate,
     SiteListResponse,
+    SiteSelectionItem,
+    SiteSelectionResponse,
 )
 from webhub.search.embeddings import EmbeddingEndpoint
 from webhub.search.fusion import Candidate
@@ -29,12 +32,14 @@ from webhub.search.service import hybrid_search
 from ._common import (
     _CJK_CHARACTER,
     _SEARCH_TOKEN,
+    LibraryConflictError,
     LibraryNotFoundError,
     LibraryValidationError,
     SortKey,
     _owned_category,
     _owned_space,
     _owned_tag,
+    _safe_favicon_url,
 )
 from .sites import (
     _site_response,
@@ -410,6 +415,65 @@ async def list_sites(
     )
 
 
+async def list_site_selection(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    q: str | None,
+    category_id: str | None,
+    tag_id: str | None,
+    pinned: bool | None,
+) -> SiteSelectionResponse:
+    """Freeze all current filter matches without loading full site cards.
+
+    This read intentionally has no page-side enrichment scheduling. A user
+    selecting thousands of rows for a bulk command must not accidentally turn
+    that read into thousands of background analysis requests.
+    """
+
+    if category_id:
+        await _owned_category(session, user_id, category_id)
+    if tag_id:
+        await _owned_tag(session, user_id, tag_id)
+    filters = _site_filters(
+        user_id=user_id,
+        q=q,
+        category_id=category_id,
+        tag_id=tag_id,
+        space_id=None,
+        pinned=pinned,
+    )
+    rows = (
+        await session.execute(
+            select(
+                Site.id,
+                Site.name,
+                Site.original_url,
+                Site.favicon_url,
+                Site.version,
+            )
+            .join(
+                Category,
+                and_(Category.user_id == Site.user_id, Category.id == Site.category_id),
+            )
+            .where(*filters)
+            .order_by(Site.id)
+        )
+    ).all()
+    return SiteSelectionResponse(
+        items=[
+            SiteSelectionItem(
+                id=site_id,
+                name=name,
+                original_url=original_url,
+                favicon_url=_safe_favicon_url(favicon_url),
+                version=version,
+            )
+            for site_id, name, original_url, favicon_url, version in rows
+        ]
+    )
+
+
 async def reorder_sites(
     session: AsyncSession,
     user_id: str,
@@ -431,13 +495,26 @@ async def reorder_sites(
     through. Same shape as ``spaces.service.reorder_members``.
     """
 
-    await _owned_category(session, user_id, category_id)
     if not ordered_site_ids:
         raise LibraryValidationError("重排至少需要一个网站")
     if len(set(ordered_site_ids)) != len(ordered_site_ids):
         raise LibraryValidationError("重排列表中存在重复网站")
     if before_site_id is not None and before_site_id in ordered_site_ids:
         raise LibraryValidationError("定位网站不能同时出现在移动列表中")
+    if not await reserve_account_taxonomy(session, user_id):
+        raise LibraryConflictError("账号状态已发生变化，请刷新后重试")
+    await _owned_category(session, user_id, category_id)
+    reserved_category = await session.execute(
+        update(Category)
+        .where(Category.user_id == user_id, Category.id == category_id)
+        .values(updated_at=Category.updated_at)
+    )
+    if reserved_category.rowcount != 1:  # type: ignore[attr-defined]
+        await session.rollback()
+        raise LibraryConflictError(
+            "分类已发生变化，请刷新后重试",
+            code="category_conflict",
+        )
 
     rows = list(
         (
@@ -452,6 +529,7 @@ async def reorder_sites(
     known = set(current)
     missing = [site_id for site_id in ordered_site_ids if site_id not in known]
     if missing or (before_site_id is not None and before_site_id not in known):
+        await session.rollback()
         raise LibraryNotFoundError("网站不在该分类中")
 
     moving = set(ordered_site_ids)
@@ -463,6 +541,7 @@ async def reorder_sites(
         final = [*remaining[:anchor], *ordered_site_ids, *remaining[anchor:]]
 
     if final == current:
+        await session.rollback()
         return
 
     offset = max((position for _, position in rows), default=-1) + 1 + len(final)

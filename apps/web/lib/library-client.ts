@@ -13,8 +13,10 @@ import {
   normalizeLibraryCategory,
   normalizeLibrarySite,
   normalizeLibrarySitePage,
+  normalizeLibrarySiteSelection,
   normalizeLibraryTag,
   normalizeLibraryTags,
+  normalizeMetadataBackfillProgress,
   type LibraryCategory,
   type LibraryAnalysisBackfill,
   type LibraryBulkDeleteItem,
@@ -24,8 +26,10 @@ import {
   type LibrarySiteCreateInput,
   type LibrarySitePage,
   type LibrarySiteQuery,
+  type LibrarySiteSelectionItem,
   type LibrarySiteUpdateInput,
   type LibraryTag,
+  type MetadataBackfillProgress,
 } from "./library-contract.ts";
 
 const LIBRARY_BASE = "/api/backend/library";
@@ -182,6 +186,20 @@ export async function listLibrarySites(
   return normalizeLibrarySitePage(await request(`/sites?${params.toString()}`, { signal }));
 }
 
+export async function listLibrarySiteSelection(
+  query: LibrarySiteQuery = {},
+  signal?: AbortSignal,
+): Promise<LibrarySiteSelectionItem[]> {
+  const params = buildLibrarySiteSearchParams(query);
+  params.delete("sort");
+  params.delete("direction");
+  params.delete("cursor");
+  params.delete("limit");
+  return normalizeLibrarySiteSelection(
+    await request(`/sites/selection?${params.toString()}`, { signal }),
+  );
+}
+
 export async function createLibrarySite(input: LibrarySiteCreateInput): Promise<LibrarySite> {
   return normalizeLibrarySite(await request("/sites", {
     method: "POST",
@@ -223,11 +241,8 @@ export async function deleteLibrarySites(
 }
 
 /**
- * Re-read the page's public metadata and store what it fills in.
- *
- * Only ever fills blanks — a description the user typed is never overwritten
- * by a page's meta tag (enforced server-side, stated here so callers do not
- * warn the user about a loss that cannot happen).
+ * Fetch public page evidence, run the account's model through the three
+ * constrained enrichment tools, then atomically store allowed derived fields.
  */
 export async function analyzeLibrarySite(id: string): Promise<LibrarySite> {
   return normalizeLibrarySite(await request(`/sites/${encodeId(id)}/analyze`, {
@@ -245,6 +260,33 @@ export async function backfillLibrarySiteMetadata(
   return normalizeLibraryAnalysisBackfill(await request(`/sites/analyze-missing?${params}`, {
     method: "POST",
   }));
+}
+
+/** Start (or join) the account's durable metadata backfill job. */
+export async function startMetadataBackfill(signal?: AbortSignal): Promise<MetadataBackfillProgress> {
+  return normalizeMetadataBackfillProgress(await request("/metadata-backfills", {
+    method: "POST",
+    signal,
+  }));
+}
+
+/** Read the account's active durable task, if a prior page already started one. */
+export async function getActiveMetadataBackfill(
+  signal?: AbortSignal,
+): Promise<MetadataBackfillProgress | null> {
+  const payload = await request("/metadata-backfills/active", { signal });
+  return payload === null ? null : normalizeMetadataBackfillProgress(payload);
+}
+
+/** Read a previously started metadata backfill job without starting extra work. */
+export async function getMetadataBackfillProgress(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<MetadataBackfillProgress> {
+  return normalizeMetadataBackfillProgress(await request(
+    `/metadata-backfills/${encodeId(runId)}`,
+    { signal },
+  ));
 }
 
 export type LibrarySiteBatchResult = {

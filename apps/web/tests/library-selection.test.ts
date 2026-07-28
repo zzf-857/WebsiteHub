@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MAX_LIBRARY_BULK_DELETE_SITES } from "../lib/library-contract.ts";
 import {
   areAllLoadedLibrarySitesSelected,
   retainLoadedLibrarySiteIds,
@@ -9,21 +8,21 @@ import {
   toggleAllLoadedLibrarySites,
 } from "../lib/library-selection.ts";
 
-test("select-all is explicitly bounded to the currently loaded selectable sites", () => {
+test("select-all includes every currently loaded site", () => {
   const loaded = Array.from(
-    { length: MAX_LIBRARY_BULK_DELETE_SITES + 7 },
+    { length: 107 },
     (_, index) => ({ id: `site-${index}` }),
   );
   const selectable = selectableLoadedLibrarySites(loaded);
 
-  assert.equal(selectable.length, MAX_LIBRARY_BULK_DELETE_SITES);
-  const selected = toggleAllLoadedLibrarySites(selectable, new Set());
-  assert.equal(selected.size, MAX_LIBRARY_BULK_DELETE_SITES);
+  assert.equal(selectable.length, loaded.length);
+  const selected = toggleAllLoadedLibrarySites(selectable, new Set(["offscreen-site"]));
+  assert.equal(selected.size, loaded.length + 1);
   assert.equal(areAllLoadedLibrarySitesSelected(selectable, selected), true);
-  assert.equal(selected.has(`site-${MAX_LIBRARY_BULK_DELETE_SITES}`), false);
+  assert.equal(selected.has("site-106"), true);
 
   const cleared = toggleAllLoadedLibrarySites(selectable, selected);
-  assert.equal(cleared.size, 0);
+  assert.deepEqual([...cleared], ["offscreen-site"]);
   assert.equal(areAllLoadedLibrarySitesSelected(selectable, cleared), false);
 });
 

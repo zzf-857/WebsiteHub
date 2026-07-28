@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,7 @@ from webhub.bookmarks.classifier import (
     run_plan,
 )
 from webhub.config import get_settings
+from webhub.db.locking import reserve_account_taxonomy
 from webhub.db.models import Category, Site, utc_now
 
 RECLASSIFICATION_MAX_BATCHES = 50
@@ -295,10 +296,16 @@ async def apply_reclassification(
                 if s_id in site_map:
                     target_category_by_site_id[s_id] = mapping.category_id
 
-    # BEGIN IMMEDIATE obtains SQLite's write reservation before the fresh snapshot
-    # check. No library writer can slip in between this SELECT and our commit.
+    # Reserve the account taxonomy before the fresh snapshot. This is the same
+    # mutex used by ordinary category/tag writes and site moves.
     try:
-        await session.execute(text("BEGIN IMMEDIATE"))
+        if not await reserve_account_taxonomy(session, user_id):
+            await session.rollback()
+            raise ReclassificationError(
+                "account disappeared before reclassification commit",
+                safe_message="账号状态已发生变化，请重新发起重分类草稿。",
+                status_code=409,
+            )
     except SQLAlchemyError as error:
         await session.rollback()
         raise ReclassificationError(

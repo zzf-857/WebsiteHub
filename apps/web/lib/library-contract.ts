@@ -7,9 +7,11 @@ export type LibraryDirection = "asc" | "desc";
 
 const LIBRARY_SITE_SOURCES = ["manual", "agent", "browser_import", "backup"] as const;
 const LIBRARY_ANALYSIS_STATUSES = ["not_analyzed", "pending", "complete", "failed", "limited"] as const;
+const METADATA_BACKFILL_STATUSES = ["queued", "running", "complete"] as const;
 
 export type LibrarySiteSource = (typeof LIBRARY_SITE_SOURCES)[number];
 export type LibraryAnalysisStatus = (typeof LIBRARY_ANALYSIS_STATUSES)[number];
+export type MetadataBackfillStatus = (typeof METADATA_BACKFILL_STATUSES)[number];
 
 export const MAX_LIBRARY_SITE_NAME_LENGTH = 160;
 export const MAX_LIBRARY_CATEGORY_NAME_LENGTH = 80;
@@ -54,6 +56,11 @@ export type LibrarySite = {
   updatedAt: string;
 };
 
+export type LibrarySiteSelectionItem = Pick<
+  LibrarySite,
+  "id" | "name" | "originalUrl" | "faviconUrl" | "version"
+>;
+
 export type LibrarySitePage = {
   items: LibrarySite[];
   nextCursor: string | null;
@@ -67,6 +74,28 @@ export type LibraryAnalysisBackfill = {
   queuedCount: number;
   activeCount: number;
   remainingCount: number;
+};
+
+/**
+ * A durable, account-scoped metadata backfill run.  `completedCount` is the
+ * number that has reached a terminal outcome; its result counters explain the
+ * outcome split.  Together with queued/running, the counters partition the
+ * immutable run total, so clients can show exact progress without inferring it
+ * from a momentary worker queue.
+ */
+export type MetadataBackfillProgress = {
+  runId: string;
+  status: MetadataBackfillStatus;
+  totalCount: number;
+  queuedCount: number;
+  runningCount: number;
+  completedCount: number;
+  completeCount: number;
+  failedCount: number;
+  limitedCount: number;
+  skippedCount: number;
+  /** POST reports whether it attached to an already running account job. */
+  reused?: boolean;
 };
 
 export type LibraryCategoryDeletePreview = {
@@ -209,6 +238,33 @@ export function normalizeLibrarySite(value: unknown): LibrarySite {
   };
 }
 
+export function normalizeLibrarySiteSelection(value: unknown): LibrarySiteSelectionItem[] {
+  const candidate = record(value, "site_selection");
+  if (!Array.isArray(candidate.items)) {
+    throw new LibraryContractError("site_selection.items 必须是数组");
+  }
+  const items = candidate.items.map((item, index) => {
+    const site = record(item, `site_selection.items[${index}]`);
+    return {
+      id: identifier(site.id, `site_selection.items[${index}].id`),
+      name: text(site.name, `site_selection.items[${index}].name`),
+      originalUrl: absoluteWebUrl(
+        site.original_url,
+        `site_selection.items[${index}].original_url`,
+      ),
+      faviconUrl: nullableWebUrl(
+        site.favicon_url,
+        `site_selection.items[${index}].favicon_url`,
+      ),
+      version: version(site.version, `site_selection.items[${index}].version`),
+    };
+  });
+  if (new Set(items.map((item) => item.id)).size !== items.length) {
+    throw new LibraryContractError("site_selection.items 不能包含重复网站");
+  }
+  return items;
+}
+
 export function normalizeLibraryAnalysisBackfill(value: unknown): LibraryAnalysisBackfill {
   const candidate = record(value, "analysis_backfill");
   return {
@@ -216,6 +272,43 @@ export function normalizeLibraryAnalysisBackfill(value: unknown): LibraryAnalysi
     activeCount: count(candidate.active_count, "analysis_backfill.active_count"),
     remainingCount: count(candidate.remaining_count, "analysis_backfill.remaining_count"),
   };
+}
+
+export function normalizeMetadataBackfillProgress(value: unknown): MetadataBackfillProgress {
+  const candidate = record(value, "metadata_backfill");
+  const status = literal(candidate.status, "metadata_backfill.status", METADATA_BACKFILL_STATUSES);
+  const progress: MetadataBackfillProgress = {
+    runId: identifier(candidate.id, "metadata_backfill.id"),
+    status,
+    totalCount: count(candidate.total_count, "metadata_backfill.total_count"),
+    queuedCount: count(candidate.queued_count, "metadata_backfill.queued_count"),
+    runningCount: count(candidate.running_count, "metadata_backfill.running_count"),
+    completedCount: count(candidate.completed_count, "metadata_backfill.completed_count"),
+    completeCount: count(candidate.complete_count, "metadata_backfill.complete_count"),
+    failedCount: count(candidate.failed_count, "metadata_backfill.failed_count"),
+    limitedCount: count(candidate.limited_count, "metadata_backfill.limited_count"),
+    skippedCount: count(candidate.skipped_count, "metadata_backfill.skipped_count"),
+    ...(candidate.reused === undefined
+      ? {}
+      : { reused: boolean(candidate.reused, "metadata_backfill.reused") }),
+  };
+  const activeAndTerminalCount = progress.queuedCount
+    + progress.runningCount
+    + progress.completedCount;
+  if (activeAndTerminalCount !== progress.totalCount) {
+    throw new LibraryContractError("metadata_backfill 的状态计数必须等于 total_count");
+  }
+  const outcomeCount = progress.completeCount
+    + progress.failedCount
+    + progress.limitedCount
+    + progress.skippedCount;
+  if (outcomeCount !== progress.completedCount) {
+    throw new LibraryContractError("metadata_backfill 的终态结果计数必须等于 completed_count");
+  }
+  if (progress.status === "complete" && (progress.queuedCount > 0 || progress.runningCount > 0)) {
+    throw new LibraryContractError("已完成的 metadata_backfill 不能保留待处理网站");
+  }
+  return progress;
 }
 
 export function normalizeLibraryBulkDeleteResult(value: unknown): LibraryBulkDeleteResult {

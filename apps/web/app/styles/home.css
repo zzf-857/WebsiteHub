@@ -79,6 +79,216 @@
   color: var(--accent-strong);
 }
 
+/* ============ 首页网站信息补全 ============ */
+
+/* 这是持续任务的紧凑工具栏，不把它做成第二个大面板；完成态保留在原位，
+   让用户能回看本次的结果拆分，而不是弹出会打断浏览的提示。 */
+.home-metadata-backfill {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 16px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    background-color var(--duration-hover) var(--ease-standard);
+}
+
+.home-metadata-backfill[data-state="running"],
+.home-metadata-backfill[data-state="starting"] {
+  background: var(--accent-tint);
+  border-color: color-mix(in srgb, var(--accent-mid) 35%, var(--line));
+}
+
+.home-metadata-backfill[data-state="error"] {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+
+.home-metadata-backfill-overview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.home-metadata-backfill-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 29px;
+  height: 29px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-radius: var(--radius-md);
+}
+
+.home-metadata-backfill-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.home-metadata-backfill-copy {
+  min-width: 0;
+}
+
+.home-metadata-backfill-copy h2,
+.home-metadata-backfill-copy p,
+.home-metadata-backfill-progress p,
+.home-metadata-backfill-error {
+  margin: 0;
+}
+
+.home-metadata-backfill-copy h2 {
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 19px;
+  color: var(--text);
+}
+
+.home-metadata-backfill-copy p {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--text-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-metadata-backfill-action-wrap {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.home-metadata-backfill-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--on-action);
+  background: var(--action);
+  border: 1px solid var(--action);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.home-metadata-backfill-action:hover:not(:disabled) {
+  background: var(--action-hover);
+  border-color: var(--action-hover);
+}
+
+.home-metadata-backfill-action:disabled {
+  color: var(--text-disabled);
+  cursor: wait;
+}
+
+.home-metadata-backfill-action svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.home-metadata-backfill-progress {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.home-metadata-backfill-progress-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.home-metadata-backfill-progress-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-metadata-backfill-progress-head strong {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+
+.home-metadata-backfill-progress-track {
+  height: 6px;
+  overflow: hidden;
+  background: var(--surface-subtle);
+  border-radius: var(--radius-xs);
+}
+
+.home-metadata-backfill-progress-track span {
+  display: block;
+  height: 100%;
+  background: var(--accent-mid);
+  border-radius: inherit;
+  transition: width var(--duration-panel) var(--ease-standard);
+}
+
+.home-metadata-backfill[data-state="completed"] .home-metadata-backfill-progress-track span {
+  background: var(--success);
+}
+
+.home-metadata-backfill-progress p {
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-metadata-backfill-error {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--danger);
+}
+
+.home-metadata-backfill-error svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 767px) {
+  .home-metadata-backfill {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-metadata-backfill-action-wrap {
+    grid-column: 1;
+  }
+
+  .home-metadata-backfill-action {
+    width: 100%;
+  }
+}
+
 /* 卡片栅格：默认 4 列；1f 断点为 1024–1279 三列、<768 单列（中间档取两列过渡） */
 .home-card-grid {
   display: grid;
@@ -781,6 +991,7 @@
 /* ============ 可达性 ============ */
 
 .home-section-action:focus-visible,
+.home-metadata-backfill-action:focus-visible,
 .home-error-retry:focus-visible,
 .home-pinned-card:focus-visible,
 .home-space-copy:focus-visible,
@@ -805,6 +1016,9 @@
   }
 
   .home-section-action,
+  .home-metadata-backfill,
+  .home-metadata-backfill-action,
+  .home-metadata-backfill-progress-track span,
   .home-error-retry,
   .home-pinned-card,
   .home-space-card,

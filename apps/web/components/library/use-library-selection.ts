@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { MAX_LIBRARY_BULK_DELETE_SITES, type LibrarySite } from "@/lib/library-contract";
+import type {
+  LibrarySite,
+  LibrarySiteSelectionItem,
+} from "@/lib/library-contract";
 import {
   areAllLoadedLibrarySitesSelected,
   retainLoadedLibrarySiteIds,
@@ -14,30 +17,33 @@ const EMPTY_SELECTION = new Set<string>();
 type SelectionState = {
   scope: string | null;
   active: boolean;
-  siteIds: Set<string>;
+  coverage: "custom" | "matching";
+  sites: Map<string, LibrarySiteSelectionItem>;
 };
 
 type UseLibrarySelectionOptions = {
   scope: string;
   pinnedSites: readonly LibrarySite[];
   regularSites: readonly LibrarySite[];
-  onNotice: (message: string) => void;
 };
 
 export function useLibrarySelection({
   scope,
   pinnedSites,
   regularSites,
-  onNotice,
 }: UseLibrarySelectionOptions) {
   const [selection, setSelection] = useState<SelectionState>({
     scope: null,
     active: false,
-    siteIds: new Set(),
+    coverage: "custom",
+    sites: new Map<string, LibrarySiteSelectionItem>(),
   });
 
   const selectionMode = selection.active && selection.scope === scope;
-  const selectedSiteIds = selection.scope === scope ? selection.siteIds : EMPTY_SELECTION;
+  const selectedSiteIds = useMemo(
+    () => selection.scope === scope ? new Set(selection.sites.keys()) : EMPTY_SELECTION,
+    [scope, selection.scope, selection.sites],
+  );
   const loadedSites = useMemo(() => {
     const known = new Set<string>();
     return [...pinnedSites, ...regularSites].filter((site) => {
@@ -47,71 +53,111 @@ export function useLibrarySelection({
     });
   }, [pinnedSites, regularSites]);
   const selectedSites = useMemo(
-    () => loadedSites.filter((site) => selectedSiteIds.has(site.id)),
-    [loadedSites, selectedSiteIds],
+    () => selection.scope === scope ? [...selection.sites.values()] : [],
+    [scope, selection.scope, selection.sites],
   );
   const selectableLoadedSites = selectableLoadedLibrarySites(loadedSites);
   const allLoadedSelected = areAllLoadedLibrarySitesSelected(
     selectableLoadedSites,
     selectedSiteIds,
   );
+  const allMatchingSelected = selectionMode && selection.coverage === "matching";
 
   const clearSelection = useCallback(() => {
-    setSelection({ scope: null, active: false, siteIds: new Set() });
+    setSelection({
+      scope: null,
+      active: false,
+      coverage: "custom",
+      sites: new Map<string, LibrarySiteSelectionItem>(),
+    });
   }, []);
+
+  const clearSelectedSites = useCallback(() => {
+    setSelection({
+      scope,
+      active: true,
+      coverage: "custom",
+      sites: new Map<string, LibrarySiteSelectionItem>(),
+    });
+  }, [scope]);
 
   const setSelectionMode = useCallback((active: boolean) => {
     setSelection((current) => ({
       scope,
       active,
-      siteIds: active && current.scope === scope ? current.siteIds : new Set(),
+      coverage: active && current.scope === scope ? current.coverage : "custom",
+      sites: active && current.scope === scope
+        ? current.sites
+        : new Map<string, LibrarySiteSelectionItem>(),
     }));
   }, [scope]);
 
   const toggleSiteSelection = useCallback((siteId: string) => {
-    if (!selectedSiteIds.has(siteId) && selectedSites.length >= MAX_LIBRARY_BULK_DELETE_SITES) {
-      onNotice(`单次最多选择 ${MAX_LIBRARY_BULK_DELETE_SITES} 个网站`);
-      return;
-    }
-    setSelection(() => {
-      const next = new Set(selectedSites.map((site) => site.id));
+    const site = loadedSites.find((candidate) => candidate.id === siteId);
+    if (!site) return;
+    setSelection((current) => {
+      const next = current.scope === scope
+        ? new Map(current.sites)
+        : new Map<string, LibrarySiteSelectionItem>();
       if (next.has(siteId)) next.delete(siteId);
-      else next.add(siteId);
-      return { scope, active: true, siteIds: next };
+      else next.set(siteId, site);
+      return { scope, active: true, coverage: "custom", sites: next };
     });
-  }, [onNotice, scope, selectedSiteIds, selectedSites]);
+  }, [loadedSites, scope]);
 
   const toggleAllLoadedSites = useCallback(() => {
+    setSelection((current) => {
+      const currentIds = current.scope === scope
+        ? new Set(current.sites.keys())
+        : new Set<string>();
+      const nextIds = nextAllLoadedLibrarySiteIds(selectableLoadedSites, currentIds);
+      const nextSites = current.scope === scope
+        ? new Map(current.sites)
+        : new Map<string, LibrarySiteSelectionItem>();
+      for (const site of selectableLoadedSites) {
+        if (nextIds.has(site.id)) nextSites.set(site.id, site);
+        else nextSites.delete(site.id);
+      }
+      return { scope, active: true, coverage: "custom", sites: nextSites };
+    });
+  }, [scope, selectableLoadedSites]);
+
+  const selectAllMatchingSites = useCallback((sites: readonly LibrarySiteSelectionItem[]) => {
     setSelection({
       scope,
       active: true,
-      siteIds: nextAllLoadedLibrarySiteIds(selectableLoadedSites, selectedSiteIds),
+      coverage: "matching",
+      sites: new Map<string, LibrarySiteSelectionItem>(
+        sites.map((site) => [site.id, site]),
+      ),
     });
-    if (!allLoadedSelected && loadedSites.length > MAX_LIBRARY_BULK_DELETE_SITES) {
-      onNotice(
-        `当前已加载 ${loadedSites.length} 个网站，已选择前 ${MAX_LIBRARY_BULK_DELETE_SITES} 个`,
-      );
-    }
-  }, [allLoadedSelected, loadedSites.length, onNotice, scope, selectableLoadedSites, selectedSiteIds]);
+  }, [scope]);
 
   const retainVisibleSelection = useCallback((visibleSites: readonly LibrarySite[]) => {
     setSelection((current) => {
       if (!current.active || current.scope !== scope) return current;
-      const retained = retainLoadedLibrarySiteIds(visibleSites, current.siteIds);
-      return retained.size === current.siteIds.size
-        ? current
-        : { ...current, siteIds: retained };
+      if (current.coverage === "matching") return current;
+      const retained = retainLoadedLibrarySiteIds(visibleSites, new Set(current.sites.keys()));
+      const sites = new Map<string, LibrarySiteSelectionItem>();
+      for (const siteId of retained) {
+        const snapshot = current.sites.get(siteId);
+        if (snapshot) sites.set(siteId, snapshot);
+      }
+      return { ...current, sites };
     });
   }, [scope]);
 
   return {
     allLoadedSelected,
+    allMatchingSelected,
+    clearSelectedSites,
     clearSelection,
     loadedSiteCount: loadedSites.length,
     retainVisibleSelection,
     selectedSiteIds,
     selectedSites,
     selectionMode,
+    selectAllMatchingSites,
     setSelectionMode,
     toggleAllLoadedSites,
     toggleSiteSelection,

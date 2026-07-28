@@ -104,6 +104,9 @@ class SiteMetadata:
     image_url: str | None = None
     icon_url: str | None = None
     related_urls: tuple[str, ...] = ()
+    # Bounded, visible text for the optional LLM stage. It is transient and is
+    # never written directly to the library.
+    page_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +117,10 @@ class FetchOutcome:
     reason: str
     metadata: SiteMetadata = SiteMetadata()
     final_url: str | None = None
+    # A fully read HTML document can prove that it did not declare an Open
+    # Graph/Twitter preview.  This is intentionally separate from `status`:
+    # a page can be safely parsed yet have no new writable field at all.
+    preview_checked: bool = False
 
     @property
     def is_complete(self) -> bool:
@@ -154,7 +161,7 @@ _REASONS: dict[str, str] = {
     "http_error": "该网站返回了错误状态，无法读取内容",
     "not_html": "该地址返回的不是网页内容，已跳过分析",
     "too_large": "网页内容过大，已停止读取",
-    "no_metadata": "该网页没有可提取的标题或描述（可能需要执行脚本才能渲染）",
+    "no_storable_metadata": "该网页没有可写入的简介、图标或预览图",
     "icon_only": "网页内容无法读取，但已获取网站图标",
     "ok": "已提取网页元数据",
 }
@@ -462,6 +469,7 @@ async def _discover_icon_url(
     if origin is None:
         return None
     cache_key = (origin, allow_private)
+    is_origin_root = urlsplit(page_url).path in {"", "/"}
     root_candidates = tuple(urljoin(page_url, path) for path in _ROOT_ICON_PATHS)
 
     # The worker already holds the process-wide network semaphore.  Gate only
@@ -469,6 +477,12 @@ async def _discover_icon_url(
     # same-origin waiters occupy all global slots while only one makes progress.
     async with _origin_icon_gate(page_url):
         cached_root = _favicon_cache_get(cache_key)
+        # A verified origin icon is deliberately preferred for every child
+        # page. It matches the bookmark-library mental model (one website,
+        # one icon) and avoids revalidating repeated page-local declarations
+        # for a large collection of URLs under the same host.
+        if cached_root is not None and cached_root.url is not None:
+            return cached_root.url
         seen: set[str] = set()
         candidate_timeout = min(timeout_seconds, MAX_ICON_CANDIDATE_TIMEOUT_SECONDS)
 
@@ -532,6 +546,16 @@ async def _discover_icon_url(
                             _declared_favicon_cache_put(
                                 (origin, allow_private, source_url),
                                 url=icon_url,
+                            )
+                        # A declaration on the origin home page is the
+                        # website's icon, not a subpage-specific choice. Save
+                        # it as the root profile so later child URLs can skip
+                        # their own favicon discovery entirely.
+                        if is_origin_root:
+                            _favicon_cache_put(
+                                cache_key,
+                                url=icon_url,
+                                source_url=source_url,
                             )
                         return icon_url
                     # A page declaration is scoped to that exact URL. Only a
@@ -704,27 +728,41 @@ async def _fetch_site_metadata(
                 parsed.image_url,
                 timeout_seconds=min(timeout_seconds, MAX_PREVIEW_VALIDATION_SECONDS),
             )
+            preview_checked = (
+                not truncated
+                and (parsed.image_url is None or image_url is not None)
+            )
             metadata = SiteMetadata(
                 title=parsed.best_title,
                 description=parsed.description,
                 image_url=image_url,
                 icon_url=icon_url,
                 related_urls=tuple(parsed.github_links),
+                page_text=parsed.page_text,
             )
-            if metadata.title is None and metadata.description is None:
-                # Truncation is the more useful explanation when both apply.
-                code = "too_large" if truncated else "no_metadata"
+            if (
+                metadata.description is None
+                and metadata.icon_url is None
+                and metadata.image_url is None
+            ):
+                # Titles are intentionally not written over the user's chosen
+                # bookmark name. A title-only page therefore did not actually
+                # improve any stored metadata; report that truthfully rather
+                # than letting a batch progress row look like a success.
+                code = "too_large" if truncated else "no_storable_metadata"
                 return FetchOutcome(
                     status="limited",
                     reason=_reason(code),
                     metadata=metadata,
                     final_url=final_url,
+                    preview_checked=preview_checked,
                 )
             return FetchOutcome(
                 status="complete",
                 reason=_reason("ok"),
                 metadata=metadata,
                 final_url=final_url,
+                preview_checked=preview_checked,
             )
 
         return _outcome("failed", "too_many_redirects")

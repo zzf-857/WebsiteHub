@@ -155,10 +155,43 @@ class SiteListResponse(BaseModel):
     aggregate: SiteListAggregate
 
 
+class SiteSelectionItem(BaseModel):
+    """Lightweight, versioned row used to freeze a bulk-selection snapshot."""
+
+    id: str
+    name: str
+    original_url: str
+    favicon_url: FaviconUrl
+    version: int
+
+
+class SiteSelectionResponse(BaseModel):
+    items: list[SiteSelectionItem]
+
+
 class SiteAnalysisBackfillResponse(BaseModel):
     queued_count: int
     active_count: int
     remaining_count: int
+
+
+class MetadataBackfillProgressResponse(BaseModel):
+    """A fixed-denominator snapshot for the homepage metadata command."""
+
+    id: str
+    status: Literal["queued", "running", "complete"]
+    total_count: int = Field(ge=0)
+    queued_count: int = Field(ge=0)
+    running_count: int = Field(ge=0)
+    completed_count: int = Field(ge=0)
+    complete_count: int = Field(ge=0)
+    limited_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    skipped_count: int = Field(ge=0)
+
+
+class MetadataBackfillStartResponse(MetadataBackfillProgressResponse):
+    reused: bool
 
 
 class SiteDeleteResponse(BaseModel):

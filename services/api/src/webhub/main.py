@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from webhub.agent.access import DatabaseConversationAccess
 from webhub.agent.langgraph_runner import build_agent_runner
+from webhub.agent.site_enrichment import AgentSiteEnricher
 from webhub.auth.rate_limit import LoginRateLimiter
 from webhub.bookmarks.admission import BookmarkUploadAdmissionManager
 from webhub.config import Settings, get_settings
@@ -24,7 +25,14 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await selected_database.assert_schema_current()
-        ingestion_worker.start(selected_database)
+        ingestion_worker.start(
+            selected_database,
+            site_enricher=AgentSiteEnricher(selected_database, selected_settings),
+        )
+        # The homepage batch task is durable rather than an in-memory queue.
+        # Resume its active leases before serving requests so a browser tab is
+        # not required to recover work after an API process restart.
+        await ingestion_worker.resume_metadata_backfills(selected_database)
         try:
             yield
         finally:

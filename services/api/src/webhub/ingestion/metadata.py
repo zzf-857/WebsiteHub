@@ -1,4 +1,4 @@
-"""Read title / description / image / GitHub links out of an HTML document.
+"""Read metadata and a bounded visible-text projection from an HTML document.
 
 Uses the standard library's ``html.parser`` rather than a DOM library on
 purpose: the whole job is reading a handful of ``<head>`` tags, a full DOM buys
@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlsplit
 
 MAX_TITLE_CHARS = 160
 MAX_DESCRIPTION_CHARS = 1_000
+MAX_PAGE_TEXT_CHARS = 12_000
 # Enough to catch a repository list; beyond this the page is not "about" them.
 MAX_RELATED_LINKS = 8
 MAX_DECLARED_ICON_LINKS = 8
@@ -33,6 +34,7 @@ class ParsedMetadata:
     image_url: str | None = None
     icon_hrefs: list[str] = field(default_factory=list)
     github_links: list[str] = field(default_factory=list)
+    page_text: str = ""
 
     @property
     def best_title(self) -> str | None:
@@ -51,8 +53,21 @@ class _MetadataParser(HTMLParser):
         self.result = ParsedMetadata()
         self._in_title = False
         self._title_parts: list[str] = []
+        self._visible_parts: list[str] = []
+        self._visible_chars = 0
+        self._ignored_tags: list[str] = []
+
+    _IGNORED_CONTENT_TAGS = frozenset(
+        {"script", "style", "noscript", "template", "svg", "canvas"}
+    )
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.casefold()
+        if tag in self._IGNORED_CONTENT_TAGS:
+            self._ignored_tags.append(tag)
+            return
+        if self._ignored_tags:
+            return
         if tag == "title":
             self._in_title = True
             return
@@ -93,12 +108,32 @@ class _MetadataParser(HTMLParser):
                 self.result.github_links.append(href)
 
     def handle_endtag(self, tag: str) -> None:
+        tag = tag.casefold()
+        if tag in self._IGNORED_CONTENT_TAGS:
+            for index in range(len(self._ignored_tags) - 1, -1, -1):
+                if self._ignored_tags[index] == tag:
+                    del self._ignored_tags[index:]
+                    break
+            return
+        if self._ignored_tags:
+            return
         if tag == "title":
             self._in_title = False
 
     def handle_data(self, data: str) -> None:
+        if self._ignored_tags:
+            return
         if self._in_title:
             self._title_parts.append(data)
+        if self._visible_chars >= MAX_PAGE_TEXT_CHARS:
+            return
+        visible = " ".join(data.split())
+        if not visible:
+            return
+        remaining = MAX_PAGE_TEXT_CHARS - self._visible_chars
+        selected = visible[:remaining]
+        self._visible_parts.append(selected)
+        self._visible_chars += len(selected)
 
 
 def _github_repository(url: str) -> str | None:
@@ -141,6 +176,7 @@ def parse_metadata(html: str, *, base_url: str) -> ParsedMetadata:
     result = parser.result
     if parser._title_parts and not result.title:  # noqa: SLF001 - same module
         result.title = _collapse("".join(parser._title_parts), MAX_TITLE_CHARS)  # noqa: SLF001
+    result.page_text = "\n".join(parser._visible_parts)[:MAX_PAGE_TEXT_CHARS]  # noqa: SLF001
 
     # Relative URLs are common for icons and og:image; resolve against the page
     # that was actually fetched (after redirects), not the requested URL.
@@ -167,6 +203,7 @@ def parse_metadata(html: str, *, base_url: str) -> ParsedMetadata:
 __all__ = [
     "MAX_DESCRIPTION_CHARS",
     "MAX_DECLARED_ICON_LINKS",
+    "MAX_PAGE_TEXT_CHARS",
     "MAX_RELATED_LINKS",
     "MAX_TITLE_CHARS",
     "ParsedMetadata",

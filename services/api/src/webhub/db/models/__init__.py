@@ -48,6 +48,11 @@ from webhub.db.models.library import (
     SiteTag,
     Tag,
 )
+from webhub.db.models.metadata_backfill import (
+    SiteMetadataBackfillItem,
+    SiteMetadataBackfillRun,
+)
+from webhub.db.models.site_metadata_preferences import SiteMetadataPreference
 from webhub.db.models.spaces import (
     Space,
     SpaceMember,
@@ -75,6 +80,9 @@ __all__ = [
     "Site",
     "SiteEmbedding",
     "SiteImportOrigin",
+    "SiteMetadataBackfillItem",
+    "SiteMetadataBackfillRun",
+    "SiteMetadataPreference",
     "SiteTag",
     "Space",
     "SpaceMember",

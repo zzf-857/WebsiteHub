@@ -51,6 +51,7 @@ from .listing import (
     _search_condition,
     _search_tokens,
     _site_filters,
+    list_site_selection,
     list_sites,
     reorder_sites,
 )
@@ -109,6 +110,7 @@ __all__ = [
     "delete_tag",
     "get_site",
     "list_categories",
+    "list_site_selection",
     "list_sites",
     "list_tags",
     "reorder_sites",

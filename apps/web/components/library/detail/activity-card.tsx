@@ -46,25 +46,25 @@ function buildEntries(site: LibrarySite): ActivityEntry[] {
       pending: {
         tone: "muted",
         icon: <Spinner size={16} />,
-        text: "Agent 正在分析站点内容",
+        text: "正在分析网站资料",
         meta: "进行中",
       },
       complete: {
         tone: "accent",
         icon: <Check size={16} aria-hidden="true" />,
-        text: "Agent 完成了站点内容分析",
+        text: "网站资料分析已完成",
         meta: "已完成",
       },
       failed: {
         tone: "muted",
         icon: <CircleAlert size={16} aria-hidden="true" />,
-        text: "Agent 分析站点内容未成功",
+        text: "网站资料分析未成功",
         meta: "失败",
       },
       limited: {
         tone: "muted",
         icon: <CircleAlert size={16} aria-hidden="true" />,
-        text: "Agent 完成了部分站点内容分析",
+        text: "网站资料仅完成部分分析",
         meta: "部分完成",
       },
     } as const;

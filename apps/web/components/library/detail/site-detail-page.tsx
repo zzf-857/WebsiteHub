@@ -223,7 +223,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
     setMutationError(null);
   };
 
-  /** 重新读取网页公开元数据。只填空，不覆盖用户自己写过的说明（服务端保证）。 */
+  /** 抓取公开网页，再由账号模型原子补全分类、标签和介绍。 */
   const handleAnalyze = async (id: string) => {
     if (analyzing) return;
     setAnalyzing(true);
@@ -233,10 +233,10 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
       setState({ status: "ready", site: latest });
       setNotice(
         latest.analysisStatus === "complete"
-          ? "已读取网页信息"
+          ? "LLM 网站资料分析已完成；图标和预览图会在可安全获取且允许更新时同步"
           : latest.analysisStatus === "limited"
-            ? "只读到部分信息：这个页面可能需要执行脚本才能渲染内容"
-            : "没能读取到网页信息，稍后可以再试",
+            ? "只完成了部分资料：请检查模型 Provider 或稍后重试"
+            : "没能完成网站资料分析，稍后可以再试",
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "分析失败，请稍后重试。");
@@ -464,7 +464,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
                     type="button"
                     disabled={analyzing}
                     onClick={() => void handleAnalyze(site.id)}
-                    title="重新读取该网页的标题、说明与图标；不会覆盖你自己填过的内容"
+                    title="重新抓取公开网页，并用模型分析分类、标签和详细介绍；人工内容不会被覆盖"
                   >
                     {analyzing ? "分析中…" : "重新分析"}
                   </button>
@@ -481,7 +481,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
               <p className="sd-desc">{site.description}</p>
             ) : (
               <p className="sd-desc sd-desc-empty">
-                暂未填写介绍，可以点击右上角「编辑」补充，或让 Agent 帮你生成。
+                暂无详细介绍，可以点击「重新分析」让 LLM 根据网页公开内容补全。
               </p>
             )}
           </section>

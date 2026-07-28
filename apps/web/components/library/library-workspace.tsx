@@ -42,8 +42,11 @@ import { MAX_LIBRARY_BULK_DELETE_SITES } from "@/lib/library-contract";
 export function LibraryWorkspace() {
   const {
     allLoadedSelected,
+    allMatchingSelected,
+    allMatchingSelectionBusy,
     analysisBackfillBusy,
     beginBulkDelete,
+    bulkDeleteCompleted,
     categories,
     categoryId,
     closeDialog,
@@ -94,6 +97,7 @@ export function LibraryWorkspace() {
     totalLibrarySites,
     totalMatched,
     toggleAllLoadedSites,
+    toggleAllMatchingSites,
     viewMode,
   } = useLibraryWorkspace();
 
@@ -111,7 +115,7 @@ export function LibraryWorkspace() {
             type="button"
             onClick={() => void handleAnalysisBackfill()}
             disabled={analysisBackfillBusy || totalLibrarySites === 0}
-            title="补全未分析、部分完成或上次失败的网站公开信息"
+            title="开始或加入全库网站信息补全任务，详细进度在首页显示"
           >
             {analysisBackfillBusy ? (
               <LoaderCircle className="loading-spinner" aria-hidden="true" />
@@ -304,18 +308,37 @@ export function LibraryWorkspace() {
 
           {selectionMode && (
             <div className="library-selection-toolbar" role="toolbar" aria-label="批量管理网站">
-              <label className="library-select-all">
-                <input
-                  type="checkbox"
-                  checked={allLoadedSelected}
-                  onChange={toggleAllLoadedSites}
-                />
-                <span>
-                  {loadedSiteCount > MAX_LIBRARY_BULK_DELETE_SITES
-                    ? `选择当前已加载的前 ${MAX_LIBRARY_BULK_DELETE_SITES} 个（共 ${loadedSiteCount} 个）`
-                    : `全选当前已加载（${loadedSiteCount} 个）`}
-                </span>
-              </label>
+              <div className="library-selection-options">
+                <label className="library-select-all">
+                  <input
+                    type="checkbox"
+                    checked={allMatchingSelected}
+                    disabled={allMatchingSelectionBusy}
+                    onChange={() => void toggleAllMatchingSites()}
+                  />
+                  {allMatchingSelectionBusy && (
+                    <LoaderCircle className="loading-spinner" aria-hidden="true" />
+                  )}
+                  <span>
+                    {allMatchingSelectionBusy ? "正在全选" : "全选"}
+                    <small>
+                      {allMatchingSelected ? selectedSites.length : totalMatched} 个结果
+                    </small>
+                  </span>
+                </label>
+                <label className="library-select-all">
+                  <input
+                    type="checkbox"
+                    checked={allLoadedSelected}
+                    disabled={allMatchingSelectionBusy}
+                    onChange={toggleAllLoadedSites}
+                  />
+                  <span>
+                    全选（已加载）
+                    <small>{loadedSiteCount} 个</small>
+                  </span>
+                </label>
+              </div>
               <span className="library-selection-count" aria-live="polite">
                 已选 {selectedSites.length} 个
               </span>
@@ -327,7 +350,7 @@ export function LibraryWorkspace() {
                   className="library-button danger"
                   type="button"
                   onClick={beginBulkDelete}
-                  disabled={selectedSites.length === 0}
+                  disabled={allMatchingSelectionBusy || selectedSites.length === 0}
                 >
                   <Trash2 aria-hidden="true" />删除所选
                 </button>
@@ -520,7 +543,9 @@ export function LibraryWorkspace() {
       <LibraryDialog
         open={dialog?.kind === "bulk-delete"}
         title="批量删除网站"
-        description="仅删除本次明确选中的网站；任一网站已被更新时，整批都不会删除。"
+        description={dialog?.kind === "bulk-delete" && dialog.sites.length > MAX_LIBRARY_BULK_DELETE_SITES
+          ? `所选网站将按每批最多 ${MAX_LIBRARY_BULK_DELETE_SITES} 个依次删除；每批单独进行版本校验，发生冲突时停止后续批次。`
+          : "仅删除本次明确选中的网站；任一网站已被更新时，本批都不会删除。"}
         onClose={closeDialog}
       >
         {dialog?.kind === "bulk-delete" && (
@@ -544,6 +569,11 @@ export function LibraryWorkspace() {
               <p className="library-bulk-delete-more">以及另外 {dialog.sites.length - 6} 个网站</p>
             )}
             <p>网站也会从关联 Space 中移除，但 Space 本身会保留。</p>
+            {mutationBusy && (
+              <p className="library-bulk-delete-progress" role="status">
+                已完成 {bulkDeleteCompleted} / {dialog.sites.length}
+              </p>
+            )}
             {mutationError && <p className="library-form-error" role="alert">{mutationError}</p>}
             <footer className="library-form-actions">
               <button className="library-button secondary" type="button" onClick={closeDialog} disabled={mutationBusy}>
@@ -551,7 +581,9 @@ export function LibraryWorkspace() {
               </button>
               <button className="library-button danger" type="button" onClick={() => void handleBulkDelete()} disabled={mutationBusy}>
                 {mutationBusy ? <LoaderCircle className="loading-spinner" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
-                {mutationBusy ? "正在删除" : `确认删除 ${dialog.sites.length} 个网站`}
+                {mutationBusy
+                  ? `正在删除 ${bulkDeleteCompleted} / ${dialog.sites.length}`
+                  : `确认删除 ${dialog.sites.length} 个网站`}
               </button>
             </footer>
           </div>

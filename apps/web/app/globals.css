@@ -849,6 +849,7 @@ textarea:focus-visible {
 .library-results-heading,
 .library-results-actions,
 .library-selection-toolbar,
+.library-selection-options,
 .library-select-all,
 .library-selection-actions,
 .library-notice,
@@ -1205,12 +1206,23 @@ textarea:focus-visible {
   border-radius: var(--radius-md);
 }
 
+.library-selection-options {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
 .library-select-all {
   min-width: 0;
   gap: 8px;
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
+}
+
+.library-select-all:has(input:disabled) {
+  cursor: wait;
+  opacity: 0.66;
 }
 
 .library-select-all input,
@@ -1223,7 +1235,22 @@ textarea:focus-visible {
 }
 
 .library-select-all span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
   overflow-wrap: anywhere;
+}
+
+.library-select-all small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.library-select-all .loading-spinner {
+  width: 14px;
+  height: 14px;
 }
 
 .library-selection-count {
@@ -1431,6 +1458,12 @@ textarea:focus-visible {
   background: transparent;
   border: 0;
   cursor: pointer;
+}
+
+.library-site-select-surface:disabled,
+.library-site-checkbox:has(input:disabled),
+.library-site-checkbox input:disabled {
+  cursor: wait;
 }
 
 .library-site-checkbox {
@@ -2041,6 +2074,12 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
+.library-bulk-delete-confirmation .library-bulk-delete-progress {
+  color: var(--action);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
 .library-delete-site span {
   color: var(--text-muted);
   font-size: 12px;
@@ -2285,8 +2324,15 @@ textarea:focus-visible {
     flex-wrap: wrap;
   }
 
+  .library-selection-options {
+    width: 100%;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 9px;
+  }
+
   .library-select-all {
-    flex: 1 1 calc(100% - 86px);
+    flex: 1 1 auto;
   }
 
   .library-selection-actions {

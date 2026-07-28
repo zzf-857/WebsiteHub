@@ -52,8 +52,9 @@ from webhub.bookmarks.uploads import (
     StagedBookmarkUpload,
     stage_bookmark_upload,
 )
-from webhub.ingestion import worker as ingestion_worker
 from webhub.ingestion import service as ingestion_service
+from webhub.ingestion import worker as ingestion_worker
+from webhub.ingestion.enrichment import AnalysisIntent
 
 router = APIRouter(prefix="/bookmark-imports", tags=["bookmark-imports"])
 _IMMEDIATE_IMPORTED_ANALYSIS_LIMIT = 8
@@ -475,6 +476,7 @@ async def apply_import(
                 user_id=str(identity.user.id),
                 site_ids=tuple(immediate_site_ids),
                 priority=True,
+                intent=AnalysisIntent.SITE_ENRICHMENT,
             )
     ingestion_worker.ensure_auto_backfill(
         request.app.state.database,

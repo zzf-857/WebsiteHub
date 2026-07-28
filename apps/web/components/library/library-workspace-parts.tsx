@@ -27,6 +27,7 @@ import {
 } from "@/lib/library-client";
 import type {
   LibrarySite,
+  LibrarySiteSelectionItem,
   LibrarySort,
 } from "@/lib/library-contract";
 
@@ -35,7 +36,7 @@ export type DialogState =
   | { kind: "create" }
   | { kind: "edit"; site: LibrarySite }
   | { kind: "delete"; site: LibrarySite }
-  | { kind: "bulk-delete"; sites: LibrarySite[] }
+  | { kind: "bulk-delete"; sites: LibrarySiteSelectionItem[] }
   | { kind: "taxonomy" }
   | null;
 
@@ -81,7 +82,7 @@ export function appendUniqueSites(current: LibrarySite[], incoming: LibrarySite[
   return [...current, ...incoming.filter((site) => !knownIds.has(site.id))];
 }
 
-export function siteHost(site: LibrarySite): string {
+export function siteHost(site: Pick<LibrarySite, "originalUrl">): string {
   try {
     return new URL(site.originalUrl).hostname.replace(/^www\./, "");
   } catch {
@@ -93,6 +94,7 @@ export type SiteCollectionProps = {
   sites: LibrarySite[];
   viewMode: ViewMode;
   selectionMode: boolean;
+  selectionBusy: boolean;
   selectedSiteIds: ReadonlySet<string>;
   quickActionId: string | null;
   onToggleSelected: (siteId: string) => void;
@@ -110,6 +112,7 @@ export function SiteCollection({
   sites,
   viewMode,
   selectionMode,
+  selectionBusy,
   selectedSiteIds,
   quickActionId,
   onToggleSelected,
@@ -134,6 +137,7 @@ export function SiteCollection({
             key={site.id}
             data-selected={isSelected || undefined}
             data-selection-mode={selectionMode || undefined}
+            aria-busy={selectionBusy || undefined}
             draggable={reorderable && !reorderBusy && !selectionMode}
             onDragStart={(event) => {
               event.dataTransfer.setData("text/plain", site.id);
@@ -156,6 +160,7 @@ export function SiteCollection({
                 className="library-site-card-link library-site-select-surface"
                 type="button"
                 aria-label={`${isSelected ? "取消选择" : "选择"} ${site.name}`}
+                disabled={selectionBusy}
                 onClick={() => onToggleSelected(site.id)}
               />
             ) : (
@@ -175,6 +180,7 @@ export function SiteCollection({
                 <input
                   type="checkbox"
                   checked={isSelected}
+                  disabled={selectionBusy}
                   onChange={() => onToggleSelected(site.id)}
                   aria-label={`${isSelected ? "取消选择" : "选择"} ${site.name}`}
                 />

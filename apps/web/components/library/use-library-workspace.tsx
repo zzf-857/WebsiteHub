@@ -6,7 +6,7 @@
 // 摞在一个函数里，改标记要先翻过整套数据加载。分开之后，"数据怎么来"和
 // "长什么样"各看各的一个文件。
 //
-// 返回值有 43 个，看着多，但这就是原来那 366 行本来就要交给 JSX 的东西——
+// 返回项看着多，但这就是原来那 366 行本来就要交给 JSX 的东西——
 // 拆分只是把这份契约显式写出来，没有新增耦合。
 
 import {
@@ -19,19 +19,21 @@ import {
   type ChangeEvent,
 } from "react";
 import {
-  backfillLibrarySiteMetadata,
   createLibrarySite,
   DEFAULT_LIBRARY_PAGE_SIZE,
   deleteLibrarySites,
   deleteLibrarySite,
   getLibrarySite,
   listLibraryCategories,
+  listLibrarySiteSelection,
   listLibrarySites,
   listLibraryTags,
   MAX_LIBRARY_PAGE_SIZE,
   reorderLibrarySites,
+  startMetadataBackfill,
   updateLibrarySite,
 } from "@/lib/library-client";
+import { MAX_LIBRARY_BULK_DELETE_SITES } from "@/lib/library-contract";
 import type {
   LibraryCategory,
   LibraryDirection,
@@ -115,6 +117,7 @@ export function useLibraryWorkspace() {
     pinned: null,
     regular: null,
   });
+  const selectionSnapshotController = useRef<AbortController | null>(null);
   const taxonomyRequestGeneration = useRef(0);
 
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -124,6 +127,8 @@ export function useLibraryWorkspace() {
   const [notice, setNotice] = useState<string | null>(null);
   const [reorderBusy, setReorderBusy] = useState(false);
   const [analysisBackfillBusy, setAnalysisBackfillBusy] = useState(false);
+  const [allMatchingSelectionBusy, setAllMatchingSelectionBusy] = useState(false);
+  const [bulkDeleteCompleted, setBulkDeleteCompleted] = useState(0);
 
   const loadTaxonomies = useCallback(async (signal?: AbortSignal) => {
     const generation = taxonomyRequestGeneration.current + 1;
@@ -184,6 +189,7 @@ export function useLibraryWorkspace() {
   );
   const activeSiteQueryScope = useRef(selectionScope);
   useLayoutEffect(() => {
+    selectionSnapshotController.current?.abort();
     activeSiteQueryScope.current = selectionScope;
     preserveLoadedSitesOnRefresh.current = false;
   }, [selectionScope]);
@@ -192,12 +198,15 @@ export function useLibraryWorkspace() {
   }, [pinnedPage, regularPage]);
   const {
     allLoadedSelected,
-    clearSelection,
+    allMatchingSelected,
+    clearSelectedSites,
+    clearSelection: clearStoredSelection,
     loadedSiteCount,
     retainVisibleSelection,
     selectedSiteIds,
     selectedSites,
     selectionMode,
+    selectAllMatchingSites,
     setSelectionMode,
     toggleAllLoadedSites,
     toggleSiteSelection,
@@ -205,8 +214,21 @@ export function useLibraryWorkspace() {
     scope: selectionScope,
     pinnedSites: pinnedPage.items,
     regularSites: regularPage.items,
-    onNotice: setNotice,
   });
+
+  const clearSelection = useCallback(() => {
+    selectionSnapshotController.current?.abort();
+    selectionSnapshotController.current = null;
+    setAllMatchingSelectionBusy(false);
+    clearStoredSelection();
+  }, [clearStoredSelection]);
+
+  useLayoutEffect(() => {
+    // A selection snapshot belongs to exactly one filter scope. Clear the
+    // stored state as well as hiding selection mode, otherwise returning to a
+    // previous filter could revive stale expected_version values.
+    clearSelection();
+  }, [clearSelection, selectionScope]);
 
   const cancelPaginationRequests = useCallback((clearFailedCursors = false) => {
     for (const kind of ["pinned", "regular"] as const) {
@@ -338,6 +360,7 @@ export function useLibraryWorkspace() {
   ]);
 
   useEffect(() => () => cancelPaginationRequests(), [cancelPaginationRequests]);
+  useEffect(() => () => selectionSnapshotController.current?.abort(), []);
 
   const triggerSitesRefresh = useCallback((preserveLoadedSites: boolean, waitForLoad = false) => {
     preserveLoadedSitesOnRefresh.current = preserveLoadedSites;
@@ -385,26 +408,27 @@ export function useLibraryWorkspace() {
     setAnalysisBackfillBusy(true);
     setSitesError(null);
     try {
-      const result = await backfillLibrarySiteMetadata();
-      if (result.queuedCount > 0) {
+      const result = await startMetadataBackfill();
+      if (result.status === "complete") {
         setNotice(
-          result.remainingCount > 0
-            ? `已开始补全 ${result.queuedCount} 个网站，另有 ${result.remainingCount} 个可继续处理`
-            : `已开始补全 ${result.queuedCount} 个网站`,
+          result.totalCount === 0
+            ? "没有需要补全的网站"
+            : `网站信息补全已完成 ${result.completedCount} / ${result.totalCount}`,
         );
-      } else if (result.activeCount > 0) {
-        setNotice(`已有 ${result.activeCount} 个网站正在补全`);
       } else {
-        setNotice("没有待补全的网站");
+        setNotice(
+          result.reused
+            ? `已加入网站信息补全任务（${result.completedCount} / ${result.totalCount}）`
+            : `已开始网站信息补全（共 ${result.totalCount} 个），进度可在首页查看`,
+        );
       }
-      if (result.queuedCount > 0 || result.activeCount > 0) refreshSitesForAnalysis();
-      else refreshSites();
+      refreshSites();
     } catch (error) {
       setSitesError(errorMessage(error, "网站信息补全任务启动失败，请重试"));
     } finally {
       setAnalysisBackfillBusy(false);
     }
-  }, [analysisBackfillBusy, refreshSites, refreshSitesForAnalysis]);
+  }, [analysisBackfillBusy, refreshSites]);
 
   const handleTaxonomyChanged = useCallback(async () => {
     try {
@@ -472,6 +496,57 @@ export function useLibraryWorkspace() {
     }
   }, [pinnedPage, regularPage, selectionScope, siteQuery]);
 
+  const toggleAllMatchingSites = useCallback(async () => {
+    if (allMatchingSelected) {
+      clearSelectedSites();
+      setNotice(null);
+      return;
+    }
+    if (allMatchingSelectionBusy) return;
+
+    selectionSnapshotController.current?.abort();
+    const controller = new AbortController();
+    const queryScope = selectionScope;
+    selectionSnapshotController.current = controller;
+    setAllMatchingSelectionBusy(true);
+    setSitesError(null);
+    try {
+      const sites = await listLibrarySiteSelection({
+        ...siteQuery,
+        ...(pinnedOnly ? { pinned: true } : {}),
+      }, controller.signal);
+      if (
+        controller.signal.aborted
+        || activeSiteQueryScope.current !== queryScope
+      ) return;
+      if (sites.length === 0) {
+        clearSelectedSites();
+        setNotice("当前筛选结果已经发生变化，请刷新后重新选择");
+        return;
+      }
+      selectAllMatchingSites(sites);
+      setNotice(
+        `已选择当前筛选命中的 ${sites.length} 个网站，删除时将按每批最多 ${MAX_LIBRARY_BULK_DELETE_SITES} 个处理`,
+      );
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) return;
+      setSitesError(errorMessage(error, "全选当前筛选结果失败，请重试"));
+    } finally {
+      if (selectionSnapshotController.current === controller) {
+        selectionSnapshotController.current = null;
+        setAllMatchingSelectionBusy(false);
+      }
+    }
+  }, [
+    allMatchingSelected,
+    allMatchingSelectionBusy,
+    clearSelectedSites,
+    pinnedOnly,
+    selectAllMatchingSites,
+    selectionScope,
+    siteQuery,
+  ]);
+
   const openDialog = (nextDialog: Exclude<DialogState, null>) => {
     setMutationError(null);
     setDialog(nextDialog);
@@ -486,6 +561,7 @@ export function useLibraryWorkspace() {
   const beginBulkDelete = () => {
     if (selectedSites.length === 0) return;
     setMutationError(null);
+    setBulkDeleteCompleted(0);
     setDialog({ kind: "bulk-delete", sites: selectedSites });
   };
 
@@ -579,33 +655,44 @@ export function useLibraryWorkspace() {
   const handleBulkDelete = async () => {
     if (dialog?.kind !== "bulk-delete") return;
     const deletingSites = dialog.sites;
+    let confirmedDeleted = 0;
     setMutationBusy(true);
     setMutationError(null);
+    setBulkDeleteCompleted(0);
     try {
-      const requestedIds = deletingSites.map((site) => site.id);
-      const result = await deleteLibrarySites(deletingSites.map((site) => ({
-        siteId: site.id,
-        expectedVersion: site.version,
-      })));
-      if (
-        result.deletedSiteIds.length !== requestedIds.length
-        || result.deletedSiteIds.some((siteId) => !requestedIds.includes(siteId))
-      ) {
-        throw new Error("批量删除响应与所选网站不一致，请刷新后核对");
+      for (let offset = 0; offset < deletingSites.length; offset += MAX_LIBRARY_BULK_DELETE_SITES) {
+        const batch = deletingSites.slice(offset, offset + MAX_LIBRARY_BULK_DELETE_SITES);
+        const requestedIds = batch.map((site) => site.id);
+        const result = await deleteLibrarySites(batch.map((site) => ({
+          siteId: site.id,
+          expectedVersion: site.version,
+        })));
+        if (
+          result.deletedSiteIds.length !== requestedIds.length
+          || result.deletedSiteIds.some((siteId) => !requestedIds.includes(siteId))
+        ) {
+          throw new Error("批量删除响应与所选网站不一致，请刷新后核对");
+        }
+        confirmedDeleted += batch.length;
+        setBulkDeleteCompleted(confirmedDeleted);
       }
       setDialog(null);
       clearSelection();
-      setNotice(`已从资料库删除 ${deletingSites.length} 个网站`);
+      setNotice(`已从资料库删除 ${confirmedDeleted} 个网站`);
       refreshAfterMutation();
     } catch (error) {
+      setDialog(null);
+      clearSelection();
       if (isLibraryErrorCode(error, "bulk_delete_conflict")) {
-        setDialog(null);
-        clearSelection();
-        setNotice("所选网站已发生变化，已清空选择并刷新列表，请重新选择");
-        refreshAfterMutation();
+        setNotice(confirmedDeleted === 0
+          ? "所选网站已发生变化，本批未删除，已清空选择并刷新列表，请重新选择"
+          : `已删除 ${confirmedDeleted} 个；下一批存在已变化的网站，剩余 ${deletingSites.length - confirmedDeleted} 个未处理，请刷新后重新选择`);
       } else {
-        setMutationError(errorMessage(error, "批量删除失败，请重试"));
+        setNotice(confirmedDeleted === 0
+          ? "删除请求结果未能确认，已停止后续批次并刷新，请核对后重新选择"
+          : `已确认删除 ${confirmedDeleted} 个；后续请求结果未能确认，已停止剩余批次，请刷新后核对`);
       }
+      refreshAfterMutation();
     } finally {
       setMutationBusy(false);
     }
@@ -688,6 +775,7 @@ export function useLibraryWorkspace() {
   const collectionProps = {
     viewMode,
     selectionMode,
+    selectionBusy: allMatchingSelectionBusy,
     selectedSiteIds,
     quickActionId,
     onToggleSelected: toggleSiteSelection,
@@ -704,8 +792,11 @@ export function useLibraryWorkspace() {
 
   return {
     allLoadedSelected,
+    allMatchingSelected,
+    allMatchingSelectionBusy,
     analysisBackfillBusy,
     beginBulkDelete,
+    bulkDeleteCompleted,
     categories,
     categoryId,
     closeDialog,
@@ -756,6 +847,7 @@ export function useLibraryWorkspace() {
     totalLibrarySites,
     totalMatched,
     toggleAllLoadedSites,
+    toggleAllMatchingSites,
     viewMode,
   };
 }

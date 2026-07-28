@@ -4,7 +4,7 @@ from collections.abc import Awaitable
 from typing import Annotated, Literal
 
 import pydantic
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from webhub.agent.provider_binding import resolve_optional_binding
 from webhub.auth.dependencies import (
@@ -12,8 +12,10 @@ from webhub.auth.dependencies import (
     DatabaseSessionDependency,
     require_trusted_origin,
 )
+from webhub.ingestion import backfill as ingestion_backfill
 from webhub.ingestion import service as ingestion_service
 from webhub.ingestion import worker as ingestion_worker
+from webhub.ingestion.enrichment import AnalysisIntent
 from webhub.library import batch, service
 from webhub.library.schemas import (
     CategoryCreateRequest,
@@ -22,6 +24,8 @@ from webhub.library.schemas import (
     CategoryListResponse,
     CategoryResponse,
     CategoryUpdateRequest,
+    MetadataBackfillProgressResponse,
+    MetadataBackfillStartResponse,
     SiteAnalysisBackfillResponse,
     SiteBatchItemResponse,
     SiteBatchRequest,
@@ -33,6 +37,7 @@ from webhub.library.schemas import (
     SiteListResponse,
     SiteReorderRequest,
     SiteResponse,
+    SiteSelectionResponse,
     SiteUpdateRequest,
     TagCreateRequest,
     TagDeleteResponse,
@@ -53,6 +58,7 @@ def _schedule_analysis(request: Request, *, user_id: str, site_id: str) -> None:
         user_id=str(user_id),
         site_ids=(site_id,),
         priority=True,
+        intent=AnalysisIntent.SITE_ENRICHMENT,
     )
     # When the foreground queue is full, leave the newly created/retargeted
     # site to the database-driven sweep instead of silently giving up until a
@@ -76,6 +82,54 @@ async def _call[T](operation: Awaitable[T]) -> T:
             status_code=error.status_code,
             detail={"code": error.code, "message": error.message},
         ) from error
+
+
+async def _require_model_provider(request: Request, *, user_id: str) -> None:
+    """Fail before a user-triggered LLM workflow creates or joins work."""
+
+    async with request.app.state.database.sessions() as provider_session:
+        binding = await resolve_optional_binding(
+            provider_session,
+            request.app.state.settings,
+            user_id=user_id,
+            kind="model",
+        )
+        await provider_session.rollback()
+    if binding is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "model_provider_required",
+                "message": "请先配置并启用模型 Provider，再开始 LLM 网站资料分析。",
+            },
+        )
+
+
+def _metadata_backfill_response(
+    progress: ingestion_backfill.MetadataBackfillProgress,
+) -> MetadataBackfillProgressResponse:
+    return MetadataBackfillProgressResponse(
+        id=progress.id,
+        status=progress.status,  # type: ignore[arg-type]
+        total_count=progress.total_count,
+        queued_count=progress.queued_count,
+        running_count=progress.running_count,
+        completed_count=progress.completed_count,
+        complete_count=progress.complete_count,
+        limited_count=progress.limited_count,
+        failed_count=progress.failed_count,
+        skipped_count=progress.skipped_count,
+    )
+
+
+def _metadata_backfill_start_response(
+    started: ingestion_backfill.MetadataBackfillStart,
+) -> MetadataBackfillStartResponse:
+    progress = _metadata_backfill_response(started.progress)
+    return MetadataBackfillStartResponse(
+        **progress.model_dump(),
+        reused=started.reused,
+    )
 
 
 @router.get("/categories", response_model=CategoryListResponse)
@@ -251,6 +305,27 @@ async def add_site(
     return created
 
 
+@router.get("/sites/selection", response_model=SiteSelectionResponse)
+async def site_selection(
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    q: Annotated[str | None, Query(max_length=300)] = None,
+    category_id: str | None = None,
+    tag_id: str | None = None,
+    pinned: bool | None = None,
+) -> SiteSelectionResponse:
+    return await _call(
+        service.list_site_selection(
+            session,
+            identity.user.id,
+            q=q,
+            category_id=category_id,
+            tag_id=tag_id,
+            pinned=pinned,
+        )
+    )
+
+
 @router.post("/sites/bulk-delete", response_model=SiteBulkDeleteResponse)
 async def bulk_delete_sites(
     payload: SiteBulkDeleteRequest,
@@ -311,13 +386,14 @@ async def analyze_site(
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
 ) -> SiteResponse:
-    """Re-read the page's public metadata and store what it fills in.
+    """Fetch public page evidence and run the three constrained LLM tools.
 
-    Synchronous on purpose, unlike the analysis scheduled at creation time:
-    this one is a button the user just pressed, so they should get the result
-    rather than a spinner that never resolves on its own.
+    The model draft is not a write capability. The ingestion service validates
+    it and atomically stores only fields that are not protected as user input.
+    This endpoint waits because it is driven by an explicit detail-page action.
     """
 
+    await _require_model_provider(request, user_id=str(identity.user.id))
     try:
         await ingestion_worker.analyze_and_wait(
             request.app.state.database,
@@ -370,6 +446,7 @@ async def batch_sites(
         site_ids=tuple(
             item.site_id for item in items if item.status == "created" and item.site_id is not None
         ),
+        intent=AnalysisIntent.SITE_ENRICHMENT,
     )
     if scheduled.rejected:
         ingestion_worker.ensure_auto_backfill(
@@ -441,6 +518,87 @@ async def analyze_missing_sites(
         ),
         remaining_count=remaining + scheduled.rejected,
     )
+
+
+@router.post(
+    "/metadata-backfills",
+    response_model=MetadataBackfillStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_metadata_backfill(
+    request: Request,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> MetadataBackfillStartResponse:
+    """Start (or join) the account's durable LLM website-enrichment run."""
+
+    user_id = str(identity.user.id)
+    await _require_model_provider(request, user_id=user_id)
+    started = await ingestion_backfill.start_metadata_backfill(session, user_id=user_id)
+    if started.progress.is_active:
+        ingestion_worker.ensure_metadata_backfill(
+            request.app.state.database,
+            user_id=user_id,
+            run_id=started.progress.id,
+        )
+    return _metadata_backfill_start_response(started)
+
+
+@router.get(
+    "/metadata-backfills/active",
+    response_model=MetadataBackfillProgressResponse,
+    responses={status.HTTP_204_NO_CONTENT: {"description": "No active metadata backfill"}},
+)
+async def active_metadata_backfill(
+    request: Request,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+) -> MetadataBackfillProgressResponse | Response:
+    """Let a newly loaded page reattach to the account's durable task."""
+
+    user_id = str(identity.user.id)
+    progress = await ingestion_backfill.active_metadata_backfill(session, user_id=user_id)
+    if progress is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    ingestion_worker.ensure_metadata_backfill(
+        request.app.state.database,
+        user_id=user_id,
+        run_id=progress.id,
+    )
+    return _metadata_backfill_response(progress)
+
+
+@router.get(
+    "/metadata-backfills/{run_id}",
+    response_model=MetadataBackfillProgressResponse,
+)
+async def metadata_backfill_progress(
+    run_id: str,
+    request: Request,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+) -> MetadataBackfillProgressResponse:
+    """Read one fixed task snapshot and opportunistically wake its worker."""
+
+    user_id = str(identity.user.id)
+    progress = await ingestion_backfill.progress_for_run(
+        session,
+        user_id=user_id,
+        run_id=run_id,
+    )
+    if progress is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "metadata_backfill_not_found", "message": "补全任务不存在"},
+        )
+    if progress.is_active:
+        ingestion_worker.ensure_metadata_backfill(
+            request.app.state.database,
+            user_id=user_id,
+            run_id=progress.id,
+        )
+    return _metadata_backfill_response(progress)
 
 
 @router.post("/categories/{category_id}/reorder", status_code=status.HTTP_204_NO_CONTENT)
