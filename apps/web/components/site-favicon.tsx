@@ -1,9 +1,10 @@
 "use client";
 
+import { Play } from "lucide-react";
 import { useState } from "react";
 
 // 共享网站图标：优先展示后端返回的 faviconUrl，绝不走第三方 CDN；
-// url 为空或加载失败时，回落到本地生成的字母块（站点名首字符）。
+// url 为空或加载失败时，已知平台回落到本地图标，其余站点使用字母块。
 // 字母块的 SVG 是 data: URI，但 <img>/mask 里的 SVG 文档读不到页面 CSS 变量，
 // 所以把它当 CSS mask 用：底色/字色仍走 --surface-subtle / --text-muted 令牌，
 // 深浅主题切换时颜色能实时正确，不需要写死任何色值。
@@ -78,6 +79,40 @@ function faviconRadius(size: number): string {
   return size <= 20 ? "var(--radius-xs)" : "var(--radius-sm)";
 }
 
+function isYouTubeFavicon(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.replace(/\.$/u, "").toLowerCase();
+    return hostname === "youtube.com" || hostname.endsWith(".youtube.com");
+  } catch {
+    return false;
+  }
+}
+
+function YouTubeFallback({ name, size }: Readonly<Pick<SiteFaviconProps, "name" | "size">>) {
+  return (
+    <span
+      role="img"
+      aria-label={`${name} 网站图标`}
+      style={{
+        width: size,
+        height: size,
+        display: "grid",
+        flexShrink: 0,
+        placeItems: "center",
+        color: "#FFFFFF",
+        background: "#FF0000",
+        borderRadius: faviconRadius(size),
+      }}
+    >
+      <Play
+        aria-hidden="true"
+        fill="currentColor"
+        size={Math.max(12, Math.round(size * 0.58))}
+      />
+    </span>
+  );
+}
+
 export function SiteFavicon({ url, name, size }: Readonly<SiteFaviconProps>) {
   // 记录加载失败的具体 url：换了新地址会自动重试，而不是永远停在字母块
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -104,6 +139,10 @@ export function SiteFavicon({ url, name, size }: Readonly<SiteFaviconProps>) {
         }}
       />
     );
+  }
+
+  if (url && isYouTubeFavicon(url)) {
+    return <YouTubeFallback name={name} size={size} />;
   }
 
   const mask = letterMaskUri(name);

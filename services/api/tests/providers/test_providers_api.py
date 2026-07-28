@@ -11,7 +11,11 @@ from webhub.config import Settings
 from webhub.db.migrations import upgrade_database
 from webhub.main import create_app
 from webhub.providers import service as provider_service
-from webhub.providers.connectivity import ProviderProbeError, ProviderProbeResult
+from webhub.providers.connectivity import (
+    ProviderProbeError,
+    ProviderProbeResult,
+    ProviderSearchProbeResult,
+)
 
 COOKIE_NAME = "webhub_session"
 ORIGIN = {"Origin": "http://testserver"}
@@ -61,6 +65,41 @@ def _stubbed_probe(
         yield calls
     finally:
         provider_service.probe_models = original  # type: ignore[assignment]
+
+
+@contextmanager
+def _stubbed_search_probe(
+    *,
+    result_count: int = 1,
+    error: ProviderProbeError | None = None,
+) -> Iterator[list[dict[str, object]]]:
+    original = provider_service.probe_search
+    calls: list[dict[str, object]] = []
+
+    async def fake_probe(
+        definition: object,
+        *,
+        base_url: str,
+        api_key: str | None,
+        timeout_seconds: int,
+    ) -> ProviderSearchProbeResult:
+        calls.append(
+            {
+                "provider": getattr(definition, "provider", None),
+                "base_url": base_url,
+                "api_key": api_key,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        if error is not None:
+            raise error
+        return ProviderSearchProbeResult(result_count=result_count)
+
+    provider_service.probe_search = fake_probe  # type: ignore[assignment]
+    try:
+        yield calls
+    finally:
+        provider_service.probe_search = original  # type: ignore[assignment]
 
 
 def _rows(database_path: Path) -> list[tuple[object, ...]]:
@@ -150,12 +189,28 @@ def test_registry_auth_origin_and_exact_provider_scope(tmp_path: Path) -> None:
             "tavily",
             "jina",
             "exa",
+            "exa_mcp_free",
         }
-        # Only vendors that serve a model catalogue advertise a connection test;
-        # search-only vendors have nothing read-only to probe.
+        # Model vendors use a read-only catalogue; search vendors expose a
+        # clearly labelled minimal real-query test.
         supported = {item["provider"] for item in items if item["connection_test_supported"]}
-        assert supported == {"openai", "deepseek", "qwen", "kimi", "ollama", "openai_compatible"}
+        assert supported == {
+            "openai",
+            "deepseek",
+            "qwen",
+            "kimi",
+            "ollama",
+            "openai_compatible",
+            "tavily",
+            "jina",
+            "exa",
+        }
         assert next(item for item in items if item["provider"] == "tavily")["kinds"] == ["search"]
+        free_search = next(item for item in items if item["provider"] == "exa_mcp_free")
+        assert free_search["secret_required"] is False
+        assert free_search["search_bulk_supported"] is False
+        assert free_search["fixed_base_url"] is True
+        assert free_search["usage_notice"]
 
         missing_origin = client.post(
             "/api/providers",
@@ -536,10 +591,10 @@ def test_vendor_error_text_never_reaches_the_client(tmp_path: Path) -> None:
         assert "api.openai.com" not in tested.text
 
 
-def test_search_provider_reports_unsupported_without_calling_out(tmp_path: Path) -> None:
+def test_search_provider_runs_one_explicit_minimal_query(tmp_path: Path) -> None:
     with _client(tmp_path) as (client, _):
         _register(client, "alice")
-        with _stubbed_probe() as probe_calls:
+        with _stubbed_search_probe(result_count=1) as probe_calls:
             tested = client.post(
                 "/api/providers/test-connection",
                 json={
@@ -550,11 +605,18 @@ def test_search_provider_reports_unsupported_without_calling_out(tmp_path: Path)
                 headers=ORIGIN,
             )
         assert tested.status_code == 200, tested.text
-        assert tested.json()["status"] == "unsupported"
-        assert tested.json()["code"] == "connection_test_unsupported"
+        assert tested.json()["status"] == "ok"
+        assert tested.json()["code"] == "connection_test_ok"
         assert tested.json()["models"] == []
-        assert "未发送任何外部请求" in tested.json()["message"]
-        assert probe_calls == []
+        assert "可能计入服务商额度" in tested.json()["message"]
+        assert probe_calls == [
+            {
+                "provider": "tavily",
+                "base_url": "https://api.tavily.com",
+                "api_key": "tvly-candidate",
+                "timeout_seconds": 3,
+            }
+        ]
 
 
 def test_a_model_name_is_not_required_to_list_models(tmp_path: Path) -> None:

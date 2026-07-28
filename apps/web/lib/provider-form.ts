@@ -52,7 +52,7 @@ export const PROVIDER_KIND_SECTIONS: readonly ProviderKindSection[] = [
   {
     kind: "embedding",
     title: "向量服务",
-    description: "资料库语义检索使用的向量模型。启用后可在“语义索引”页面补齐向量并增强相关度排序。",
+    description: "网址库语义检索使用的向量模型。启用后可在“语义索引”页面补齐向量并增强相关度排序。",
   },
 ];
 

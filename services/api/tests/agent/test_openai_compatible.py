@@ -27,7 +27,7 @@ def test_explicit_reasoning_delta_is_preserved_on_generation_chunk() -> None:
                 "delta": {
                     "role": "assistant",
                     "content": "",
-                    "reasoning_content": "先检查资料库。",
+                    "reasoning_content": "先检查网址库。",
                 },
                 "finish_reason": None,
             }
@@ -41,7 +41,7 @@ def test_explicit_reasoning_delta_is_preserved_on_generation_chunk() -> None:
     )
 
     assert generation is not None
-    assert generation.message.additional_kwargs["reasoning_content"] == "先检查资料库。"
+    assert generation.message.additional_kwargs["reasoning_content"] == "先检查网址库。"
 
 
 def test_ordinary_content_is_never_inferred_as_reasoning() -> None:

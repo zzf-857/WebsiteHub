@@ -62,6 +62,15 @@ class AgentConversationUnavailableError(RuntimeError):
     safe_message = "当前会话不可用，请新建对话后重试。"
 
 
+class AgentRunnerExecutionError(RuntimeError):
+    """Sanitized runner failure carrying only a coarse stage and exception type."""
+
+    def __init__(self, *, stage: str, error_type: str) -> None:
+        self.stage = stage
+        self.error_type = error_type
+        super().__init__("Agent runner execution failed")
+
+
 class UnconfiguredAgentRunner:
     """Default runner: never calls a network or fabricates an answer."""
 
@@ -83,6 +92,7 @@ __all__ = [
     "AgentConversationAccess",
     "AgentConversationUnavailableError",
     "AgentProviderNotConfiguredError",
+    "AgentRunnerExecutionError",
     "AgentRunRequest",
     "AgentRunner",
     "RejectingConversationAccess",

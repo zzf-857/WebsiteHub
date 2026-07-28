@@ -21,6 +21,7 @@ const site = {
   name: "MDN",
   original_url: "https://developer.mozilla.org/",
   identity_url: "https://developer.mozilla.org",
+  summary: null,
   description: null,
   favicon_url: null,
   preview_url: null,
@@ -91,6 +92,7 @@ test("site writes serialize bodies and delete optimistic concurrency", async (co
   await createLibrarySite({
     name: "MDN",
     url: "https://developer.mozilla.org",
+    summary: "提供权威且系统的 Web 开发标准参考资料",
     description: null,
     categoryId: "category-1",
     tagIds: ["tag-1"],
@@ -104,6 +106,7 @@ test("site writes serialize bodies and delete optimistic concurrency", async (co
   assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), {
     name: "MDN",
     url: "https://developer.mozilla.org",
+    summary: "提供权威且系统的 Web 开发标准参考资料",
     category_id: "category-1",
     tag_ids: ["tag-1"],
     pinned: true,
@@ -220,7 +223,7 @@ test("surfaces structured backend error codes to interaction logic", async (cont
   globalThis.fetch = async () => new Response(JSON.stringify({
     detail: {
       code: "duplicate_url",
-      message: "该网址已存在于当前账号的资料库",
+      message: "该网址已存在于当前账号的网址库",
     },
   }), { status: 409, headers: { "Content-Type": "application/json" } });
 
@@ -230,7 +233,7 @@ test("surfaces structured backend error codes to interaction logic", async (cont
       assert.ok(error instanceof LibraryApiError);
       assert.equal(error.status, 409);
       assert.equal(error.code, "duplicate_url");
-      assert.equal(error.message, "该网址已存在于当前账号的资料库");
+      assert.equal(error.message, "该网址已存在于当前账号的网址库");
       return true;
     },
   );

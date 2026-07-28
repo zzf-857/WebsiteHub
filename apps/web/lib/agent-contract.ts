@@ -28,23 +28,27 @@ export type AgentToolName =
   | "list_tags"
   | "list_spaces"
   | "web_search"
+  | "present_website_recommendations"
   | "propose_site"
   | "propose_site_update"
   | "propose_sites"
   | "propose_space_membership"
+  | "propose_space_batch"
   | "propose_reclassify";
 
 const AGENT_TOOL_LABELS: Record<string, string> = {
-  search_library: "检索资料库",
+  search_library: "检索网址库",
   get_site_detail: "读取网站详情",
   list_categories: "读取分类",
   list_tags: "读取标签",
   list_spaces: "读取 Space",
   web_search: "联网搜索",
+  present_website_recommendations: "整理网站推荐",
   propose_site: "生成收录草稿",
   propose_site_update: "生成修改草稿",
   propose_sites: "生成批量收录草稿",
   propose_space_membership: "生成 Space 变更草稿",
+  propose_space_batch: "生成 Space 批量任务",
   propose_reclassify: "生成全库重分类草稿",
 };
 
@@ -70,16 +74,36 @@ export type AgentStreamError = {
   message: string;
 };
 
+const AGENT_DRAFT_CONFIRMATION_KINDS = [
+  "site_created",
+  "site_updated",
+  "site_batch_created",
+  "space_member_added",
+  "space_member_removed",
+  "space_batch_applied",
+  "reclassify_applied",
+] as const;
+
+export type AgentDraftConfirmationKind = (typeof AGENT_DRAFT_CONFIRMATION_KINDS)[number];
+
+export type AgentDraftConfirmation = {
+  toolCallId: string;
+  kind: AgentDraftConfirmationKind;
+};
+
 export type AgentMessageMetadata = {
   conversationId?: string;
   provider?: string;
   model?: string;
   webSearch?: boolean;
+  recommendationManifestVersion?: number;
   errorCode?: string;
   elapsedMs?: number;
   timeToFirstTokenMs?: number;
   reasoningMs?: number;
+  turnPersisted?: boolean;
   usage?: AgentTokenUsage;
+  draftConfirmation?: AgentDraftConfirmation;
 };
 
 export type AgentTokenUsage = {
@@ -172,10 +196,23 @@ export function normalizeAgentMessageMetadata(value: unknown): AgentMessageMetad
   const provider = asTrimmed(candidate.provider);
   const model = asTrimmed(candidate.model);
   const errorCode = asTrimmed(candidate.errorCode);
+  const recommendationManifestVersion = asCount(candidate.recommendationManifestVersion);
   const elapsedMs = asCount(candidate.elapsedMs);
   const timeToFirstTokenMs = asCount(candidate.timeToFirstTokenMs);
   const reasoningMs = asCount(candidate.reasoningMs);
   const rawUsage = asRecord(candidate.usage);
+  const rawDraftConfirmation = asRecord(candidate.draftConfirmation);
+  const draftToolCallId = asTrimmed(rawDraftConfirmation?.toolCallId);
+  const draftKind = asTrimmed(rawDraftConfirmation?.kind);
+  const draftConfirmation =
+    draftToolCallId !== null &&
+    draftKind !== null &&
+    (AGENT_DRAFT_CONFIRMATION_KINDS as readonly string[]).includes(draftKind)
+      ? {
+          toolCallId: draftToolCallId,
+          kind: draftKind as AgentDraftConfirmationKind,
+        }
+      : undefined;
   const usage = rawUsage === null
     ? undefined
     : {
@@ -197,11 +234,16 @@ export function normalizeAgentMessageMetadata(value: unknown): AgentMessageMetad
     ...(provider ? { provider } : {}),
     ...(model ? { model } : {}),
     ...(typeof candidate.webSearch === "boolean" ? { webSearch: candidate.webSearch } : {}),
+    ...(recommendationManifestVersion !== null ? { recommendationManifestVersion } : {}),
     ...(errorCode ? { errorCode } : {}),
     ...(elapsedMs !== null ? { elapsedMs } : {}),
     ...(timeToFirstTokenMs !== null ? { timeToFirstTokenMs } : {}),
     ...(reasoningMs !== null ? { reasoningMs } : {}),
+    ...(typeof candidate.turnPersisted === "boolean"
+      ? { turnPersisted: candidate.turnPersisted }
+      : {}),
     ...(usage && Object.keys(usage).length > 0 ? { usage } : {}),
+    ...(draftConfirmation ? { draftConfirmation } : {}),
   };
 }
 
@@ -210,6 +252,7 @@ export type AgentToolLink = {
   name: string;
   url: string | null;
   faviconUrl: string | null;
+  summary: string | null;
   description: string | null;
   category: string | null;
   tags: string[];
@@ -266,6 +309,30 @@ export type AgentSpaceMembershipDraft = {
   expectedVersion: number;
 };
 
+export type AgentSpaceBatchTarget =
+  | {
+      mode: "existing";
+      spaceId: string;
+      spaceName: string;
+      expectedVersion: number;
+    }
+  | {
+      mode: "create";
+      spaceName: string;
+    };
+
+export type AgentSpaceBatchSite = {
+  siteId: string;
+  name: string;
+  url: string;
+};
+
+export type AgentSpaceBatchDraft = {
+  target: AgentSpaceBatchTarget;
+  sites: AgentSpaceBatchSite[];
+  alreadyMemberCount: number;
+};
+
 export type AgentReclassifyDraft = {
   siteCount: number;
   estimatedRequestCount: number;
@@ -276,12 +343,13 @@ export type AgentReclassifyDraft = {
   expectedVersions: Record<string, number>;
 };
 
-/** 确认按钮回传给面板的东西：四类草稿共用一个入口，避免四套并行的状态管道。 */
+/** 所有草稿共用一个确认入口，避免各自维护并行状态管道。 */
 export type AgentDraftAction =
   | { kind: "site"; draft: AgentSiteDraft }
   | { kind: "site_update"; draft: AgentSiteUpdateDraft }
   | { kind: "site_batch"; draft: AgentSiteBatchDraft }
   | { kind: "space_membership"; draft: AgentSpaceMembershipDraft }
+  | { kind: "space_batch"; draft: AgentSpaceBatchDraft; selectedSiteIds: string[] }
   | { kind: "reclassify"; draft: AgentReclassifyDraft };
 
 export type AgentToolFacet = {
@@ -298,6 +366,7 @@ export type AgentToolView =
   | { kind: "site-update"; draft: AgentSiteUpdateDraft }
   | { kind: "site-batch"; draft: AgentSiteBatchDraft }
   | { kind: "space-membership"; draft: AgentSpaceMembershipDraft }
+  | { kind: "space-batch"; draft: AgentSpaceBatchDraft }
   | { kind: "reclassify"; draft: AgentReclassifyDraft }
   | { kind: "noop"; message: string }
   | { kind: "rejected"; reason: string }
@@ -316,6 +385,7 @@ function toLink(value: unknown): AgentToolLink | null {
     name,
     url,
     faviconUrl: asWebUrl(candidate.favicon_url),
+    summary: asTrimmed(candidate.summary),
     description: asTrimmed(candidate.description) ?? asTrimmed(candidate.snippet),
     category: asTrimmed(candidate.category),
     tags: asStringList(candidate.tags),
@@ -366,6 +436,7 @@ function toSiteFields(value: unknown): AgentToolLink | null {
     name,
     url: asWebUrl(candidate.url),
     faviconUrl: asWebUrl(candidate.favicon_url),
+    summary: asTrimmed(candidate.summary),
     description: asTrimmed(candidate.description),
     category: asTrimmed(candidate.category),
     tags: asStringList(candidate.tags),
@@ -444,6 +515,59 @@ function toSpaceMembershipDraft(value: unknown): AgentSpaceMembershipDraft | nul
   if (action === null || siteId === null || spaceId === null || expectedVersion === null) return null;
   if (siteName === null || spaceName === null) return null;
   return { action, siteId, siteName, spaceId, spaceName, expectedVersion };
+}
+
+function toSpaceBatchDraft(value: unknown): AgentSpaceBatchDraft | null {
+  const candidate = asRecord(value);
+  if (candidate === null) return null;
+  if (candidate.kind !== undefined && candidate.kind !== "space_batch") return null;
+
+  const rawTarget = asRecord(candidate.target);
+  if (rawTarget === null) return null;
+  const spaceName = asTrimmed(rawTarget.space_name);
+  if (spaceName === null) return null;
+
+  let target: AgentSpaceBatchTarget;
+  if (rawTarget.mode === "existing") {
+    const spaceId = asTrimmed(rawTarget.space_id);
+    const expectedVersion = asVersion(rawTarget.expected_version);
+    if (spaceId === null || expectedVersion === null) return null;
+    target = { mode: "existing", spaceId, spaceName, expectedVersion };
+  } else if (rawTarget.mode === "create") {
+    target = { mode: "create", spaceName };
+  } else {
+    return null;
+  }
+
+  if (!Array.isArray(candidate.sites) || candidate.sites.length > 100) return null;
+  const sites: AgentSpaceBatchSite[] = [];
+  const seenSiteIds = new Set<string>();
+  for (const entry of candidate.sites) {
+    const site = asRecord(entry);
+    if (site === null) return null;
+    const siteId = asTrimmed(site.site_id);
+    const name = asTrimmed(site.name);
+    const url = asWebUrl(site.url);
+    if (
+      siteId === null ||
+      Array.from(siteId).length > 36 ||
+      name === null ||
+      url === null ||
+      seenSiteIds.has(siteId)
+    ) {
+      return null;
+    }
+    seenSiteIds.add(siteId);
+    sites.push({ siteId, name, url });
+  }
+  // 已有 Space 的空任务没有任何可执行内容；create + 空列表则代表只创建 Space。
+  if (target.mode === "existing" && sites.length === 0) return null;
+
+  return {
+    target,
+    sites,
+    alreadyMemberCount: asCount(candidate.already_member_count) ?? 0,
+  };
 }
 
 function toReclassifyDraft(value: unknown): AgentReclassifyDraft | null {
@@ -535,7 +659,7 @@ export function describeAgentToolResult(name: string, result: unknown): AgentToo
       return { kind: "rejected", reason: asTrimmed(payload.reason) ?? "无法生成重分类提案" };
     }
     if (status === "noop") {
-      return { kind: "noop", message: asTrimmed(payload.message) ?? "资料库中没有需要分类的网站。" };
+      return { kind: "noop", message: asTrimmed(payload.message) ?? "网址库中没有需要分类的网站。" };
     }
     const draft = toReclassifyDraft(payload.draft);
     if (draft !== null) return { kind: "reclassify", draft };
@@ -565,6 +689,24 @@ export function describeAgentToolResult(name: string, result: unknown): AgentToo
     }
     const draft = toSiteBatchDraft(payload.draft);
     if (draft !== null) return { kind: "site-batch", draft };
+  }
+
+  if (name === "propose_space_batch") {
+    if (status === "rejected") {
+      return { kind: "rejected", reason: asTrimmed(payload.reason) ?? "无法生成 Space 任务" };
+    }
+    if (status === "noop") {
+      return {
+        kind: "noop",
+        message: asTrimmed(payload.message) ?? "这些网站已经在目标 Space 中，无需修改。",
+      };
+    }
+    const draft = toSpaceBatchDraft(payload.draft);
+    if (draft !== null) return { kind: "space-batch", draft };
+    return {
+      kind: "unavailable",
+      message: "这条 Space 批量草稿已失效，请重新发起。",
+    };
   }
 
   if (name === "propose_site_update" || name === "propose_space_membership") {
@@ -905,6 +1047,19 @@ export function toAgentUIMessages(messages: readonly AgentStoredMessage[]): Agen
     });
   }
   return restored;
+}
+
+/** Recover persisted confirmations without rendering their server-owned system rows. */
+export function confirmedAgentDraftToolCallIds(
+  messages: readonly AgentStoredMessage[],
+): string[] {
+  const confirmed = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "system" || message.status !== "complete") continue;
+    const toolCallId = message.metadata.draftConfirmation?.toolCallId;
+    if (toolCallId) confirmed.add(toolCallId);
+  }
+  return [...confirmed];
 }
 
 export type AgentErrorDetails = {

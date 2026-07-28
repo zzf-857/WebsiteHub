@@ -12,6 +12,7 @@ from webhub.providers.connectivity import (
     ProviderProbeError,
     probe_base_url,
     probe_models,
+    probe_search,
 )
 from webhub.providers.registry import provider_definition
 
@@ -19,6 +20,9 @@ OPENAI = provider_definition("model", "openai")
 OLLAMA = provider_definition("model", "ollama")
 COMPATIBLE = provider_definition("model", "openai_compatible")
 TAVILY = provider_definition("search", "tavily")
+JINA = provider_definition("search", "jina")
+EXA = provider_definition("search", "exa")
+EXA_FREE = provider_definition("search", "exa_mcp_free")
 
 # Vendor error bodies routinely echo the request URL, the request body and a
 # prefix of the API key.  Every failure test asserts this string never surfaces.
@@ -70,6 +74,42 @@ def _run(
                 definition,
                 base_url=base_url,
                 api_key=api_key,
+                timeout_seconds=2,
+            )
+        )
+    except ProviderProbeError as error:
+        outcome = error
+    return seen, outcome
+
+
+def _run_search(
+    definition,
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    base_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[httpx.Request], object]:
+    seen: list[httpx.Request] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return handler(request)
+
+    def client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(record)
+        return _REAL_ASYNC_CLIENT(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def allow(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(httpx, "AsyncClient", client_factory)
+    monkeypatch.setattr("webhub.providers.connectivity.validate_connection_target", allow)
+    try:
+        outcome: object = asyncio.run(
+            probe_search(
+                definition,
+                base_url=base_url,
+                api_key="search-probe-key",
                 timeout_seconds=2,
             )
         )
@@ -145,6 +185,49 @@ def test_empty_catalogue_is_a_success_not_a_failure(monkeypatch: pytest.MonkeyPa
     )
     assert not isinstance(outcome, ProviderProbeError)
     assert outcome.models == []
+
+
+def test_search_probes_use_each_vendor_contract_and_only_return_a_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tavily_seen, tavily = _run_search(
+        TAVILY,
+        _json({"results": [{"title": "private vendor text"}]}),
+        base_url="https://api.tavily.com",
+        monkeypatch=monkeypatch,
+    )
+    assert not isinstance(tavily, ProviderProbeError)
+    assert tavily.result_count == 1
+    assert tavily_seen[0].method == "POST"
+    assert str(tavily_seen[0].url) == "https://api.tavily.com/search"
+    assert tavily_seen[0].headers["authorization"] == "Bearer search-probe-key"
+    assert json.loads(tavily_seen[0].content)["max_results"] == 1
+
+    exa_seen, exa = _run_search(
+        EXA,
+        _json({"results": []}),
+        base_url="https://api.exa.ai",
+        monkeypatch=monkeypatch,
+    )
+    assert not isinstance(exa, ProviderProbeError)
+    assert exa.result_count == 0
+    assert exa_seen[0].method == "POST"
+    assert str(exa_seen[0].url) == "https://api.exa.ai/search"
+    assert exa_seen[0].headers["x-api-key"] == "search-probe-key"
+    assert json.loads(exa_seen[0].content)["numResults"] == 1
+
+    jina_seen, jina = _run_search(
+        JINA,
+        _json({"data": [{"url": "https://example.com"}]}),
+        base_url="https://s.jina.ai",
+        monkeypatch=monkeypatch,
+    )
+    assert not isinstance(jina, ProviderProbeError)
+    assert jina.result_count == 1
+    assert jina_seen[0].method == "GET"
+    assert str(jina_seen[0].url).startswith("https://s.jina.ai?q=")
+    assert jina_seen[0].url.params["q"] == "WebHub connectivity test"
+    assert jina_seen[0].headers["authorization"] == "Bearer search-probe-key"
 
 
 @pytest.mark.parametrize(
@@ -296,15 +379,23 @@ def test_probe_base_url_falls_back_to_the_registry_default() -> None:
     assert probe_base_url(OPENAI, "  ") == "https://api.openai.com/v1"
     # A stored value always wins, and its trailing slash is dropped.
     assert probe_base_url(OPENAI, "https://proxy.example.com/v1/") == "https://proxy.example.com/v1"
+    # The keyless adapter is pinned to its audited endpoint, including for
+    # legacy rows that once stored a caller-supplied address.
+    assert probe_base_url(
+        EXA_FREE,
+        "https://attacker.example/mcp",
+    ) == "https://mcp.exa.ai/mcp"
     # Vendors with no default and no stored value have nowhere to go.
     with pytest.raises(ProviderProbeError) as raised:
         probe_base_url(COMPATIBLE, None)
     assert raised.value.code == "provider_unreachable"
 
 
-def test_only_model_serving_vendors_advertise_a_connection_test() -> None:
+def test_registered_probe_adapters_advertise_a_connection_test() -> None:
     assert OPENAI.connection_test_supported is True
     assert OLLAMA.connection_test_supported is True
     assert COMPATIBLE.connection_test_supported is True
-    # Search-only vendors have no read-only catalogue to probe.
-    assert TAVILY.connection_test_supported is False
+    # Search vendors opt into an explicit minimal-query adapter.
+    assert TAVILY.connection_test_supported is True
+    assert JINA.connection_test_supported is True
+    assert EXA.connection_test_supported is True

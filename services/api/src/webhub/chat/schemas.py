@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import MAX_CONVERSATION_TITLE_LENGTH, MAX_MESSAGE_CONTENT_LENGTH
 
@@ -49,23 +49,39 @@ class UserMessageAppendRequest(StrictRequest):
 DraftConfirmationKind = Literal[
     "site_created",
     "site_updated",
+    "site_batch_created",
     "space_member_added",
     "space_member_removed",
+    "space_batch_applied",
+    "reclassify_applied",
 ]
 
 
 class DraftConfirmationRequest(StrictRequest):
     """Record that the user confirmed one Agent draft.
 
-    Deliberately carries only identifiers, never prose.  The sentence written
-    into the transcript is composed server-side from the rows themselves, so a
-    client cannot inject a claim about the library that is not true.
+    Deliberately carries only identifiers and an operation kind, never prose.
+    The sentence written into the transcript is composed server-side.
     """
 
     tool_call_id: str = Field(min_length=1, max_length=200)
     kind: DraftConfirmationKind
-    site_id: str = Field(min_length=1, max_length=36)
+    site_id: str | None = Field(default=None, min_length=1, max_length=36)
     space_id: str | None = Field(default=None, min_length=1, max_length=36)
+    site_ids: list[str] | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_batch_site_ids(self) -> Self:
+        if self.kind == "space_batch_applied":
+            if self.site_ids is None:
+                raise ValueError("Space 批量确认必须提供 site_ids")
+            if any(not site_id.strip() or len(site_id) > 36 for site_id in self.site_ids):
+                raise ValueError("网站 ID 无效")
+            if len(set(self.site_ids)) != len(self.site_ids):
+                raise ValueError("确认的网站不能重复")
+        elif self.site_ids is not None:
+            raise ValueError("该确认类型不接受 site_ids")
+        return self
 
 
 class DraftConfirmationResponse(BaseModel):

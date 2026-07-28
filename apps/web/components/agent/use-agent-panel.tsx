@@ -12,8 +12,7 @@
 import {
   useChat,
 } from "@ai-sdk/react";
-import {
-} from "lucide-react";
+import type { ChatInit } from "ai";
 import type {
   ChangeEvent,
   FormEvent,
@@ -33,17 +32,23 @@ import {
   confirmAgentSiteBatch,
   confirmAgentSiteDraft,
   confirmAgentSiteUpdate,
+  confirmAgentSpaceBatch,
   confirmAgentSpaceMembership,
+  AgentApiError,
   recordAgentDraftConfirmation,
   listAgentConversations,
   loadAgentConversation,
+  type AgentDraftConfirmationInput,
 } from "@/lib/agent-client";
 import { confirmAgentReclassify } from "@/lib/library-client";
 
 import {
   AGENT_SOURCE_LIBRARY,
+  AGENT_SOURCE_MODEL,
   AGENT_SOURCE_WEB,
   MAX_AGENT_MESSAGE_LENGTH,
+  agentToolLabel,
+  confirmedAgentDraftToolCallIds,
   describeAgentToolResult,
   normalizeAgentMessageMetadata,
   normalizeAgentStreamError,
@@ -53,6 +58,7 @@ import {
   type AgentConversationGroup,
   type AgentDraftAction,
   type AgentStreamError,
+  type AgentStoredMessage,
   type AgentToolCall,
   type AgentToolLink,
   type AgentUIMessage,
@@ -79,13 +85,61 @@ import {
 // 渲染了却一个 chip 都没有；三条对应的能力（检索 / 存入 / 改分类置顶）都真实可用。
 export const QUICK_PROMPTS = [
   "帮我找 Unity API 文档",
-  "/存入 ai-bot.cn",
+  "/存入 https://ai-bot.cn",
   "把 Figma 移到「设计」并置顶",
 ] as const;
 // 输入框自动增高的上限，对应设计稿"最多约 180px"
 const MAX_TEXTAREA_HEIGHT = 180;
 
-export function useAgentPanel() {
+function restoredDraftStates(
+  messages: readonly AgentStoredMessage[],
+): Record<string, AgentDraftState> {
+  const states: Record<string, AgentDraftState> = {};
+  for (const toolCallId of confirmedAgentDraftToolCallIds(messages)) {
+    states[toolCallId] = { status: "saved" };
+  }
+  return states;
+}
+
+type UseAgentPanelOptions = {
+  onLibraryChanged?: () => void;
+};
+
+type AgentOnData = NonNullable<ChatInit<AgentUIMessage>["onData"]>;
+type AgentOnFinish = NonNullable<ChatInit<AgentUIMessage>["onFinish"]>;
+type PendingDraftConfirmation = {
+  conversationId: string;
+  confirmation: AgentDraftConfirmationInput;
+};
+
+const SPACE_BATCH_WRITE_TIMEOUT_MS = 30_000;
+const DRAFT_CONFIRMATION_TIMEOUT_MS = 15_000;
+
+function pendingDraftConfirmationKey(conversationId: string, toolCallId: string): string {
+  return JSON.stringify([conversationId, toolCallId]);
+}
+
+function confirmationFailureState(failure: unknown): AgentDraftState {
+  const retryable = !(failure instanceof AgentApiError) ||
+    failure.status === 408 || failure.status === 429 || failure.status >= 500;
+  const failureMessage = failure instanceof Error ? failure.message : "未知错误";
+  return {
+    status: "error",
+    confirmationPending: true,
+    blocksConversation: retryable,
+    message: retryable
+      ? "数据已写入，但会话状态同步失败。点击重试只会补同步，不会重复写入。"
+      : `数据已写入，但会话状态无法同步：${failureMessage}`,
+  };
+}
+
+function transportErrorMessage(error: Error | undefined): string | null {
+  // Transport/runtime diagnostics are not suitable as interface copy. The
+  // backend's structured failures arrive through data-agent-error instead.
+  return error ? "本次回答意外中断，请重试。" : null;
+}
+
+export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
   const [scope, setScope] = useState<SearchScope>("collection");
   const [input, setInput] = useState("");
   const [commandIndex, setCommandIndex] = useState(0);
@@ -104,6 +158,8 @@ export function useAgentPanel() {
   const historyRef = useRef<HTMLDivElement>(null);
   // 历史项快速连点时的请求序号：只认最后一次点击的加载结果，防止旧响应覆盖新会话
   const openRequestRef = useRef(0);
+  // 业务写入成功、会话 marker 失败时保留第二阶段；重试只补 marker，绝不重放业务写入。
+  const pendingDraftConfirmationsRef = useRef(new Map<string, PendingDraftConfirmation>());
 
   // transport 只构建一次，闭包里读这两个 ref 拿到每次发送时的最新值
   const conversationIdRef = useRef<string | null>(null);
@@ -133,65 +189,90 @@ export function useAgentPanel() {
     }
   }, []);
 
-  const { messages, sendMessage, setMessages, status, stop, error } = useChat<AgentUIMessage>({
-    transport,
-    onData: (part) => {
-      if (part.type === "data-agent-tool-call") {
-        const call = normalizeAgentToolCall(part.data);
-        if (!call) return;
-        setActiveToolCalls((current) => [...current, call]);
-        // 只有检索类工具进阶段条；写入类（propose_site 等）在会话流里有自己的卡片
-        if (call.name === "search_library" || call.name === "web_search") {
-          const tool = call.name;
-          setStages((current) =>
-            current.some((stage) => stage.id === call.toolCallId)
-              ? current
-              : [
-                  ...current,
-                  { id: call.toolCallId, tool, status: "active", count: null, provider: null },
-                ],
-          );
-        }
-        return;
-      }
-      if (part.type === "data-agent-tool-result") {
-        const result = normalizeAgentToolResult(part.data);
-        if (!result) return;
-        setActiveToolCalls((current) =>
-          current.filter((call) => call.toolCallId !== result.toolCallId),
-        );
+  const handleStreamData = useCallback<AgentOnData>((part) => {
+    if (part.type === "data-agent-tool-call") {
+      const call = normalizeAgentToolCall(part.data);
+      if (!call) return;
+      setActiveToolCalls((current) => {
+        const index = current.findIndex((item) => item.toolCallId === call.toolCallId);
+        if (index < 0) return [...current, call];
+        const previous = current[index];
+        if (previous?.name === call.name) return current;
+        return current.map((item, itemIndex) => (itemIndex === index ? call : item));
+      });
+      // Search steps keep a completed stage. Other tools stay visible through
+      // activeToolCalls until their result card takes over.
+      if (call.name === "search_library" || call.name === "web_search") {
+        const tool = call.name;
         setStages((current) =>
-          current.flatMap((stage) => {
-            if (stage.id !== result.toolCallId) return [stage];
-            const view = describeAgentToolResult(result.name, result.result);
-            // 失败或无法解析的阶段直接撤下，错误细节由会话流的工具卡片呈现
-            if (view.kind !== "links") return [];
-            const count =
-              stage.tool === "search_library"
-                ? (view.matchedCount ?? view.items.length)
-                : view.items.length;
-            return [
-              {
-                ...stage,
-                status: "done" as const,
-                count,
-                provider: readWebProvider(result.result),
-              },
-            ];
-          }),
+          current.some((stage) => stage.id === call.toolCallId)
+            ? current
+            : [
+                ...current,
+                { id: call.toolCallId, tool, status: "active", count: null, provider: null },
+              ],
         );
-        return;
       }
-      if (part.type === "data-agent-error") {
-        const failure = normalizeAgentStreamError(part.data);
-        if (failure) setStreamError(failure);
-      }
-    },
-    onFinish: () => {
-      setActiveToolCalls([]);
-      setStages([]);
-      void refreshHistory();
-    },
+      return;
+    }
+    if (part.type === "data-agent-tool-result") {
+      const result = normalizeAgentToolResult(part.data);
+      if (!result) return;
+      setActiveToolCalls((current) => {
+        const next = current.filter((call) => call.toolCallId !== result.toolCallId);
+        return next.length === current.length ? current : next;
+      });
+      setStages((current) => {
+        const index = current.findIndex((stage) => stage.id === result.toolCallId);
+        if (index < 0) return current;
+        const stage = current[index];
+        const view = describeAgentToolResult(result.name, result.result);
+        // The result card owns failed/unparseable output, so remove that stage.
+        if (view.kind !== "links") {
+          return current.filter((_, stageIndex) => stageIndex !== index);
+        }
+        const count =
+          stage.tool === "search_library"
+            ? (view.matchedCount ?? view.items.length)
+            : view.items.length;
+        const completed: AgentStage = {
+          ...stage,
+          status: "done",
+          count,
+          provider: readWebProvider(result.result),
+        };
+        return current.map((item, stageIndex) => (stageIndex === index ? completed : item));
+      });
+      return;
+    }
+    if (part.type === "data-agent-error") {
+      const failure = normalizeAgentStreamError(part.data);
+      if (!failure) return;
+      setStreamError((current) =>
+        current?.code === failure.code && current.message === failure.message ? current : failure,
+      );
+    }
+  }, []);
+
+  const handleStreamFinish = useCallback<AgentOnFinish>(() => {
+    setActiveToolCalls((current) => (current.length === 0 ? current : []));
+    setStages((current) => (current.length === 0 ? current : []));
+    void refreshHistory();
+  }, [refreshHistory]);
+
+  const {
+    messages,
+    sendMessage,
+    setMessages,
+    status,
+    stop,
+    error,
+    clearError,
+  } = useChat<AgentUIMessage>({
+    transport,
+    throttle: 50,
+    onData: handleStreamData,
+    onFinish: handleStreamFinish,
   });
 
   // 首次加载历史：既供「历史」下拉使用，也用来把会话 id 解析成后端派生的标题
@@ -225,17 +306,23 @@ export function useAgentPanel() {
     const candidate = new URLSearchParams(window.location.search).get("c")?.trim();
     if (!candidate) return;
     const controller = new AbortController();
+    const request = ++openRequestRef.current;
     let cancelled = false;
     loadAgentConversation(candidate, controller.signal)
       .then((detail) => {
-        if (cancelled) return;
+        if (cancelled || openRequestRef.current !== request) return;
         conversationIdRef.current = detail.conversation.id;
         setConversationId(detail.conversation.id);
         setConversationTitle(detail.conversation.title);
         setMessages(toAgentUIMessages(detail.messages));
+        setDraftStates(restoredDraftStates(detail.messages));
       })
       .catch((failure: unknown) => {
-        if (cancelled || (failure as Error)?.name === "AbortError") return;
+        if (
+          cancelled ||
+          openRequestRef.current !== request ||
+          (failure as Error)?.name === "AbortError"
+        ) return;
         setStreamError({
           code: "conversation_unavailable",
           message: failure instanceof Error ? failure.message : "会话读取失败，请稍后重试。",
@@ -296,6 +383,9 @@ export function useAgentPanel() {
   const commandPanelOpen = normalizedInput.startsWith("/") && !normalizedInput.includes(" ");
   const filteredCommands = useMemo(() => suggestSlashCommands(input), [input]);
   const busy = status === "submitted" || status === "streaming";
+  const draftWorkflowBusy = Object.values(draftStates).some(
+    (state) => state.blocksConversation === true,
+  );
   const conversationStarted = messages.length > 0;
 
   // 输入框自动增高：空闲态与追问态共用同一个 ref（同一时刻只挂载一个）
@@ -314,13 +404,18 @@ export function useAgentPanel() {
 
   const submit = useCallback(() => {
     const text = input.trim();
-    if (!text || busy) return;
+    if (!text || busy || draftWorkflowBusy) return;
+    // 用户已经选择继续当前画面，任何尚未完成的历史会话读取都不得再覆盖它。
+    openRequestRef.current += 1;
+    clearError();
     setStreamError(null);
+    setActiveToolCalls([]);
     setStages([]);
     setInput("");
     setCommandIndex(0);
+    setHistoryOpen(false);
     void sendMessage({ text });
-  }, [busy, input, sendMessage]);
+  }, [busy, clearError, draftWorkflowBusy, input, sendMessage]);
 
   const handleInputChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     setInput(event.target.value);
@@ -359,57 +454,130 @@ export function useAgentPanel() {
     submit();
   };
 
-  // 收录 / 修改 / Space 变更三类草稿共用一条确认链路：都在这里落到普通的
-  // library / spaces 接口上，写入授权始终来自用户会话，而不是 Agent。
+  // 所有草稿共用一条确认链路：都先落到普通业务接口，再持久化确认标记；
+  // 写入授权始终来自用户会话，而不是 Agent。
   const handleConfirmDraft = useCallback(async (toolCallId: string, action: AgentDraftAction) => {
-    setDraftStates((current) => ({ ...current, [toolCallId]: { status: "saving" } }));
+    const visibleConversationId = conversationIdRef.current;
+    if (!visibleConversationId) {
+      setDraftStates((current) => ({
+        ...current,
+        [toolCallId]: {
+          status: "error",
+          message: "会话状态尚未同步，请稍后再确认。",
+        },
+      }));
+      return;
+    }
+    const pendingKey = pendingDraftConfirmationKey(visibleConversationId, toolCallId);
+    const pendingConfirmation = pendingDraftConfirmationsRef.current.get(pendingKey);
+    const originatingConversationId =
+      pendingConfirmation?.conversationId ?? visibleConversationId;
+    // A history load started just before this click must not switch the visible
+    // conversation while the approved write and its marker are in flight.
+    openRequestRef.current += 1;
+    setHistoryOpen(false);
+    const updateOriginDraftState = (next: AgentDraftState) => {
+      if (conversationIdRef.current !== originatingConversationId) return;
+      setDraftStates((current) => ({ ...current, [toolCallId]: next }));
+    };
+
+    updateOriginDraftState({
+      status: "saving",
+      blocksConversation: pendingConfirmation !== undefined || action.kind === "space_batch",
+    });
     try {
-      // 批量确认没有单一 site_id，因此不走 draft-confirmations 回写；
-      // 保持 null 而不是硬塞一个「代表性」的 id，那会让转录记录以偏概全。
+      if (pendingConfirmation) {
+        try {
+          await recordAgentDraftConfirmation(
+            pendingConfirmation.conversationId,
+            pendingConfirmation.confirmation,
+            AbortSignal.timeout(DRAFT_CONFIRMATION_TIMEOUT_MS),
+          );
+        } catch (failure: unknown) {
+          updateOriginDraftState(confirmationFailureState(failure));
+          return;
+        }
+        pendingDraftConfirmationsRef.current.delete(pendingKey);
+        updateOriginDraftState({ status: "saved" });
+        return;
+      }
+
       let confirmation: Parameters<typeof recordAgentDraftConfirmation>[1] | null = null;
       if (action.kind === "site") {
         const created = await confirmAgentSiteDraft(action.draft);
+        onLibraryChanged?.();
         confirmation = { toolCallId, kind: "site_created", siteId: created.id };
       } else if (action.kind === "site_update") {
         const updated = await confirmAgentSiteUpdate(action.draft);
+        onLibraryChanged?.();
         confirmation = { toolCallId, kind: "site_updated", siteId: updated.id };
       } else if (action.kind === "site_batch") {
-        await confirmAgentSiteBatch(action.draft);
+        const result = await confirmAgentSiteBatch(action.draft);
+        if (result.created > 0) onLibraryChanged?.();
+        if (result.failed > 0) {
+          throw new Error(
+            `批量收录未完全完成：新增 ${result.created} 个，重复 ${result.duplicate} 个，失败 ${result.failed} 个。请重试失败项。`,
+          );
+        }
+        confirmation = { toolCallId, kind: "site_batch_created" };
       } else if (action.kind === "space_membership") {
         await confirmAgentSpaceMembership(action.draft);
+        onLibraryChanged?.();
         confirmation = {
           toolCallId,
           kind: action.draft.action === "add" ? "space_member_added" : "space_member_removed",
           siteId: action.draft.siteId,
           spaceId: action.draft.spaceId,
         };
+      } else if (action.kind === "space_batch") {
+        const result = await confirmAgentSpaceBatch(
+          action.draft,
+          action.selectedSiteIds,
+          toolCallId,
+          AbortSignal.timeout(SPACE_BATCH_WRITE_TIMEOUT_MS),
+        );
+        onLibraryChanged?.();
+        confirmation = {
+          toolCallId,
+          kind: "space_batch_applied",
+          spaceId: result.space.id,
+          siteIds: result.siteIds,
+        };
       } else if (action.kind === "reclassify") {
         await confirmAgentReclassify(action.draft);
+        onLibraryChanged?.();
+        confirmation = { toolCallId, kind: "reclassify_applied" };
       }
-
-      setDraftStates((current) => ({ ...current, [toolCallId]: { status: "saved" } }));
+      if (confirmation === null) {
+        throw new Error("当前版本不支持确认这类 Agent 草稿。");
+      }
 
       // 把「已确认」写回会话，否则下一轮回放到的历史仍然说这张草稿没生效，
-      // Agent 会否认它自己刚存过的东西。这一步失败不能让已经成功的写入显示成失败：
-      // 用户的数据已经落库了，丢的只是一条转录记录。
-      const conversationId = conversationIdRef.current;
-      if (conversationId && confirmation) {
-        try {
-          await recordAgentDraftConfirmation(conversationId, confirmation);
-        } catch {
-          // 有意吞掉：见上。
-        }
+      // Agent 会否认它自己刚存过的东西。marker 失败时保留第二阶段，按钮重试
+      // 只补这条记录，不会再次执行已经成功的业务写入。
+      pendingDraftConfirmationsRef.current.set(pendingKey, {
+        conversationId: originatingConversationId,
+        confirmation,
+      });
+      try {
+        await recordAgentDraftConfirmation(
+          originatingConversationId,
+          confirmation,
+          AbortSignal.timeout(DRAFT_CONFIRMATION_TIMEOUT_MS),
+        );
+      } catch (failure: unknown) {
+        updateOriginDraftState(confirmationFailureState(failure));
+        return;
       }
+      pendingDraftConfirmationsRef.current.delete(pendingKey);
+      updateOriginDraftState({ status: "saved" });
     } catch (failure: unknown) {
-      setDraftStates((current) => ({
-        ...current,
-        [toolCallId]: {
-          status: "error",
-          message: failure instanceof Error ? failure.message : "保存失败，请稍后重试。",
-        },
-      }));
+      updateOriginDraftState({
+        status: "error",
+        message: failure instanceof Error ? failure.message : "保存失败，请稍后重试。",
+      });
     }
-  }, []);
+  }, [onLibraryChanged]);
 
   // 站外结果「+ 收录」：与草稿卡走同一条确认链路，写入始终由用户的会话授权
   const handleCollect = useCallback(async (link: AgentToolLink) => {
@@ -424,6 +592,7 @@ export function useAgentPanel() {
         category: link.category ?? "",
         tags: link.tags,
       });
+      onLibraryChanged?.();
       setWebSaves((current) => ({ ...current, [url]: { status: "saved" } }));
     } catch (failure: unknown) {
       setWebSaves((current) => ({
@@ -434,7 +603,7 @@ export function useAgentPanel() {
         },
       }));
     }
-  }, []);
+  }, [onLibraryChanged]);
 
   const toggleHistory = () => {
     const next = !historyOpen;
@@ -448,10 +617,11 @@ export function useAgentPanel() {
   // 也不会打断页面其余部分（吸顶观察、分类滚动）的状态
   const openConversation = useCallback(
     (id: string) => {
+      if (busy || draftWorkflowBusy) return;
       setHistoryOpen(false);
       if (id === conversationIdRef.current) return;
-      if (busy) void stop();
       // 清掉上一个会话的瞬态（阶段条 / 草稿 / 收录状态），避免串台
+      clearError();
       setStreamError(null);
       setActiveToolCalls([]);
       setStages([]);
@@ -465,6 +635,7 @@ export function useAgentPanel() {
           setConversationId(detail.conversation.id);
           setConversationTitle(detail.conversation.title);
           setMessages(toAgentUIMessages(detail.messages));
+          setDraftStates(restoredDraftStates(detail.messages));
           // replaceState 保持地址可分享，同时避免路由跳转带来的整页重挂
           const url = new URL(window.location.href);
           url.searchParams.set("c", detail.conversation.id);
@@ -478,11 +649,13 @@ export function useAgentPanel() {
           });
         });
     },
-    [busy, stop, setMessages],
+    [busy, clearError, draftWorkflowBusy, setMessages],
   );
 
   const startNewConversation = () => {
-    if (busy) void stop();
+    if (busy || draftWorkflowBusy) return;
+    openRequestRef.current += 1;
+    clearError();
     conversationIdRef.current = null;
     setConversationId(null);
     setConversationTitle(null);
@@ -507,7 +680,7 @@ export function useAgentPanel() {
     textareaRef.current?.focus();
   };
 
-  const errorText = streamError?.message ?? error?.message ?? null;
+  const errorText = streamError?.message ?? transportErrorMessage(error);
 
   // 后端会从第一句话派生标题；历史刷新落地前先用用户原话顶着
   const firstUserText = useMemo(() => {
@@ -536,48 +709,82 @@ export function useAgentPanel() {
     ? formatConversationTime(activeConversation.lastMessageAt)
     : null;
 
-  // 设计稿 1b 的结果分组：取最近一条带链接结果的回答，按来源拆成"收藏库 / 网络"两组
+  // 结果卡只属于当前一轮回答。新问题发出后不能继续展示上一轮卡片，
+  // 否则看起来像 Agent 把旧推荐带进了新答案。
   const resultGroups = useMemo<ResultGroups | null>(() => {
+    if (status === "submitted" && messages[messages.length - 1]?.role !== "user") {
+      return null;
+    }
+    let message: AgentUIMessage | undefined;
     for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message?.role !== "assistant") continue;
-      const seen = new Set<string>();
-      const library: AgentToolLink[] = [];
-      let libraryTotal = 0;
-      const web: AgentToolLink[] = [];
-      let provider: string | null = null;
-      for (const part of message.parts) {
-        if (part.type !== "data-agent-tool-result") continue;
-        const result = normalizeAgentToolResult(part.data);
-        if (!result) continue;
-        const view = describeAgentToolResult(result.name, result.result);
-        if (view.kind !== "links") continue;
-        if (view.source === AGENT_SOURCE_WEB) {
-          provider = provider ?? readWebProvider(result.result);
-          for (const item of view.items) {
-            const key = item.url ?? item.name;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            web.push(item);
-          }
-        } else if (view.source === AGENT_SOURCE_LIBRARY) {
-          // matched_count 是命中总数，可能大于返回条数，分组标题以它为准
-          libraryTotal += view.matchedCount ?? view.items.length;
-          for (const item of view.items) {
-            const key = item.siteId ?? item.url ?? item.name;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            library.push(item);
-          }
-        }
-        // 其他来源的链接（极少见）交给会话流的来源徽标兜底
+      const candidate = messages[index];
+      if (candidate?.role === "assistant") {
+        message = candidate;
+        break;
       }
-      if (library.length > 0 || web.length > 0) {
-        return { library: { items: library, total: libraryTotal }, web: { items: web, provider } };
+      if (candidate?.role === "user") return null;
+    }
+    if (!message) return null;
+
+    const normalizedResults = message.parts.flatMap((part) => {
+      if (part.type !== "data-agent-tool-result") return [];
+      const result = normalizeAgentToolResult(part.data);
+      if (!result) return [];
+      const view = describeAgentToolResult(result.name, result.result);
+      return view.kind === "links" ? [{ result, view }] : [];
+    });
+
+    // presentation 是模型明确提交的最终推荐清单。若一轮里因重试调用多次，
+    // 只认最后一次；即使它经服务端校验后为空，也不能回退展示原始搜索候选。
+    let finalPresentation: (typeof normalizedResults)[number] | undefined;
+    for (let index = normalizedResults.length - 1; index >= 0; index -= 1) {
+      if (normalizedResults[index]?.result.name === "present_website_recommendations") {
+        finalPresentation = normalizedResults[index];
+        break;
       }
     }
-    return null;
-  }, [messages]);
+    const metadata = normalizeAgentMessageMetadata(message.metadata);
+    if (!finalPresentation && (metadata.recommendationManifestVersion ?? 0) >= 1) {
+      return null;
+    }
+    const visibleResults = finalPresentation ? [finalPresentation] : normalizedResults;
+    const seen = new Set<string>();
+    const library: AgentToolLink[] = [];
+    let libraryTotal = 0;
+    const web: AgentToolLink[] = [];
+    let provider: string | null = null;
+    for (const { result, view } of visibleResults) {
+      if (
+        view.source !== AGENT_SOURCE_LIBRARY &&
+        view.source !== AGENT_SOURCE_WEB &&
+        view.source !== AGENT_SOURCE_MODEL
+      ) continue;
+      if (view.source === AGENT_SOURCE_WEB || view.source === AGENT_SOURCE_MODEL) {
+        provider =
+          provider ??
+          readWebProvider(result.result) ??
+          (view.source === AGENT_SOURCE_MODEL ? AGENT_SOURCE_MODEL : null);
+      }
+      for (const item of view.items) {
+        const key = item.siteId ?? item.url ?? item.name;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (item.siteId) {
+          library.push(item);
+          libraryTotal += 1;
+        } else {
+          web.push(item);
+        }
+      }
+      if (view.source === AGENT_SOURCE_LIBRARY && !finalPresentation) {
+        // matched_count 是命中总数，可能大于返回条数，分组标题以它为准
+        libraryTotal += Math.max(0, (view.matchedCount ?? view.items.length) - view.items.length);
+      }
+    }
+    return library.length > 0 || web.length > 0
+      ? { library: { items: library, total: libraryTotal }, web: { items: web, provider } }
+      : null;
+  }, [messages, status]);
 
   const savedCount = useMemo(
     () =>
@@ -601,15 +808,25 @@ export function useAgentPanel() {
     label:
       stage.tool === "search_library"
         ? stage.status === "done"
-          ? `已检索收藏库 · ${stage.count ?? 0} 条匹配`
-          : "正在检索收藏库…"
+          ? `已检索网址库 · ${stage.count ?? 0} 条匹配`
+          : "正在检索网址库…"
         : stage.status === "done"
           ? `已联网搜索${stage.provider ? ` · ${stage.provider}` : ""} · ${stage.count ?? 0} 个来源`
           : "正在联网搜索…",
   }));
-  if (answerStreaming) {
+  const stagedCallIds = new Set(stageItems.map((item) => item.key));
+  for (const call of activeToolCalls) {
+    if (stagedCallIds.has(call.toolCallId)) continue;
+    stageItems.push({
+      key: call.toolCallId,
+      label: `正在${agentToolLabel(call.name)}…`,
+      done: false,
+    });
+  }
+  const hasActiveStage = stageItems.some((item) => !item.done);
+  if (answerStreaming && activeToolCalls.length === 0) {
     stageItems.push({ key: "finalize", label: "正在整理结果…", done: false });
-  } else if (busy && stageItems.length === 0) {
+  } else if (busy && !hasActiveStage) {
     stageItems.push({ key: "thinking", label: "正在思考…", done: false });
   }
 
@@ -646,6 +863,7 @@ export function useAgentPanel() {
     conversationId,
     conversationStarted,
     draftStates,
+    draftWorkflowBusy,
     errorText,
     handleCollect,
     handleConfirmDraft,

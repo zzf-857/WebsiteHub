@@ -19,6 +19,7 @@ import {
   type ChangeEvent,
 } from "react";
 import {
+  createLibraryTagResolvingConflict,
   createLibrarySite,
   DEFAULT_LIBRARY_PAGE_SIZE,
   deleteLibrarySites,
@@ -33,7 +34,10 @@ import {
   startMetadataBackfill,
   updateLibrarySite,
 } from "@/lib/library-client";
-import { MAX_LIBRARY_BULK_DELETE_SITES } from "@/lib/library-contract";
+import {
+  isMetadataBackfillTerminalStatus,
+  MAX_LIBRARY_BULK_DELETE_SITES,
+} from "@/lib/library-contract";
 import type {
   LibraryCategory,
   LibraryDirection,
@@ -403,17 +407,35 @@ export function useLibraryWorkspace() {
     void loadTaxonomies().catch(() => undefined);
   }, [loadTaxonomies, refreshSites]);
 
+  const handleCreateTag = useCallback(async (name: string): Promise<LibraryTag> => {
+    const result = await createLibraryTagResolvingConflict(name);
+    setTags((current) => {
+      if (result.latestTags !== null) return result.latestTags;
+      const next = current.filter((tag) => tag.id !== result.tag.id);
+      next.push(result.tag);
+      next.sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+      return next;
+    });
+    return result.tag;
+  }, []);
+
   const handleAnalysisBackfill = useCallback(async () => {
     if (analysisBackfillBusy) return;
     setAnalysisBackfillBusy(true);
     setSitesError(null);
     try {
       const result = await startMetadataBackfill();
-      if (result.status === "complete") {
+      if (result.status === "completed") {
         setNotice(
           result.totalCount === 0
             ? "没有需要补全的网站"
             : `网站信息补全已完成 ${result.completedCount} / ${result.totalCount}`,
+        );
+      } else if (isMetadataBackfillTerminalStatus(result.status)) {
+        setNotice(
+          result.stoppedEarly
+            ? "网站信息补全已提前停止，请检查模型或搜索 Provider、搜索服务批量能力后重试"
+            : `网站信息补全存在失败项（${result.completedCount} / ${result.totalCount}），可再次补全`,
         );
       } else {
         setNotice(
@@ -571,7 +593,7 @@ export function useLibraryWorkspace() {
     try {
       await createLibrarySite(input);
       setDialog(null);
-      setNotice("网站已加入资料库");
+      setNotice("网站已加入网址库");
       refreshAfterMutation();
     } catch (error) {
       setMutationError(errorMessage(error, "新增网站失败，请重试"));
@@ -635,7 +657,7 @@ export function useLibraryWorkspace() {
     try {
       await deleteLibrarySite(deletingSite.id, deletingSite.version);
       setDialog(null);
-      setNotice("网站已从资料库删除");
+      setNotice("网站已从网址库删除");
       refreshAfterMutation();
     } catch (error) {
       if (isLibraryErrorCode(error, "version_conflict")) {
@@ -678,7 +700,7 @@ export function useLibraryWorkspace() {
       }
       setDialog(null);
       clearSelection();
-      setNotice(`已从资料库删除 ${confirmedDeleted} 个网站`);
+      setNotice(`已从网址库删除 ${confirmedDeleted} 个网站`);
       refreshAfterMutation();
     } catch (error) {
       setDialog(null);
@@ -805,6 +827,7 @@ export function useLibraryWorkspace() {
     dialog,
     direction,
     handleCreate,
+    handleCreateTag,
     handleAnalysisBackfill,
     handleDelete,
     handleBulkDelete,

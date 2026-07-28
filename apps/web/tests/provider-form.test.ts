@@ -25,9 +25,12 @@ function registryItem(overrides: Partial<ProviderRegistryItem> = {}): ProviderRe
     kinds: ["model"],
     secretRequired: true,
     baseUrlRequired: false,
+    fixedBaseUrl: false,
     allowsPrivateBaseUrl: false,
     applicationUrl: null,
     connectionTestSupported: false,
+    searchBulkSupported: true,
+    usageNotice: null,
     defaultBaseUrl: null,
     ...overrides,
   };
@@ -400,7 +403,7 @@ test("连接测试状态映射到 CSS 的 data-status 取值", () => {
   assert.equal(providerTestTone("ok"), "ok");
   assert.equal(providerTestTone("error"), "error");
   assert.equal(providerTestTone("rate_limited"), "rate-limited");
-  // 后端当前恒返回 unsupported：走中性样式，不能被渲染成成功。
+  // 未来未实现探测适配器的厂商仍可能返回 unsupported，应走中性样式。
   assert.equal(providerTestTone("unsupported"), "neutral");
 });
 

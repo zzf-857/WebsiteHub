@@ -140,7 +140,7 @@ def default_slash_command_registry() -> SlashCommandRegistry:
             SlashCommandDefinition(
                 name="/搜索",
                 aliases=("/search",),
-                description="在当前账号的资料库中搜索网站",
+                description="在当前账号的网址库中搜索网站",
                 usage="/搜索 <关键词>",
                 argument_hint="关键词",
             ),

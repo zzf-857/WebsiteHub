@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -82,6 +83,54 @@ class SpaceMember(Base):
     space_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     site_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class SpaceBatchOperationReceipt(Base):
+    """Immutable result of one account-scoped Agent Space batch operation."""
+
+    __tablename__ = "space_batch_operation_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "operation_id",
+            name="space_batch_operation_per_account",
+        ),
+        CheckConstraint(
+            "target_mode IN ('create', 'existing')",
+            name="valid_space_batch_target_mode",
+        ),
+        CheckConstraint("length(payload_hash) = 64", name="valid_space_batch_payload_hash"),
+        CheckConstraint("added_count >= 0", name="nonnegative_space_batch_added_count"),
+        CheckConstraint(
+            "already_member_count >= 0",
+            name="nonnegative_space_batch_existing_count",
+        ),
+        Index(
+            "ix_space_batch_receipts_user_result",
+            "user_id",
+            "result_space_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    operation_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_space_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    selected_site_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    result_space_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    result_json: Mapped[str] = mapped_column(Text, nullable=False)
+    added_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    already_member_count: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )

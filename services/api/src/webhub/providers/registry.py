@@ -15,10 +15,25 @@ class ProviderDefinition:
     base_url_required: bool = False
     allows_private_base_url: bool = False
     application_url: str | None = None
-    # Well-known origin for vendors that expose an OpenAI-compatible surface at
-    # a fixed address.  A stored ``base_url`` always wins; this only spares the
-    # user from typing a URL they cannot meaningfully choose.  ``None`` means
-    # the user must supply one (that is exactly ``base_url_required``).
+    # Search vendors do not expose a common read-only catalogue endpoint.  A
+    # supported search probe therefore performs one minimal real query and may
+    # consume the account's search quota.  Keep this opt-in per adapter so a
+    # newly registered vendor cannot accidentally advertise an unimplemented
+    # or billable test.
+    search_test_supported: bool = False
+    # Free/shared search surfaces are suitable for low-frequency interactive
+    # turns, but must never be selected by any multi-site/bulk analysis path.
+    search_bulk_supported: bool = True
+    usage_notice: str | None = None
+    # Some shared, keyless services are intentionally pinned to one official
+    # endpoint.  Accepting a caller-supplied URL for those adapters would make
+    # the vendor label misleading and could send search queries to an
+    # unexpected MCP server hidden behind the saved configuration.
+    fixed_base_url: bool = False
+    # Well-known origin for vendors with an official address.  A stored
+    # ``base_url`` normally wins so users can opt into a proxy; ``fixed_base_url``
+    # is the explicit exception.  ``None`` means the user must supply one (that
+    # is exactly ``base_url_required``).
     default_base_url: str | None = None
 
     def supports(self, kind: ProviderKind) -> bool:
@@ -28,14 +43,11 @@ class ProviderDefinition:
     def connection_test_supported(self) -> bool:
         """Whether ``providers.connectivity`` can probe this vendor.
 
-        Derived rather than hand-listed so a new provider cannot advertise a
-        test the adapter does not actually implement: the probe lists models,
-        which only makes sense for a vendor that serves models.  Search-only
-        vendors have no equivalent read-only endpoint, and validating their key
-        would mean spending the user's search quota on a health check.
+        Model and embedding vendors use a read-only catalogue.  Search-only
+        vendors must explicitly opt into the minimal-query adapter above.
         """
 
-        return bool(self.kinds & {"model", "embedding"})
+        return bool(self.kinds & {"model", "embedding"}) or self.search_test_supported
 
 
 # Keep this registry aligned with PRD 6.7 and Implementation Plan Phase 4.
@@ -89,6 +101,7 @@ PROVIDER_REGISTRY: tuple[ProviderDefinition, ...] = (
         kinds=frozenset({"search"}),
         secret_required=True,
         application_url="https://app.tavily.com/home",
+        search_test_supported=True,
         default_base_url="https://api.tavily.com",
     ),
     ProviderDefinition(
@@ -97,6 +110,7 @@ PROVIDER_REGISTRY: tuple[ProviderDefinition, ...] = (
         kinds=frozenset({"search"}),
         secret_required=True,
         application_url="https://jina.ai/api-dashboard",
+        search_test_supported=True,
         default_base_url="https://s.jina.ai",
     ),
     ProviderDefinition(
@@ -105,7 +119,22 @@ PROVIDER_REGISTRY: tuple[ProviderDefinition, ...] = (
         kinds=frozenset({"search"}),
         secret_required=True,
         application_url="https://dashboard.exa.ai/api-keys",
+        search_test_supported=True,
         default_base_url="https://api.exa.ai",
+    ),
+    ProviderDefinition(
+        provider="exa_mcp_free",
+        label="Exa MCP 免费额度",
+        kinds=frozenset({"search"}),
+        secret_required=False,
+        search_bulk_supported=False,
+        fixed_base_url=True,
+        usage_notice=(
+            "无需 API Key，使用 Exa 官方共享免费额度。仅适合低频 Agent 对话和"
+            "单站手动分析；不用于批量回填。搜索词会发送给 Exa，达到共享限额后需"
+            "改用自己的搜索 Provider。"
+        ),
+        default_base_url="https://mcp.exa.ai/mcp",
     ),
 )
 

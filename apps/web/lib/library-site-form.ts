@@ -3,6 +3,7 @@ import type { LibrarySite, LibrarySiteUpdateInput } from "./library-contract.ts"
 export type LibrarySiteFormValues = {
   name: string;
   url: string;
+  summary: string;
   description: string;
   faviconUrl: string;
   categoryId: string;
@@ -33,6 +34,12 @@ export function buildLibrarySiteUpdate(
   const url = values.url.trim();
   if (url !== site.originalUrl) {
     input.url = url;
+    changed = true;
+  }
+
+  const summary = values.summary.trim() || null;
+  if (summary !== (site.summary?.trim() || null)) {
+    input.summary = summary;
     changed = true;
   }
 

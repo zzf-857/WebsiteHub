@@ -7,7 +7,7 @@ export default function BookmarkImportPage() {
         <span className="page-kicker">设置</span>
         <h1>导入书签</h1>
         <p className="provider-page-lead">
-          把浏览器导出的书签一次性收进资料库。上传后先给你一份统计，确认之前资料库不会有任何变化。
+          把浏览器导出的书签一次性收进网址库。上传后先给你一份统计，确认之前网址库不会有任何变化。
         </p>
       </header>
       <BookmarkImportWorkspace />

@@ -200,7 +200,7 @@ def test_streams_text_tool_calls_and_persists_the_turn(
                 }
             },
         ),
-        *_text_events(["资料库里", "没有找到相关网站。"]),
+        *_text_events(["网址库里", "没有找到相关网站。"]),
     ]
     with _account(tmp_path) as settings:
         _install_fake_graph(monkeypatch, events)
@@ -228,7 +228,7 @@ def test_streams_text_tool_calls_and_persists_the_turn(
     # The turn is archived in WebHub's own tables, not only in the stream.
     assert [(item.role, item.content) for item in messages] == [
         ("user", "帮我找找向量数据库"),
-        ("assistant", "资料库里没有找到相关网站。"),
+        ("assistant", "网址库里没有找到相关网站。"),
     ]
     assert messages[1].sources[0]["name"] == "search_library"
 
@@ -267,7 +267,7 @@ def test_reasoning_usage_and_server_timings_stream_and_persist(
             (
                 AIMessageChunk(
                     content="",
-                    additional_kwargs={"reasoning_content": "先查资料库。"},
+                    additional_kwargs={"reasoning_content": "先查网址库。"},
                 ),
                 {},
             ),
@@ -319,7 +319,7 @@ def test_reasoning_usage_and_server_timings_stream_and_persist(
             "messages",
             (
                 AIMessageChunk(
-                    content="资料库暂时没有匹配项。",
+                    content="网址库暂时没有匹配项。",
                     usage_metadata={
                         "input_tokens": 20,
                         "output_tokens": 8,
@@ -372,8 +372,8 @@ def test_reasoning_usage_and_server_timings_stream_and_persist(
     assistant = messages[-1]
     assert assistant.metadata == metadata
     assert assistant.parts == [
-        {"type": "reasoning", "text": "先查资料库。再综合结果。"},
-        {"type": "text", "text": "资料库暂时没有匹配项。"},
+        {"type": "reasoning", "text": "先查网址库。再综合结果。"},
+        {"type": "text", "text": "网址库暂时没有匹配项。"},
     ]
 
 

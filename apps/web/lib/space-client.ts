@@ -1,6 +1,7 @@
 import {
   assertSpaceCreateInput,
   assertSpaceExpectedVersion,
+  assertSpaceMemberBatchInput,
   assertSpaceMemberAddInput,
   assertSpaceReorderInput,
   assertSpaceUpdateInput,
@@ -10,6 +11,7 @@ import {
   normalizeSpaceDeleteResult,
   normalizeSpaceDetail,
   normalizeSpaceMemberAddResult,
+  normalizeSpaceMemberBatchResult,
   normalizeSpaceMemberDeleteResult,
   normalizeSpacePage,
   spaceErrorDetails,
@@ -23,6 +25,8 @@ import {
   type SpaceListQuery,
   type SpaceMemberAddInput,
   type SpaceMemberAddResult,
+  type SpaceMemberBatchInput,
+  type SpaceMemberBatchResult,
   type SpaceMemberDeleteResult,
   type SpacePage,
   type SpaceReorderInput,
@@ -213,6 +217,33 @@ export async function addSpaceMember(
     body: JSON.stringify({
       expected_version: normalized.expectedVersion,
       site_id: normalized.siteId,
+    }),
+    signal,
+  }));
+}
+
+export async function addSpaceMembersBatch(
+  input: SpaceMemberBatchInput,
+  signal?: AbortSignal,
+): Promise<SpaceMemberBatchResult> {
+  const normalized = assertSpaceMemberBatchInput(input);
+  const target = normalized.target.mode === "existing"
+    ? {
+        mode: "existing" as const,
+        space_id: normalized.target.spaceId,
+        space_name: normalized.target.spaceName,
+        expected_version: normalized.target.expectedVersion,
+      }
+    : {
+        mode: "create" as const,
+        space_name: normalized.target.spaceName,
+      };
+  return normalizeSpaceMemberBatchResult(await request("/member-batches", {
+    method: "POST",
+    body: JSON.stringify({
+      target,
+      site_ids: normalized.siteIds,
+      operation_id: normalized.operationId,
     }),
     signal,
   }));

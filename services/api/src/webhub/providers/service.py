@@ -13,6 +13,7 @@ from webhub.providers.connectivity import (
     ProviderProbeError,
     probe_base_url,
     probe_models,
+    probe_search,
 )
 from webhub.providers.registry import (
     PROVIDER_REGISTRY,
@@ -128,9 +129,16 @@ def _prepare(
             code="unsupported_provider",
         ) from error
     try:
-        normalized_base_url = normalize_base_url(
-            base_url,
-            allow_private=definition.allows_private_base_url,
+        # Fixed keyless adapters always use the audited official endpoint.  We
+        # deliberately normalize them to ``None`` in storage so stale clients
+        # cannot smuggle a hidden URL into a form that has no address field.
+        normalized_base_url = (
+            None
+            if definition.fixed_base_url
+            else normalize_base_url(
+                base_url,
+                allow_private=definition.allows_private_base_url,
+            )
         )
     except ProviderTargetError as error:
         raise ProviderValidationError(error.message, code=error.code) from error
@@ -220,6 +228,9 @@ def registry() -> ProviderRegistryResponse:
                 allows_private_base_url=item.allows_private_base_url,
                 application_url=item.application_url,
                 connection_test_supported=item.connection_test_supported,
+                search_bulk_supported=item.search_bulk_supported,
+                usage_notice=item.usage_notice,
+                fixed_base_url=item.fixed_base_url,
                 default_base_url=item.default_base_url,
             )
             for item in PROVIDER_REGISTRY
@@ -573,18 +584,19 @@ async def test_connection(
             kind=kind,
             prepared=prepared,
             has_secret=secret_value is not None,
-            # The probe reads the catalogue; it never calls a specific model.
+            # Neither probe needs a model name: model probes list the catalogue,
+            # while search probes use the Provider's search endpoint directly.
             require_model_name=False,
         )
 
-        # Search-only vendors have no read-only catalogue endpoint, and probing
-        # them would mean spending the user's search quota on a health check.
-        # Say so plainly instead of pretending the test ran.
+        # Only adapters with an explicit probe may expose the button.  Model
+        # probes are read-only; search probes make one minimal, potentially
+        # billable query after the user clicks the clearly labelled action.
         if not prepared.definition.connection_test_supported:
             return ProviderConnectionTestResponse(
                 status="unsupported",
                 code="connection_test_unsupported",
-                message="该类服务商没有可用于连接测试的只读接口，未发送任何外部请求",
+                message="该服务商尚未实现连接测试，未发送任何外部请求",
                 kind=kind,
                 provider=provider,
             )
@@ -595,17 +607,27 @@ async def test_connection(
             raise ProviderValidationError(error.message, code=error.code) from error
 
         try:
-            result = await probe_models(
-                prepared.definition,
-                base_url=probe_base,
-                api_key=secret_value,
-                timeout_seconds=settings.provider_test_timeout_seconds,
-            )
+            if kind == "search":
+                search_result = await probe_search(
+                    prepared.definition,
+                    base_url=probe_base,
+                    api_key=secret_value,
+                    timeout_seconds=settings.provider_test_timeout_seconds,
+                )
+                model_result = None
+            else:
+                model_result = await probe_models(
+                    prepared.definition,
+                    base_url=probe_base,
+                    api_key=secret_value,
+                    timeout_seconds=settings.provider_test_timeout_seconds,
+                )
+                search_result = None
         except ProviderProbeError as error:
             # A failed probe is a normal outcome, not a server fault: answer 200
             # with status="failed" so the client can render it inline. Nothing
             # was written, so the stored config and the enabled config are
-            # untouched by construction — this whole function is read-only.
+            # untouched by construction.
             return ProviderConnectionTestResponse(
                 status="failed",
                 code=error.code,
@@ -614,17 +636,30 @@ async def test_connection(
                 provider=provider,
             )
 
+        if search_result is not None:
+            return ProviderConnectionTestResponse(
+                status="ok",
+                code="connection_test_ok",
+                message=(
+                    f"连接成功，测试搜索返回 {search_result.result_count} 条结果。"
+                    "本次请求可能计入服务商额度"
+                ),
+                kind=kind,
+                provider=provider,
+            )
+
+        assert model_result is not None
         return ProviderConnectionTestResponse(
             status="ok",
             code="connection_test_ok",
             message=(
-                f"连接成功，读取到 {len(result.models)} 个模型"
-                if result.models
+                f"连接成功，读取到 {len(model_result.models)} 个模型"
+                if model_result.models
                 else "连接成功，但该服务商没有返回任何模型"
             ),
             kind=kind,
             provider=provider,
-            models=result.models,
+            models=model_result.models,
         )
     finally:
         secret_value = None

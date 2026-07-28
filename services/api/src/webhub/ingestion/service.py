@@ -39,6 +39,7 @@ from .enrichment import (
     SiteEnrichmentUnavailableError,
     SiteTagOption,
     normalize_site_description,
+    normalize_site_summary,
     normalize_site_tag_name,
 )
 from .fetcher import DEFAULT_TIMEOUT_SECONDS, FetchOutcome, fetch_site_metadata
@@ -62,6 +63,7 @@ class AnalysisClaim:
     version: int
     claimed_at: datetime
     partial_retry: bool = False
+    missing_summary: bool = False
     missing_description: bool = False
     missing_icon: bool = False
 
@@ -76,10 +78,12 @@ class AnalysisProviderSignal:
 
 @dataclass(frozen=True, slots=True)
 class _EnrichmentPreferenceSnapshot:
+    summary_is_manual: bool
     description_is_manual: bool
     favicon_is_manual: bool
     category_is_manual: bool
     tags_are_manual: bool
+    summary_is_llm: bool
     description_is_llm: bool
     category_is_llm: bool
     tags_are_llm: bool
@@ -184,17 +188,27 @@ def _backfill_metadata_condition() -> object:
 
 
 def llm_enrichment_missing_condition() -> object:
-    """A completed three-tool enrichment is recorded outside ``sites``."""
+    """Require both the legacy fields and the new short summary to be settled."""
 
     return ~select(SiteMetadataPreference.site_id).where(
         SiteMetadataPreference.user_id == Site.user_id,
         SiteMetadataPreference.site_id == Site.id,
-        or_(
-            SiteMetadataPreference.llm_analyzed_at.is_not(None),
-            and_(
-                SiteMetadataPreference.description_is_manual.is_(True),
-                SiteMetadataPreference.category_is_manual.is_(True),
-                SiteMetadataPreference.tags_are_manual.is_(True),
+        and_(
+            or_(
+                SiteMetadataPreference.llm_analyzed_at.is_not(None),
+                and_(
+                    SiteMetadataPreference.description_is_manual.is_(True),
+                    SiteMetadataPreference.category_is_manual.is_(True),
+                    SiteMetadataPreference.tags_are_manual.is_(True),
+                ),
+            ),
+            or_(
+                SiteMetadataPreference.summary_is_manual.is_(True),
+                and_(
+                    SiteMetadataPreference.llm_analyzed_at.is_not(None),
+                    SiteMetadataPreference.summary_is_llm.is_(True),
+                    func.trim(Site.summary) != "",
+                ),
             ),
         ),
     ).exists()
@@ -374,6 +388,7 @@ async def _claim_analysis(
         version=site.version,
         claimed_at=claimed_at,
         partial_retry=automatic and site.analysis_status == "complete",
+        missing_summary=_blank(site.summary),
         missing_description=_blank(site.description),
         missing_icon=(
             _blank(site.favicon_url) or _is_legacy_favicon_url(site.favicon_url)
@@ -573,10 +588,12 @@ def _preference_snapshot(
     preference: SiteMetadataPreference | None,
 ) -> _EnrichmentPreferenceSnapshot:
     return _EnrichmentPreferenceSnapshot(
+        summary_is_manual=bool(preference and preference.summary_is_manual),
         description_is_manual=bool(preference and preference.description_is_manual),
         favicon_is_manual=bool(preference and preference.favicon_is_manual),
         category_is_manual=bool(preference and preference.category_is_manual),
         tags_are_manual=bool(preference and preference.tags_are_manual),
+        summary_is_llm=bool(preference and preference.summary_is_llm),
         description_is_llm=bool(preference and preference.description_is_llm),
         category_is_llm=bool(preference and preference.category_is_llm),
         tags_are_llm=bool(preference and preference.tags_are_llm),
@@ -597,6 +614,8 @@ async def _load_enrichment_snapshot(
     session: AsyncSession,
     claim: AnalysisClaim,
     outcome: FetchOutcome,
+    *,
+    bulk: bool,
 ) -> _EnrichmentSnapshot | None:
     """Freeze model inputs only while the analysis claim is still exact."""
 
@@ -670,6 +689,7 @@ async def _load_enrichment_snapshot(
             for category in categories
         ),
         existing_tags=tuple(SiteTagOption(id=tag.id, name=tag.name) for tag in tags),
+        bulk=bulk,
     )
     return _EnrichmentSnapshot(
         request=request,
@@ -685,11 +705,19 @@ def _effective_outcome(
     enrichment_error: str | None,
 ) -> FetchOutcome:
     final = outcome
-    if enrichment is not None and outcome.status == "limited":
-        final = replace(outcome, status="complete", reason="已完成网页抓取与 LLM 资料分析")
+    if enrichment is not None and outcome.status in {"failed", "limited"}:
+        final = replace(
+            outcome,
+            status="limited",
+            reason=(
+                "AI 资料分析已完成；原网页未能完整读取，"
+                "图标和预览已按可验证信息尽可能补全"
+            ),
+        )
     elif enrichment_error and outcome.status != "failed":
         final = replace(outcome, status="limited", reason=enrichment_error)
     if claim.partial_retry and final.status == "complete":
+        repaired_summary = not claim.missing_summary or enrichment is not None
         repaired_description = (
             not claim.missing_description
             or bool(final.metadata.description)
@@ -699,7 +727,7 @@ def _effective_outcome(
             not claim.missing_icon
             or _safe_image_url(final.metadata.icon_url) is not None
         )
-        if not repaired_description or not repaired_icon:
+        if not repaired_summary or not repaired_description or not repaired_icon:
             final = replace(final, status="limited", reason="网站资料仍有部分字段无法补全")
     return final
 
@@ -843,6 +871,7 @@ async def _apply_enriched_outcome(
     normalized_new_tags: list[tuple[str, str]] = []
     normalized_new_seen: set[str] = set()
     try:
+        summary = normalize_site_summary(enrichment.summary)
         description = normalize_site_description(enrichment.description)
         for raw_name in enrichment.new_tag_names:
             display, normalized_name = normalize_site_tag_name(raw_name)
@@ -870,6 +899,10 @@ async def _apply_enriched_outcome(
         return await _reject_enrichment_commit(session, claim, status="limited")
 
     current_category_is_default = category_by_id[site.category_id][1]
+    summary_writable = (
+        not snapshot.preference.summary_is_manual
+        and (_blank(site.summary) or snapshot.preference.summary_is_llm)
+    )
     description_writable = (
         not snapshot.preference.description_is_manual
         and (_blank(site.description) or snapshot.preference.description_is_llm)
@@ -922,6 +955,8 @@ async def _apply_enriched_outcome(
         "analysis_updated_at": completed_at,
         "updated_at": Site.updated_at,
     }
+    if summary_writable:
+        values["summary"] = summary
     if description_writable:
         values["description"] = description
 
@@ -971,6 +1006,7 @@ async def _apply_enriched_outcome(
     if preference is None:
         preference = SiteMetadataPreference(user_id=claim.user_id, site_id=claim.site_id)
         session.add(preference)
+    preference.summary_is_llm = summary_writable
     preference.description_is_llm = description_writable
     preference.category_is_llm = category_writable
     preference.tags_are_llm = tags_writable
@@ -1235,11 +1271,13 @@ async def analyze_site(
     try:
         should_use_llm = use_llm
         if bulk and should_use_llm:
-            preference = await session.get(
-                SiteMetadataPreference,
-                {"user_id": user_id, "site_id": site_id},
+            should_use_llm = bool(
+                await session.scalar(
+                    select(llm_enrichment_missing_condition())
+                    .select_from(Site)
+                    .where(Site.user_id == user_id, Site.id == site_id)
+                )
             )
-            should_use_llm = preference is None or preference.llm_analyzed_at is None
             await session.rollback()
         outcome = await fetch_site_metadata(claim.url, timeout_seconds=timeout_seconds)
         enrichment_snapshot: _EnrichmentSnapshot | None = None
@@ -1248,7 +1286,12 @@ async def analyze_site(
         stop_batch = False
         provider_failed: bool | None = None
         if should_use_llm:
-            enrichment_snapshot = await _load_enrichment_snapshot(session, claim, outcome)
+            enrichment_snapshot = await _load_enrichment_snapshot(
+                session,
+                claim,
+                outcome,
+                bulk=bulk,
+            )
             # Never retain a SQLite read snapshot while Provider I/O is in
             # flight. The exact site/taxonomy state is re-read under the final
             # write lock before anything is stored.

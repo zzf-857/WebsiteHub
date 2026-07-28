@@ -25,6 +25,7 @@ const site = {
   name: "MDN",
   original_url: "https://developer.mozilla.org/",
   identity_url: "https://developer.mozilla.org",
+  summary: "提供权威且系统的 Web 开发标准参考资料",
   description: "Web documentation",
   favicon_url: "https://developer.mozilla.org/favicon.ico",
   preview_url: "https://developer.mozilla.org/social.png",
@@ -44,6 +45,7 @@ test("normalizes strict site and paginated list contracts", () => {
     name: "MDN",
     originalUrl: "https://developer.mozilla.org/",
     identityUrl: "https://developer.mozilla.org",
+    summary: "提供权威且系统的 Web 开发标准参考资料",
     description: "Web documentation",
     faviconUrl: "https://developer.mozilla.org/favicon.ico",
     previewUrl: "https://developer.mozilla.org/social.png",
@@ -167,7 +169,7 @@ test("parses structured library error codes without losing readable messages", (
 
   assert.deepEqual(libraryErrorDetails(404, { detail: { code: "not_found" } }), {
     code: "not_found",
-    message: "请求的资料库内容不存在",
+    message: "请求的网址库内容不存在",
   });
   assert.equal(libraryErrorMessage(422, { detail: [{ msg: "Invalid field" }] }), "Invalid field");
 });

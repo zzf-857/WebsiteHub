@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "WebHub Space Groups",
+  "version": "0.1.0",
+  "description": "Open a WebHub Space as a named Chrome or Edge tab group.",
+  "minimum_chrome_version": "102",
+  "permissions": [
+    "storage",
+    "tabGroups"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "https://localhost/*",
+        "http://127.0.0.1/*",
+        "https://127.0.0.1/*"
+      ],
+      "js": [
+        "protocol.js",
+        "content-script.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

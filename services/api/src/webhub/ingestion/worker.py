@@ -73,8 +73,11 @@ class _AccountQueue:
     interactive_overflow: set[str] = field(default_factory=set)
     completions: dict[str, asyncio.Future[FetchOutcome | None]] = field(default_factory=dict)
     intents: dict[str, AnalysisIntent] = field(default_factory=dict)
+    bulk_origins: dict[str, bool] = field(default_factory=dict)
     active_intents: dict[str, AnalysisIntent] = field(default_factory=dict)
+    active_bulk_origins: dict[str, bool] = field(default_factory=dict)
     followup_intents: dict[str, AnalysisIntent] = field(default_factory=dict)
+    followup_bulk_origins: dict[str, bool] = field(default_factory=dict)
     task: asyncio.Task[None] | None = None
 
 
@@ -85,7 +88,7 @@ class _AutoBackfill:
     candidates: deque[str] = field(default_factory=deque)
     pending: set[str] = field(default_factory=set)
     completions: dict[str, asyncio.Future[FetchOutcome | None]] = field(default_factory=dict)
-    followup_enrichment: set[str] = field(default_factory=set)
+    followup_enrichment: dict[str, bool] = field(default_factory=dict)
     discovery_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     rescan_requested: bool = False
     task: asyncio.Task[None] | None = None
@@ -174,7 +177,9 @@ async def _run_account(key: _AccountKey, state: _AccountQueue) -> None:
             site_id = state.site_ids.popleft()
             completion = state.completions[site_id]
             intent = state.intents.pop(site_id, AnalysisIntent.METADATA_ONLY)
+            bulk_origin = state.bulk_origins.pop(site_id, False)
             state.active_intents[site_id] = intent
+            state.active_bulk_origins[site_id] = bulk_origin
             try:
                 if intent is AnalysisIntent.SITE_ENRICHMENT:
                     async with _llm_semaphore(), _global_semaphore():
@@ -182,6 +187,7 @@ async def _run_account(key: _AccountKey, state: _AccountQueue) -> None:
                             state.database,
                             state.user_id,
                             site_id,
+                            bulk=state.active_bulk_origins.get(site_id, False),
                             use_llm=True,
                             enricher=_SITE_ENRICHERS.get(id(state.database)),
                         )
@@ -205,9 +211,11 @@ async def _run_account(key: _AccountKey, state: _AccountQueue) -> None:
                     completion.set_result(result)
             finally:
                 followup = state.followup_intents.pop(site_id, None)
+                followup_bulk = state.followup_bulk_origins.pop(site_id, False)
                 state.pending.discard(site_id)
                 state.interactive_overflow.discard(site_id)
                 state.active_intents.pop(site_id, None)
+                state.active_bulk_origins.pop(site_id, None)
                 state.completions.pop(site_id, None)
                 if (
                     followup is AnalysisIntent.SITE_ENRICHMENT
@@ -215,6 +223,7 @@ async def _run_account(key: _AccountKey, state: _AccountQueue) -> None:
                 ):
                     state.pending.add(site_id)
                     state.intents[site_id] = followup
+                    state.bulk_origins[site_id] = followup_bulk
                     state.completions[site_id] = asyncio.get_running_loop().create_future()
                     state.site_ids.appendleft(site_id)
 
@@ -310,12 +319,11 @@ async def _consume_auto_backfill(state: _AutoBackfill) -> None:
                 if not completion.done():
                     completion.set_result(result)
             finally:
-                followup_enrichment = site_id in state.followup_enrichment
-                state.followup_enrichment.discard(site_id)
+                followup_bulk = state.followup_enrichment.pop(site_id, None)
                 state.pending.discard(site_id)
                 state.completions.pop(site_id, None)
                 if (
-                    followup_enrichment
+                    followup_bulk is not None
                     and id(state.database) not in _STOPPED_DATABASES
                 ):
                     scheduled = schedule_analysis(
@@ -323,8 +331,9 @@ async def _consume_auto_backfill(state: _AutoBackfill) -> None:
                         user_id=state.user_id,
                         site_ids=(site_id,),
                         priority=True,
-                        interactive=True,
+                        interactive=not followup_bulk,
                         intent=AnalysisIntent.SITE_ENRICHMENT,
+                        bulk=followup_bulk,
                     )
                     if scheduled.rejected:
                         _LOGGER.warning(
@@ -448,6 +457,94 @@ async def _metadata_claim_miss_resolution(
     return "skipped"
 
 
+async def _analyze_metadata_item_with_capacity(
+    state: _MetadataBackfill,
+    lease: metadata_backfill.MetadataBackfillRunLease,
+    item: metadata_backfill.MetadataBackfillItemClaim,
+    *,
+    requires_llm: bool,
+) -> FetchOutcome | None:
+    """Run one immutable item claim under the capacity its snapshot requires."""
+
+    async def persist_site_claim(
+        session: AsyncSession,
+        claim: AnalysisClaim,
+    ) -> bool:
+        # Keep the durable item token and pending Site identity in the same
+        # transaction so restart recovery cannot steal either half.
+        return await metadata_backfill.record_item_site_claim(
+            session,
+            lease,
+            item,
+            claimed_at=claim.claimed_at,
+        )
+
+    async def provider_call_is_allowed(session: AsyncSession) -> bool:
+        return (
+            await metadata_backfill.item_execution_intent(session, lease, item)
+            is True
+        )
+
+    async def persist_provider_signal(
+        session: AsyncSession,
+        signal: AnalysisProviderSignal,
+    ) -> bool:
+        recorded = await metadata_backfill.record_provider_result(
+            session,
+            lease,
+            item,
+            failed=signal.failed,
+            stop_batch=signal.stop_batch,
+        )
+        return recorded is not None
+
+    async def execution_intent() -> bool:
+        async with state.database.sessions() as session:
+            current = await metadata_backfill.item_execution_intent(
+                session,
+                lease,
+                item,
+            )
+        if current is None:
+            raise _MetadataItemExecutionBlocked
+        return current
+
+    async def analyze_claimed_item(current_requires_llm: bool) -> FetchOutcome | None:
+        return await analyze_in_background(
+            state.database,
+            state.user_id,
+            item.site_id,
+            bulk=True,
+            expected_version=item.expected_version,
+            expected_analysis_status=item.initial_analysis_status,
+            expected_analysis_claimed_at=item.analysis_claimed_at,
+            on_claimed=persist_site_claim,
+            on_provider_signal=persist_provider_signal,
+            before_provider_call=(
+                provider_call_is_allowed if current_requires_llm else None
+            ),
+            propagate_errors=True,
+            use_llm=current_requires_llm,
+            enricher=(
+                _SITE_ENRICHERS.get(id(state.database))
+                if current_requires_llm
+                else None
+            ),
+        )
+
+    if requires_llm:
+        async with _llm_semaphore(), _global_semaphore():
+            return await analyze_claimed_item(await execution_intent())
+
+    async with _global_semaphore():
+        current_requires_llm = await execution_intent()
+        if current_requires_llm:
+            # The intent changed while waiting for network capacity. Requeue so
+            # the next claim also acquires the bounded model semaphore.
+            raise _MetadataItemExecutionBlocked
+        return await analyze_claimed_item(False)
+
+
 async def _consume_metadata_backfill(
     state: _MetadataBackfill,
     lease: metadata_backfill.MetadataBackfillRunLease,
@@ -474,108 +571,14 @@ async def _consume_metadata_backfill(
                 requires_llm = await _metadata_item_needs_llm(state, item)
 
                 try:
-                    async def persist_site_claim(
-                        session: AsyncSession,
-                        claim: AnalysisClaim,
-                    ) -> bool:
-                        # The analysis service invokes this before committing
-                        # its pending Site state. Keep the item token in that
-                        # same transaction so restart recovery has one exact,
-                        # non-stealable pending identity to resume.
-                        return await metadata_backfill.record_item_site_claim(
-                            session,
+                    analysis_task = asyncio.create_task(
+                        _analyze_metadata_item_with_capacity(
+                            state,
                             lease,
                             item,
-                            claimed_at=claim.claimed_at,
+                            requires_llm=requires_llm,
                         )
-
-                    async def provider_call_is_allowed(session: AsyncSession) -> bool:
-                        return (
-                            await metadata_backfill.item_execution_intent(
-                                session,
-                                lease,
-                                item,
-                            )
-                            is True
-                        )
-
-                    async def persist_provider_signal(
-                        session: AsyncSession,
-                        signal: AnalysisProviderSignal,
-                    ) -> bool:
-                        recorded = await metadata_backfill.record_provider_result(
-                            session,
-                            lease,
-                            item,
-                            failed=signal.failed,
-                            stop_batch=signal.stop_batch,
-                        )
-                        return recorded is not None
-
-                    async def analyze_claimed_item(
-                        current_requires_llm: bool,
-                    ) -> FetchOutcome | None:
-                        return await analyze_in_background(
-                            state.database,
-                            state.user_id,
-                            item.site_id,
-                            bulk=True,
-                            expected_version=item.expected_version,
-                            expected_analysis_status=item.initial_analysis_status,
-                            expected_analysis_claimed_at=item.analysis_claimed_at,
-                            on_claimed=persist_site_claim,
-                            on_provider_signal=persist_provider_signal,
-                            before_provider_call=(
-                                provider_call_is_allowed
-                                if current_requires_llm
-                                else None
-                            ),
-                            propagate_errors=True,
-                            use_llm=current_requires_llm,
-                            enricher=(
-                                _SITE_ENRICHERS.get(id(state.database))
-                                if current_requires_llm
-                                else None
-                            ),
-                        )
-
-                    async def analyze_with_capacity() -> FetchOutcome | None:
-                        if requires_llm:
-                            capacity = (_llm_semaphore(), _global_semaphore())
-                        else:
-                            capacity = (_global_semaphore(),)
-                        if len(capacity) == 2:
-                            async with capacity[0], capacity[1]:
-                                async with state.database.sessions() as session:
-                                    current_requires_llm = (
-                                        await metadata_backfill.item_execution_intent(
-                                            session,
-                                            lease,
-                                            item,
-                                        )
-                                    )
-                                if current_requires_llm is None:
-                                    raise _MetadataItemExecutionBlocked
-                                return await analyze_claimed_item(current_requires_llm)
-                        async with capacity[0]:
-                            async with state.database.sessions() as session:
-                                current_requires_llm = (
-                                    await metadata_backfill.item_execution_intent(
-                                        session,
-                                        lease,
-                                        item,
-                                    )
-                                )
-                            if current_requires_llm is None:
-                                raise _MetadataItemExecutionBlocked
-                            if current_requires_llm:
-                                # The intent changed while this item waited for
-                                # network capacity. Requeue it so the next claim
-                                # acquires the bounded LLM semaphore as well.
-                                raise _MetadataItemExecutionBlocked
-                            return await analyze_claimed_item(current_requires_llm)
-
-                    analysis_task = asyncio.create_task(analyze_with_capacity())
+                    )
                     assert heartbeat is not None
                     done, _ = await asyncio.wait(
                         {analysis_task, heartbeat},
@@ -833,8 +836,9 @@ def schedule_analysis(
     priority: bool = False,
     interactive: bool = False,
     intent: AnalysisIntent = AnalysisIntent.METADATA_ONLY,
+    bulk: bool = False,
 ) -> AnalysisSchedule:
-    """Append bounded work, with optional foreground ordering and one escape slot."""
+    """Append bounded work, preserving whether LLM work came from a batch."""
 
     key = _account_key(database, user_id)
     state = _ACCOUNTS.get(key)
@@ -851,14 +855,33 @@ def schedule_analysis(
         if state is not None and site_id in state.pending:
             if intent is AnalysisIntent.SITE_ENRICHMENT:
                 if site_id in state.site_ids:
+                    queued_intent = state.intents.get(
+                        site_id,
+                        AnalysisIntent.METADATA_ONLY,
+                    )
                     state.intents[site_id] = AnalysisIntent.SITE_ENRICHMENT
+                    if queued_intent is AnalysisIntent.SITE_ENRICHMENT:
+                        state.bulk_origins[site_id] = (
+                            state.bulk_origins.get(site_id, True) and bulk
+                        )
+                    else:
+                        state.bulk_origins[site_id] = bulk
                 elif state.active_intents.get(site_id) is AnalysisIntent.METADATA_ONLY:
                     state.followup_intents[site_id] = AnalysisIntent.SITE_ENRICHMENT
+                    state.followup_bulk_origins[site_id] = (
+                        state.followup_bulk_origins.get(site_id, True) and bulk
+                    )
+                elif state.active_intents.get(site_id) is AnalysisIntent.SITE_ENRICHMENT:
+                    state.active_bulk_origins[site_id] = (
+                        state.active_bulk_origins.get(site_id, True) and bulk
+                    )
             already_queued += 1
             continue
         if auto_state is not None and site_id in auto_state.pending:
             if intent is AnalysisIntent.SITE_ENRICHMENT:
-                auto_state.followup_enrichment.add(site_id)
+                auto_state.followup_enrichment[site_id] = (
+                    auto_state.followup_enrichment.get(site_id, True) and bulk
+                )
             already_queued += 1
             continue
         account_pending = len(state.pending) if state is not None else 0
@@ -889,6 +912,7 @@ def schedule_analysis(
             _ACCOUNTS[key] = state
         state.pending.add(site_id)
         state.intents[site_id] = intent
+        state.bulk_origins[site_id] = bulk
         if priority:
             priority_site_ids.append(site_id)
         else:
@@ -915,6 +939,27 @@ async def analyze_and_wait(
 ) -> FetchOutcome | None:
     """Run or join a true LLM enrichment without accepting metadata-only work."""
 
+    async with database.sessions() as session:
+        initial_preference = await session.get(
+            SiteMetadataPreference,
+            {"user_id": user_id, "site_id": site_id},
+        )
+        baseline_llm_analyzed_at = (
+            initial_preference.llm_analyzed_at if initial_preference is not None else None
+        )
+        await session.rollback()
+
+    async def site_is_failed() -> bool:
+        async with database.sessions() as session:
+            analysis_status = await session.scalar(
+                select(Site.analysis_status).where(
+                    Site.user_id == user_id,
+                    Site.id == site_id,
+                )
+            )
+            await session.rollback()
+        return analysis_status == "failed"
+
     key = _account_key(database, user_id)
     while id(database) not in _STOPPED_DATABASES:
         state = _ACCOUNTS.get(key)
@@ -923,16 +968,26 @@ async def analyze_and_wait(
             active_intent = state.active_intents.get(site_id)
             queued_intent = state.intents.get(site_id)
             if active_intent is AnalysisIntent.SITE_ENRICHMENT:
+                # A foreground single-site request is narrower than historical
+                # batch work. If the Provider call is still waiting on
+                # capacity, let the non-bulk origin win before it starts.
+                state.active_bulk_origins[site_id] = False
                 return await asyncio.shield(completion)
             if active_intent is None and queued_intent is not None:
                 # The deque has not started this row yet, so upgrade it in
                 # place without fetching the same page twice.
                 state.intents[site_id] = AnalysisIntent.SITE_ENRICHMENT
+                state.bulk_origins[site_id] = False
                 return await asyncio.shield(completion)
             # A metadata-only fetch is already on the wire. Let it finish,
             # then enqueue the requested LLM pass instead of falsely treating
             # the lower-intent result as success.
-            await asyncio.shield(completion)
+            joined_outcome = await asyncio.shield(completion)
+            if (
+                (joined_outcome is not None and joined_outcome.status == "failed")
+                or (joined_outcome is None and await site_is_failed())
+            ):
+                return None
             continue
 
         auto_state = _AUTO_BACKFILLS.get(key)
@@ -940,7 +995,12 @@ async def analyze_and_wait(
             auto_state.completions.get(site_id) if auto_state is not None else None
         )
         if auto_completion is not None:
-            await asyncio.shield(auto_completion)
+            joined_outcome = await asyncio.shield(auto_completion)
+            if (
+                (joined_outcome is not None and joined_outcome.status == "failed")
+                or (joined_outcome is None and await site_is_failed())
+            ):
+                return None
             continue
 
         scheduled = schedule_analysis(
@@ -950,6 +1010,7 @@ async def analyze_and_wait(
             priority=True,
             interactive=True,
             intent=AnalysisIntent.SITE_ENRICHMENT,
+            bulk=False,
         )
         if scheduled.queued != 1:
             if scheduled.already_queued:
@@ -981,15 +1042,28 @@ async def analyze_and_wait(
                     SiteMetadataPreference,
                     {"user_id": user_id, "site_id": site_id},
                 )
-            if site is None or (preference is not None and preference.llm_analyzed_at is not None):
+            if site is None:
                 return None
-            if site.analysis_status != "pending":
-                break
-            if asyncio.get_running_loop().time() >= wait_deadline:
-                raise AnalysisQueueFullError(
-                    "该网站正由批量任务处理，请稍后查看分析结果"
-                )
-            await asyncio.sleep(0.5)
+            if site.analysis_status == "pending":
+                if asyncio.get_running_loop().time() >= wait_deadline:
+                    raise AnalysisQueueFullError(
+                        "该网站正由批量任务处理，请稍后查看分析结果"
+                    )
+                await asyncio.sleep(0.5)
+                continue
+            if site.analysis_status == "failed":
+                return None
+            current_llm_analyzed_at = (
+                preference.llm_analyzed_at if preference is not None else None
+            )
+            if (
+                current_llm_analyzed_at is not None
+                and current_llm_analyzed_at != baseline_llm_analyzed_at
+            ):
+                return None
+            # A metadata-only owner completed without advancing the LLM
+            # marker. Loop once more to queue the requested enrichment pass.
+            break
 
     raise AnalysisQueueFullError("网站分析服务正在停止，请稍后重试")
 
@@ -1035,8 +1109,11 @@ async def shutdown(database: Database) -> None:
         state.interactive_overflow.clear()
         state.completions.clear()
         state.intents.clear()
+        state.bulk_origins.clear()
         state.active_intents.clear()
+        state.active_bulk_origins.clear()
         state.followup_intents.clear()
+        state.followup_bulk_origins.clear()
         _ACCOUNTS.pop(key, None)
     for key, state in list(_AUTO_BACKFILLS.items()):
         if key[0] != database_id:

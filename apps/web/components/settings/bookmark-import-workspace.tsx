@@ -137,7 +137,7 @@ export function BookmarkImportWorkspace() {
             </h2>
             <p className="provider-section-desc">
               浏览器里导出的书签 HTML 文件（Chrome / Edge / Firefox / Safari 都支持）。
-              上传只做解析与统计，<strong>不会写入资料库</strong>，要不要导入由你在下一步决定。
+              上传只做解析与统计，<strong>不会写入网址库</strong>，要不要导入由你在下一步决定。
             </p>
           </div>
           <button
@@ -173,7 +173,7 @@ export function BookmarkImportWorkspace() {
           <div className="provider-section-titles">
             <h2 className="provider-section-title">解析完成</h2>
             <p className="provider-section-desc">
-              以下数字来自这份文件本身，此时资料库还没有任何变化。
+              以下数字来自这份文件本身，此时网址库还没有任何变化。
             </p>
           </div>
           <dl className="bookmark-stats">

@@ -12,6 +12,7 @@ const site: LibrarySite = {
   name: "Example",
   originalUrl: "https://old.example/",
   identityUrl: "https://old.example",
+  summary: "A concise but complete saved site summary",
   description: "Saved description",
   faviconUrl: "https://old.example/favicon.ico",
   previewUrl: "https://old.example/preview.png",
@@ -28,6 +29,7 @@ const site: LibrarySite = {
 const values: LibrarySiteFormValues = {
   name: site.name,
   url: site.originalUrl,
+  summary: site.summary ?? "",
   description: site.description ?? "",
   faviconUrl: site.faviconUrl ?? "",
   categoryId: site.category.id,
@@ -59,5 +61,19 @@ test("site edit PATCH preserves explicit favicon changes and clears", () => {
   assert.deepEqual(buildLibrarySiteUpdate(site, { ...values, faviconUrl: "" }), {
     expectedVersion: 4,
     faviconUrl: null,
+  });
+});
+
+test("site edit PATCH treats summary and detailed description independently", () => {
+  assert.deepEqual(buildLibrarySiteUpdate(site, {
+    ...values,
+    summary: "A concise but complete replacement summary",
+  }), {
+    expectedVersion: 4,
+    summary: "A concise but complete replacement summary",
+  });
+  assert.deepEqual(buildLibrarySiteUpdate(site, { ...values, description: "" }), {
+    expectedVersion: 4,
+    description: null,
   });
 });

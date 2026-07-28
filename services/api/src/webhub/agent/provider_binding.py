@@ -1,8 +1,9 @@
 """Resolve an account's enabled Provider config into a usable client binding.
 
-WebHub never ships a built-in vendor key: every model, embedding and search
-call runs on credentials the account owner stored themselves.  This module is
-the only place where such a credential is decrypted for outbound use.
+WebHub never ships a built-in vendor key. Credentialed model, embedding and
+search calls use keys stored by the account owner; explicitly enabled keyless
+adapters are pinned to their audited official endpoint. This module is the only
+place where a stored credential is decrypted for outbound use.
 
 Three invariants hold here and must keep holding:
 
@@ -40,9 +41,9 @@ from webhub.providers.targets import ProviderTargetError, validate_connection_ta
 from .runner import AgentProviderNotConfiguredError
 
 # Vendors that expose their API at a well-known origin.  A stored ``base_url``
-# always wins; these only spare the user from typing a URL they cannot
-# meaningfully choose.  Derived from the registry so the connection probe and
-# the Agent runtime can never disagree about where a vendor lives.
+# normally wins, except for definitions whose audited adapter pins an official
+# endpoint via ``fixed_base_url``.  Derived from the registry so the connection
+# probe and the Agent runtime can never disagree about where a vendor lives.
 DEFAULT_BASE_URLS: dict[str, str] = {
     definition.provider: definition.default_base_url
     for definition in PROVIDER_REGISTRY
@@ -79,7 +80,13 @@ def _resolved_base_url(
     definition: ProviderDefinition,
     stored_base_url: str | None,
 ) -> str:
-    candidate = (stored_base_url or "").strip().rstrip("/")
+    # A fixed endpoint is part of the adapter's trust boundary, not a UI hint.
+    # Ignore legacy/custom stored values as well as new caller input.
+    candidate = (
+        ""
+        if definition.fixed_base_url
+        else (stored_base_url or "").strip().rstrip("/")
+    )
     if not candidate:
         candidate = DEFAULT_BASE_URLS.get(definition.provider, "")
     if not candidate:

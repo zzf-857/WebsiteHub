@@ -42,6 +42,10 @@ export function ProviderConfigCard({
   onEdit: () => void;
   onDelete: () => void;
 }>) {
+  const displayedBaseUrl = definition?.fixedBaseUrl
+    ? definition.defaultBaseUrl
+    : config.baseUrl ?? definition?.defaultBaseUrl;
+
   return (
     <article className="provider-card" data-enabled={config.enabled} aria-busy={busy || undefined}>
       <div className="provider-card-head">
@@ -56,6 +60,9 @@ export function ProviderConfigCard({
           ) : (
             <span className="provider-badge" data-tone="muted">未启用</span>
           )}
+          {config.kind === "search" && definition && !definition.searchBulkSupported && (
+            <span className="provider-badge" data-tone="muted">仅低频 · 不支持批量</span>
+          )}
         </div>
       </div>
 
@@ -63,9 +70,11 @@ export function ProviderConfigCard({
         {config.kind !== "search" && (
           <MetaRow label="模型">{config.modelName ?? "未填写"}</MetaRow>
         )}
-        <MetaRow label="地址">{config.baseUrl ?? "服务商默认地址"}</MetaRow>
+        <MetaRow label="地址">{displayedBaseUrl ?? "服务商默认地址"}</MetaRow>
         <MetaRow label="API Key">
-          {config.hasSecret ? (
+          {definition?.secretRequired === false ? (
+            "无需 API Key"
+          ) : config.hasSecret ? (
             // 全站只展示后端回传的掩码，绝不还原明文。
             <span className="provider-secret-mask">{config.secretMask}</span>
           ) : (

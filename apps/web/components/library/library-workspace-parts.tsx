@@ -25,6 +25,7 @@ import {
 import {
   LibraryApiError,
 } from "@/lib/library-client";
+import { librarySiteCardSummary } from "@/lib/library-contract";
 import type {
   LibrarySite,
   LibrarySiteSelectionItem,
@@ -250,7 +251,9 @@ export function SiteCollection({
                 <span className="library-site-host" title={site.originalUrl}>
                   {siteHost(site)}
                 </span>
-                {site.description && <p className="library-site-description">{site.description}</p>}
+                {librarySiteCardSummary(site) && (
+                  <p className="library-site-description">{librarySiteCardSummary(site)}</p>
+                )}
               </div>
             </div>
 

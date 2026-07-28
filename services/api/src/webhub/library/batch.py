@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from webhub.bookmarks.models import NormalizationStatus
 from webhub.bookmarks.normalization import normalize_bookmark_url
 from webhub.db.models import Site
-from webhub.library.schemas import MAX_BATCH_URLS
+from webhub.library.schemas import MAX_BATCH_URLS, SiteCreateSource
 from webhub.library.service import LibraryError
 
 ItemStatus = Literal["ready", "duplicate", "invalid", "created", "failed"]
@@ -127,7 +127,7 @@ async def preview_batch(
                 BatchItem(
                     url=url,
                     status="duplicate",
-                    reason="资料库里已经有这个网址",
+                    reason="网址库里已经有这个网址",
                     identity_url=identity,
                 )
             )
@@ -153,6 +153,7 @@ async def create_batch(
     urls: list[str],
     *,
     default_name_from_host: bool = True,
+    source: SiteCreateSource = "manual",
 ) -> list[BatchItem]:
     """Create a Site for every importable URL, item by item.
 
@@ -184,7 +185,7 @@ async def create_batch(
             created = await library_service.create_site(
                 session,
                 user_id,
-                SiteCreateRequest(name=name[:160], url=item.url),
+                SiteCreateRequest(name=name[:160], url=item.url, source=source),
             )
         except LibraryError as error:
             # A concurrent write may have taken the URL between preview and

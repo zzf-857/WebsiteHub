@@ -55,6 +55,7 @@ from webhub.db.models.metadata_backfill import (
 from webhub.db.models.site_metadata_preferences import SiteMetadataPreference
 from webhub.db.models.spaces import (
     Space,
+    SpaceBatchOperationReceipt,
     SpaceMember,
 )
 
@@ -85,6 +86,7 @@ __all__ = [
     "SiteMetadataPreference",
     "SiteTag",
     "Space",
+    "SpaceBatchOperationReceipt",
     "SpaceMember",
     "Tag",
     "User",

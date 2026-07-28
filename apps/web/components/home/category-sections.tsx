@@ -24,6 +24,7 @@ import {
   useBoundedAnalysisRefresh,
 } from "@/lib/analysis-refresh";
 import { listLibraryCategories, listLibrarySites } from "@/lib/library-client";
+import { librarySiteCardSummary } from "@/lib/library-contract";
 import type {
   LibraryCategory,
   LibrarySite,
@@ -491,7 +492,7 @@ function CategorySection({
                 <span className="home-site-name">{site.name}</span>
                 {site.tags[0] && <span className="home-site-tag">{site.tags[0].name}</span>}
               </span>
-              <span className="home-site-desc">{site.description?.trim() ?? ""}</span>
+              <span className="home-site-desc">{librarySiteCardSummary(site)}</span>
               <span className="home-site-host">{siteHostname(site.originalUrl)}</span>
             </Link>
           ))}

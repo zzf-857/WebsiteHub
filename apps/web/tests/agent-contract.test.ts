@@ -456,7 +456,7 @@ test("restores archived reasoning, provenance, metadata, and answer text in live
         role: "assistant",
         content: "给你两个链接",
         parts: [
-          { type: "reasoning", text: "先查资料库。" },
+          { type: "reasoning", text: "先查网址库。" },
           { type: "text", text: "给你两个链接" },
         ],
         sources: [{ toolCallId: "call-1", name: "search_library", result: { items: [] } }],
@@ -474,7 +474,7 @@ test("restores archived reasoning, provenance, metadata, and answer text in live
         role: "assistant",
         metadata: { elapsedMs: 900, usage: { totalTokens: 24 } },
         parts: [
-          { type: "reasoning", text: "先查资料库。" },
+          { type: "reasoning", text: "先查网址库。" },
           {
             type: "data-agent-tool-result",
             data: { toolCallId: "call-1", name: "search_library", result: { items: [] } },
@@ -646,7 +646,7 @@ test("批量草稿被投影成 site-batch 视图，逐项状态原样保留", ()
       items: [
         { url: "https://a.example.com/1", status: "ready", reason: null },
         { url: "https://b.example.com/2", status: "ready", reason: null },
-        { url: "https://dup.example.com", status: "duplicate", reason: "资料库里已经有这个网址" },
+        { url: "https://dup.example.com", status: "duplicate", reason: "网址库里已经有这个网址" },
         { url: "ftp://bad.example.com", status: "invalid", reason: "网址无效或不受支持" },
       ],
     },
@@ -786,7 +786,7 @@ test("propose_reclassify 拒绝与 noop 状态正常处理", () => {
 
   const noop = describeAgentToolResult("propose_reclassify", {
     status: "noop",
-    message: "资料库中没有需要分类的网站。",
+    message: "网址库中没有需要分类的网站。",
   });
   assert.equal(noop.kind, "noop");
 });

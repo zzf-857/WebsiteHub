@@ -7,12 +7,19 @@ import json
 import unicodedata
 from datetime import datetime
 from typing import Literal
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from webhub.db.models import Site, Space, SpaceMember, utc_now
+from webhub.db.models import (
+    Site,
+    Space,
+    SpaceBatchOperationReceipt,
+    SpaceMember,
+    utc_now,
+)
 from webhub.library.schemas import normalize_favicon_url
 from webhub.spaces.schemas import (
     SpaceCreateRequest,
@@ -23,6 +30,8 @@ from webhub.spaces.schemas import (
     SpaceListResponse,
     SpaceMemberAddRequest,
     SpaceMemberAddResponse,
+    SpaceMemberBatchRequest,
+    SpaceMemberBatchResponse,
     SpaceMemberDeleteResponse,
     SpaceMemberResponse,
     SpaceReorderRequest,
@@ -68,6 +77,13 @@ def _space_name(value: str) -> tuple[str, str]:
     if len(display) > 120:
         raise SpaceValidationError("Space 名称不能超过 120 个字符")
     return display, display.casefold()
+
+
+def space_batch_space_id(user_id: str, operation_id: str) -> str:
+    """Derive the resource identity for one account-scoped create operation."""
+
+    identity = f"webhub:space-batch:{user_id}:{operation_id.strip()}"
+    return str(uuid5(NAMESPACE_URL, identity))
 
 
 async def _owned_space(session: AsyncSession, user_id: str, space_id: str) -> Space:
@@ -142,6 +158,7 @@ def _member_response(member: SpaceMember, site: Site) -> SpaceMemberResponse:
             name=site.name,
             original_url=site.original_url,
             identity_url=site.identity_url,
+            summary=site.summary,
             description=site.description,
             favicon_url=_safe_favicon_url(site.favicon_url),
             pinned=site.pinned,
@@ -451,6 +468,669 @@ async def add_member(
     )
 
 
+async def _completed_member_batch(
+    session: AsyncSession,
+    user_id: str,
+    space_id: str,
+    site_ids: list[str],
+    *,
+    allow_empty: bool = False,
+) -> SpaceMemberBatchResponse | None:
+    """Return an idempotent result only for a fully reached outcome."""
+
+    if not site_ids and not allow_empty:
+        return None
+    space = await session.scalar(
+        select(Space)
+        .where(
+            Space.user_id == user_id,
+            Space.id == space_id,
+        )
+        .with_for_update()
+    )
+    if space is None:
+        return None
+    existing_site_ids = set(
+        (
+            await session.scalars(
+                select(SpaceMember.site_id)
+                .where(
+                    SpaceMember.user_id == user_id,
+                    SpaceMember.space_id == space.id,
+                    SpaceMember.site_id.in_(site_ids),
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    if len(existing_site_ids) != len(site_ids):
+        return None
+    return SpaceMemberBatchResponse(
+        space=_space_response(
+            space,
+            await _member_count(session, user_id, space.id),
+        ),
+        added_count=0,
+        already_member_count=len(site_ids),
+        site_ids=site_ids,
+    )
+
+
+def _space_batch_payload_hash(
+    payload: SpaceMemberBatchRequest,
+    normalized_name: str,
+) -> str:
+    target: dict[str, object] = {"mode": payload.target.mode}
+    if payload.target.mode == "create":
+        target["space_name"] = normalized_name
+    else:
+        target["space_id"] = payload.target.space_id
+        target["expected_version"] = payload.target.expected_version
+    encoded = json.dumps(
+        {"target": target, "site_ids": payload.site_ids},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+async def _space_batch_receipt(
+    session: AsyncSession,
+    user_id: str,
+    operation_id: str,
+) -> SpaceBatchOperationReceipt | None:
+    return await session.scalar(
+        select(SpaceBatchOperationReceipt).where(
+            SpaceBatchOperationReceipt.user_id == user_id,
+            SpaceBatchOperationReceipt.operation_id == operation_id,
+        )
+    )
+
+
+def _valid_space_batch_snapshot(
+    response: SpaceMemberBatchResponse,
+    *,
+    target_space_id: str,
+    site_ids: list[str],
+) -> bool:
+    return (
+        response.site_ids == site_ids
+        and len(set(response.site_ids)) == len(response.site_ids)
+        and response.space.id == target_space_id
+        and response.added_count >= 0
+        and response.already_member_count >= 0
+        and response.added_count + response.already_member_count == len(site_ids)
+        and response.space.member_count >= len(site_ids)
+        and response.space.version >= 1
+    )
+
+
+def _receipt_response(
+    receipt: SpaceBatchOperationReceipt,
+    *,
+    payload_hash: str,
+    target_mode: str,
+    target_space_id: str,
+    site_ids: list[str],
+) -> SpaceMemberBatchResponse:
+    if receipt.payload_hash != payload_hash:
+        raise SpaceConflictError(
+            "operation_id 已用于其他 Space 批量任务",
+            code="idempotency_conflict",
+        )
+    try:
+        response = SpaceMemberBatchResponse.model_validate_json(receipt.result_json)
+        selected_site_ids = json.loads(receipt.selected_site_ids_json)
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise SpaceConflictError(
+            "Space 批量操作回执损坏",
+            code="operation_receipt_invalid",
+        ) from error
+    if (
+        not isinstance(selected_site_ids, list)
+        or selected_site_ids != site_ids
+        or receipt.target_mode != target_mode
+        or receipt.target_space_id != target_space_id
+        or receipt.result_space_id != target_space_id
+        or receipt.added_count != response.added_count
+        or receipt.already_member_count != response.already_member_count
+        or not _valid_space_batch_snapshot(
+            response,
+            target_space_id=target_space_id,
+            site_ids=site_ids,
+        )
+    ):
+        raise SpaceConflictError(
+            "Space 批量操作回执不一致",
+            code="operation_receipt_invalid",
+        )
+    return response
+
+
+async def _replayed_space_batch(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    operation_id: str,
+    payload_hash: str,
+    target_mode: str,
+    target_space_id: str,
+    site_ids: list[str],
+) -> SpaceMemberBatchResponse | None:
+    receipt = await _space_batch_receipt(session, user_id, operation_id)
+    if receipt is None:
+        return None
+    return _receipt_response(
+        receipt,
+        payload_hash=payload_hash,
+        target_mode=target_mode,
+        target_space_id=target_space_id,
+        site_ids=site_ids,
+    )
+
+
+async def _batch_sites(
+    session: AsyncSession,
+    user_id: str,
+    site_ids: list[str],
+) -> dict[str, Site] | None:
+    if not site_ids:
+        return {}
+    rows = list(
+        (
+            await session.scalars(
+                select(Site)
+                .where(
+                    Site.user_id == user_id,
+                    Site.id.in_(site_ids),
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    sites = {site.id: site for site in rows}
+    return sites if len(sites) == len(site_ids) else None
+
+
+def _new_space_batch_receipt(
+    *,
+    user_id: str,
+    operation_id: str,
+    payload_hash: str,
+    target_mode: str,
+    target_space_id: str,
+    response: SpaceMemberBatchResponse,
+) -> SpaceBatchOperationReceipt:
+    if target_mode not in {"create", "existing"} or not _valid_space_batch_snapshot(
+        response,
+        target_space_id=target_space_id,
+        site_ids=response.site_ids,
+    ):
+        raise SpaceConflictError(
+            "Space 批量操作结果不一致",
+            code="operation_result_invalid",
+        )
+    return SpaceBatchOperationReceipt(
+        user_id=user_id,
+        operation_id=operation_id,
+        payload_hash=payload_hash,
+        target_mode=target_mode,
+        target_space_id=target_space_id,
+        selected_site_ids_json=json.dumps(response.site_ids, separators=(",", ":")),
+        result_space_id=response.space.id,
+        result_json=response.model_dump_json(),
+        added_count=response.added_count,
+        already_member_count=response.already_member_count,
+    )
+
+
+async def _commit_receipt_only(
+    session: AsyncSession,
+    receipt: SpaceBatchOperationReceipt,
+    response: SpaceMemberBatchResponse,
+) -> SpaceMemberBatchResponse:
+    session.add(receipt)
+    try:
+        await session.commit()
+    except IntegrityError as error:
+        await session.rollback()
+        existing = await _space_batch_receipt(
+            session,
+            receipt.user_id,
+            receipt.operation_id,
+        )
+        if existing is not None:
+            return _receipt_response(
+                existing,
+                payload_hash=receipt.payload_hash,
+                target_mode=receipt.target_mode,
+                target_space_id=receipt.target_space_id,
+                site_ids=response.site_ids,
+            )
+        raise SpaceConflictError(
+            "Space 批量操作回执写入冲突",
+            code="operation_receipt_conflict",
+        ) from error
+    return response
+
+
+async def add_members_batch(
+    session: AsyncSession,
+    user_id: str,
+    payload: SpaceMemberBatchRequest,
+) -> SpaceMemberBatchResponse:
+    """Create/use one Space and add all requested sites in one transaction.
+
+    Both modes bind the normalized payload and immutable result to a durable
+    operation receipt. Create additionally derives the Space id from the
+    account and operation id, so an empty create is safe to replay too.
+    """
+
+    site_ids = list(payload.site_ids)
+    operation_id = payload.operation_id.strip()
+    space_name, normalized_name = _space_name(payload.target.space_name)
+    payload_hash = _space_batch_payload_hash(payload, normalized_name)
+    target_space_id = (
+        space_batch_space_id(user_id, operation_id)
+        if payload.target.mode == "create"
+        else payload.target.space_id
+    )
+    assert target_space_id is not None
+
+    replayed = await _replayed_space_batch(
+        session,
+        user_id=user_id,
+        operation_id=operation_id,
+        payload_hash=payload_hash,
+        target_mode=payload.target.mode,
+        target_space_id=target_space_id,
+        site_ids=site_ids,
+    )
+    if replayed is not None:
+        return replayed
+
+    sites: dict[str, Site]
+
+    async def load_sites_or_replay() -> SpaceMemberBatchResponse | None:
+        nonlocal sites
+        loaded_sites = await _batch_sites(session, user_id, site_ids)
+        if loaded_sites is not None:
+            sites = loaded_sites
+            return None
+        stored = await _replayed_space_batch(
+            session,
+            user_id=user_id,
+            operation_id=operation_id,
+            payload_hash=payload_hash,
+            target_mode=payload.target.mode,
+            target_space_id=target_space_id,
+            site_ids=site_ids,
+        )
+        if stored is not None:
+            return stored
+        raise SpaceNotFoundError("网站不存在或不属于当前账号")
+
+    if payload.target.mode == "create":
+        operation_space_id = target_space_id
+        operation_space = await session.scalar(
+            select(Space)
+            .where(
+                Space.user_id == user_id,
+                Space.id == operation_space_id,
+            )
+            .with_for_update()
+        )
+        if operation_space is not None:
+            replayed = await _replayed_space_batch(
+                session,
+                user_id=user_id,
+                operation_id=operation_id,
+                payload_hash=payload_hash,
+                target_mode="create",
+                target_space_id=target_space_id,
+                site_ids=site_ids,
+            )
+            if replayed is not None:
+                return replayed
+            replay = await _completed_member_batch(
+                session,
+                user_id,
+                operation_space.id,
+                site_ids,
+                allow_empty=True,
+            )
+            if replay is not None:
+                receipt = _new_space_batch_receipt(
+                    user_id=user_id,
+                    operation_id=operation_id,
+                    payload_hash=payload_hash,
+                    target_mode="create",
+                    target_space_id=target_space_id,
+                    response=replay,
+                )
+                return await _commit_receipt_only(session, receipt, replay)
+            raise SpaceConflictError(
+                "该创建任务的成员状态不完整",
+                code="operation_conflict",
+            )
+
+        existing_space = await session.scalar(
+            select(Space).where(
+                Space.user_id == user_id,
+                Space.normalized_name == normalized_name,
+            )
+        )
+        if existing_space is not None:
+            replayed = await _replayed_space_batch(
+                session,
+                user_id=user_id,
+                operation_id=operation_id,
+                payload_hash=payload_hash,
+                target_mode="create",
+                target_space_id=target_space_id,
+                site_ids=site_ids,
+            )
+            if replayed is not None:
+                return replayed
+            raise SpaceConflictError("Space 名称已存在", code="duplicate_name")
+
+        replayed = await load_sites_or_replay()
+        if replayed is not None:
+            return replayed
+
+        space = Space(
+            id=operation_space_id,
+            user_id=user_id,
+            name=space_name,
+            normalized_name=normalized_name,
+        )
+        session.add(space)
+        try:
+            await session.flush()
+            for position, site_id in enumerate(site_ids):
+                session.add(
+                    SpaceMember(
+                        user_id=user_id,
+                        space_id=space.id,
+                        site_id=sites[site_id].id,
+                        position=position,
+                    )
+                )
+            response = SpaceMemberBatchResponse(
+                space=_space_response(space, len(site_ids)),
+                added_count=len(site_ids),
+                already_member_count=0,
+                site_ids=site_ids,
+            )
+            session.add(
+                _new_space_batch_receipt(
+                    user_id=user_id,
+                    operation_id=operation_id,
+                    payload_hash=payload_hash,
+                    target_mode="create",
+                    target_space_id=target_space_id,
+                    response=response,
+                )
+            )
+            await session.commit()
+        except IntegrityError as error:
+            await session.rollback()
+            existing_receipt = await _space_batch_receipt(
+                session,
+                user_id,
+                operation_id,
+            )
+            if existing_receipt is not None:
+                return _receipt_response(
+                    existing_receipt,
+                    payload_hash=payload_hash,
+                    target_mode="create",
+                    target_space_id=target_space_id,
+                    site_ids=site_ids,
+                )
+            replay = await _completed_member_batch(
+                session,
+                user_id,
+                operation_space_id,
+                site_ids,
+                allow_empty=True,
+            )
+            if replay is not None:
+                receipt = _new_space_batch_receipt(
+                    user_id=user_id,
+                    operation_id=operation_id,
+                    payload_hash=payload_hash,
+                    target_mode="create",
+                    target_space_id=target_space_id,
+                    response=replay,
+                )
+                return await _commit_receipt_only(session, receipt, replay)
+            raise SpaceConflictError(
+                "Space 或成员关系已发生变化，请刷新后重试",
+                code="member_batch_conflict",
+            ) from error
+        return response
+
+    assert payload.target.space_id is not None
+    assert payload.target.expected_version is not None
+    space = await session.scalar(
+        select(Space)
+        .where(
+            Space.user_id == user_id,
+            Space.id == payload.target.space_id,
+        )
+        .with_for_update()
+    )
+    if space is None:
+        replayed = await _replayed_space_batch(
+            session,
+            user_id=user_id,
+            operation_id=operation_id,
+            payload_hash=payload_hash,
+            target_mode="existing",
+            target_space_id=target_space_id,
+            site_ids=site_ids,
+        )
+        if replayed is not None:
+            return replayed
+        raise SpaceNotFoundError("Space 不存在")
+
+    replayed = await _replayed_space_batch(
+        session,
+        user_id=user_id,
+        operation_id=operation_id,
+        payload_hash=payload_hash,
+        target_mode="existing",
+        target_space_id=target_space_id,
+        site_ids=site_ids,
+    )
+    if replayed is not None:
+        return replayed
+    replayed = await load_sites_or_replay()
+    if replayed is not None:
+        return replayed
+
+    existing_site_ids = set(
+        (
+            await session.scalars(
+                select(SpaceMember.site_id).where(
+                    SpaceMember.user_id == user_id,
+                    SpaceMember.space_id == space.id,
+                    SpaceMember.site_id.in_(site_ids),
+                )
+            )
+        ).all()
+    )
+    missing_site_ids = [site_id for site_id in site_ids if site_id not in existing_site_ids]
+    if not missing_site_ids:
+        response = SpaceMemberBatchResponse(
+            space=_space_response(
+                space,
+                await _member_count(session, user_id, space.id),
+            ),
+            added_count=0,
+            already_member_count=len(existing_site_ids),
+            site_ids=site_ids,
+        )
+        receipt = _new_space_batch_receipt(
+            user_id=user_id,
+            operation_id=operation_id,
+            payload_hash=payload_hash,
+            target_mode="existing",
+            target_space_id=target_space_id,
+            response=response,
+        )
+        return await _commit_receipt_only(session, receipt, response)
+    if space.version != payload.target.expected_version:
+        await session.rollback()
+        existing_receipt = await _space_batch_receipt(
+            session,
+            user_id,
+            operation_id,
+        )
+        if existing_receipt is not None:
+            return _receipt_response(
+                existing_receipt,
+                payload_hash=payload_hash,
+                target_mode="existing",
+                target_space_id=target_space_id,
+                site_ids=site_ids,
+            )
+        replay = await _completed_member_batch(
+            session,
+            user_id,
+            payload.target.space_id,
+            site_ids,
+        )
+        if replay is not None:
+            receipt = _new_space_batch_receipt(
+                user_id=user_id,
+                operation_id=operation_id,
+                payload_hash=payload_hash,
+                target_mode="existing",
+                target_space_id=target_space_id,
+                response=replay,
+            )
+            return await _commit_receipt_only(session, receipt, replay)
+        raise SpaceConflictError(
+            "Space 已被修改，请刷新草稿后重试",
+            code="version_conflict",
+        )
+
+    current_member_count = await _member_count(session, user_id, space.id)
+    next_position = int(
+        await session.scalar(
+            select(func.coalesce(func.max(SpaceMember.position), -1) + 1).where(
+                SpaceMember.user_id == user_id,
+                SpaceMember.space_id == space.id,
+            )
+        )
+        or 0
+    )
+    space_id = space.id
+    try:
+        await _claim_version(session, space, payload.target.expected_version)
+        for offset, site_id in enumerate(missing_site_ids):
+            session.add(
+                SpaceMember(
+                    user_id=user_id,
+                    space_id=space.id,
+                    site_id=sites[site_id].id,
+                    position=next_position + offset,
+                )
+            )
+        response = SpaceMemberBatchResponse(
+            space=_space_response(
+                space,
+                current_member_count + len(missing_site_ids),
+            ),
+            added_count=len(missing_site_ids),
+            already_member_count=len(existing_site_ids),
+            site_ids=site_ids,
+        )
+        session.add(
+            _new_space_batch_receipt(
+                user_id=user_id,
+                operation_id=operation_id,
+                payload_hash=payload_hash,
+                target_mode="existing",
+                target_space_id=target_space_id,
+                response=response,
+            )
+        )
+        await session.commit()
+    except SpaceConflictError:
+        await session.rollback()
+        existing_receipt = await _space_batch_receipt(
+            session,
+            user_id,
+            operation_id,
+        )
+        if existing_receipt is not None:
+            return _receipt_response(
+                existing_receipt,
+                payload_hash=payload_hash,
+                target_mode="existing",
+                target_space_id=target_space_id,
+                site_ids=site_ids,
+            )
+        replay = await _completed_member_batch(
+            session,
+            user_id,
+            space_id,
+            site_ids,
+        )
+        if replay is not None:
+            receipt = _new_space_batch_receipt(
+                user_id=user_id,
+                operation_id=operation_id,
+                payload_hash=payload_hash,
+                target_mode="existing",
+                target_space_id=target_space_id,
+                response=replay,
+            )
+            return await _commit_receipt_only(session, receipt, replay)
+        raise
+    except IntegrityError as error:
+        await session.rollback()
+        existing_receipt = await _space_batch_receipt(
+            session,
+            user_id,
+            operation_id,
+        )
+        if existing_receipt is not None:
+            return _receipt_response(
+                existing_receipt,
+                payload_hash=payload_hash,
+                target_mode="existing",
+                target_space_id=target_space_id,
+                site_ids=site_ids,
+            )
+        replay = await _completed_member_batch(
+            session,
+            user_id,
+            space_id,
+            site_ids,
+        )
+        if replay is not None:
+            receipt = _new_space_batch_receipt(
+                user_id=user_id,
+                operation_id=operation_id,
+                payload_hash=payload_hash,
+                target_mode="existing",
+                target_space_id=target_space_id,
+                response=replay,
+            )
+            return await _commit_receipt_only(session, receipt, replay)
+        raise SpaceConflictError(
+            "Space 成员关系已发生变化，请刷新草稿后重试",
+            code="member_batch_conflict",
+        ) from error
+
+    return response
+
+
 async def remove_member(
     session: AsyncSession,
     user_id: str,
@@ -594,7 +1274,7 @@ async def delete_space(
         )
     await session.commit()
     return SpaceDeleteResponse(
-        message="Space 已删除，网站仍保留在资料库中",
+        message="Space 已删除，网站仍保留在网址库中",
         space_id=space_id,
         unlinked_site_count=member_count,
     )

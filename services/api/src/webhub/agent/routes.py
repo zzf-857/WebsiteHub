@@ -8,6 +8,7 @@ later integration slice.
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Mapping
 from typing import Annotated, Any
 from uuid import uuid4
@@ -38,6 +39,7 @@ from .runner import (
     AgentConversationUnavailableError,
     AgentProviderNotConfiguredError,
     AgentRunner,
+    AgentRunnerExecutionError,
     AgentRunRequest,
     RejectingConversationAccess,
     UnconfiguredAgentRunner,
@@ -54,6 +56,27 @@ UNKNOWN_COMMAND_MESSAGE = "不支持的命令，请从命令列表中选择。"
 COMMAND_METADATA_MESSAGE = "命令元数据与消息不一致。"
 RUNNER_FAILURE_MESSAGE = "Agent 暂时无法完成请求，请稍后重试。"
 CONVERSATION_ACCESS_FAILURE_MESSAGE = "会话校验暂时不可用，请稍后重试。"
+logger = logging.getLogger(__name__)
+
+
+def _log_runner_failure(
+    error: Exception,
+    *,
+    fallback_stage: str,
+    correlation_id: str,
+) -> None:
+    """Log only non-sensitive diagnostics; never log exception text or traceback."""
+
+    stage = error.stage if isinstance(error, AgentRunnerExecutionError) else fallback_stage
+    error_type = (
+        error.error_type if isinstance(error, AgentRunnerExecutionError) else type(error).__name__
+    )
+    logger.error(
+        "agent_runner_failed correlation_id=%s stage=%s error_type=%s",
+        correlation_id,
+        stage,
+        error_type,
+    )
 
 
 def get_agent_runner(request: Request) -> AgentRunner:
@@ -145,6 +168,8 @@ async def _await_runner_result(result: object) -> AgentChunkSource:
 
 async def _guard_runner_source(
     source: AgentChunkSource,
+    *,
+    correlation_id: str,
 ) -> AsyncIterator[Mapping[str, Any]]:
     """Convert known provider failures into safe typed stream errors.
 
@@ -181,9 +206,14 @@ async def _guard_runner_source(
             transient=True,
         )
         yield error_chunk(AgentConversationUnavailableError.safe_message)
-    except Exception:
+    except Exception as error:
         # Do not include exception text: provider errors commonly contain URLs,
         # request bodies, or credential fragments.
+        _log_runner_failure(
+            error,
+            fallback_stage="stream",
+            correlation_id=correlation_id,
+        )
         yield data_chunk(
             "agent-error",
             {"code": "runner_unavailable", "message": RUNNER_FAILURE_MESSAGE},
@@ -203,6 +233,7 @@ async def chat(
 ) -> StreamingResponse:
     """Start one account-scoped Agent turn as an AI SDK UI Message stream."""
 
+    correlation_id = str(uuid4())
     try:
         slash_command = parse_slash_command(payload.message, registry=command_registry)
     except (TypeError, ValueError):
@@ -265,9 +296,14 @@ async def chat(
             message=AgentConversationUnavailableError.safe_message,
             conversation_id=payload.conversation_id,
         )
-    except Exception:
+    except Exception as error:
         # Runner construction errors are handled before the stream starts; keep
         # provider details out of both status and response body.
+        _log_runner_failure(
+            error,
+            fallback_stage="create_source",
+            correlation_id=correlation_id,
+        )
         return _stream_error(
             code="runner_unavailable",
             message=RUNNER_FAILURE_MESSAGE,
@@ -275,7 +311,7 @@ async def chat(
         )
 
     return ui_message_stream_response(
-        _guard_runner_source(source),
+        _guard_runner_source(source, correlation_id=correlation_id),
         headers={AGENT_PROTOCOL_HEADER: AGENT_PROTOCOL_VERSION},
     )
 

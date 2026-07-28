@@ -36,8 +36,6 @@ import {
   SpaceDialog,
 } from "@/components/spaces/space-dialog";
 import {
-} from "@/lib/space-contract";
-import {
   SpaceNameForm,
   siteHost,
 } from "@/components/spaces/space-workspace-parts";
@@ -170,9 +168,9 @@ export function SpaceWorkspace({
               <div className="space-empty-state">
                 <span className="space-empty-icon" aria-hidden="true"><Blocks /></span>
                 <h2>这个 Space 还是空的</h2>
-                <p>从资料库的网站详情中将网站加入这个 Space。</p>
+                <p>从网址库的网站详情中将网站加入这个 Space。</p>
                 <Link className="space-button primary" href="/library">
-                  前往资料库
+                  前往网址库
                 </Link>
               </div>
             ) : (
@@ -318,6 +316,7 @@ export function SpaceWorkspace({
         open={dialog?.kind === "create"}
         title="新建 Space"
         description="Space 用来组织同一项目或使用场景需要的网站。"
+        closeDisabled={mutationBusy}
         onClose={closeDialog}
       >
         {dialog?.kind === "create" && (
@@ -335,6 +334,7 @@ export function SpaceWorkspace({
         open={dialog?.kind === "rename"}
         title="重命名 Space"
         description="名称在当前账号内不能与其他 Space 重复。"
+        closeDisabled={mutationBusy}
         onClose={closeDialog}
       >
         {dialog?.kind === "rename" && (
@@ -353,7 +353,8 @@ export function SpaceWorkspace({
       <SpaceDialog
         open={dialog?.kind === "delete"}
         title="删除 Space"
-        description="删除只会解除网站与 Space 的关系，不会删除资料库中的网站。"
+        description="删除只会解除网站与 Space 的关系，不会删除网址库中的网站。"
+        closeDisabled={mutationBusy}
         onClose={closeDialog}
       >
         {dialog?.kind === "delete" && (
@@ -369,7 +370,7 @@ export function SpaceWorkspace({
                 <div>
                   <strong>将删除“{dialog.preview.space.name}”</strong>
                   <p>
-                    将解除 {dialog.preview.affectedSiteCount} 个网站的 Space 关系；这些网站仍会保留在资料库中。
+                    将解除 {dialog.preview.affectedSiteCount} 个网站的 Space 关系；这些网站仍会保留在网址库中。
                   </p>
                 </div>
               </div>
@@ -399,7 +400,8 @@ export function SpaceWorkspace({
       <SpaceDialog
         open={dialog?.kind === "remove"}
         title="移出 Space"
-        description="网站本身仍会保留在资料库和其他 Space 中。"
+        description="网站本身仍会保留在网址库和其他 Space 中。"
+        closeDisabled={mutationBusy}
         onClose={closeDialog}
       >
         {dialog?.kind === "remove" && (

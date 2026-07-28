@@ -12,6 +12,7 @@ from webhub.auth.dependencies import (
     DatabaseSessionDependency,
     require_trusted_origin,
 )
+from webhub.db.models import SiteMetadataPreference
 from webhub.ingestion import backfill as ingestion_backfill
 from webhub.ingestion import service as ingestion_service
 from webhub.ingestion import worker as ingestion_worker
@@ -27,6 +28,7 @@ from webhub.library.schemas import (
     MetadataBackfillProgressResponse,
     MetadataBackfillStartResponse,
     SiteAnalysisBackfillResponse,
+    SiteAnalysisResponse,
     SiteBatchItemResponse,
     SiteBatchRequest,
     SiteBatchResponse,
@@ -58,7 +60,13 @@ def _schedule_analysis(request: Request, *, user_id: str, site_id: str) -> None:
         user_id=str(user_id),
         site_ids=(site_id,),
         priority=True,
+        # A manual/Agent save is an explicit foreground action. Let it use the
+        # queue's single bounded overflow slot just like the detail-page AI
+        # action, instead of dropping its enrichment intent behind a large
+        # historical batch.
+        interactive=True,
         intent=AnalysisIntent.SITE_ENRICHMENT,
+        bulk=False,
     )
     # When the foreground queue is full, leave the newly created/retargeted
     # site to the database-driven sweep instead of silently giving up until a
@@ -111,6 +119,7 @@ def _metadata_backfill_response(
     return MetadataBackfillProgressResponse(
         id=progress.id,
         status=progress.status,  # type: ignore[arg-type]
+        stopped_early=progress.stopped_early,
         total_count=progress.total_count,
         queued_count=progress.queued_count,
         running_count=progress.running_count,
@@ -378,26 +387,41 @@ async def remove_site(
     )
 
 
-@router.post("/sites/{site_id}/analyze", response_model=SiteResponse)
+@router.post("/sites/{site_id}/analyze", response_model=SiteAnalysisResponse)
 async def analyze_site(
     site_id: str,
     request: Request,
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
-) -> SiteResponse:
-    """Fetch public page evidence and run the three constrained LLM tools.
+) -> SiteAnalysisResponse:
+    """Fetch public page evidence and run the four constrained LLM tools.
 
     The model draft is not a write capability. The ingestion service validates
     it and atomically stores only fields that are not protected as user input.
     This endpoint waits because it is driven by an explicit detail-page action.
     """
 
-    await _require_model_provider(request, user_id=str(identity.user.id))
+    user_id = str(identity.user.id)
+    # Validate ownership before resolving a Provider or admitting queue work.
+    # Authentication and this route share the request-scoped SQLite snapshot,
+    # so read the initial marker here and then release that snapshot before a
+    # worker on another session writes the result. Do not reuse this session
+    # after the worker finishes.
+    await _call(service.get_site(session, user_id, site_id))
+    initial_preference = await session.get(
+        SiteMetadataPreference,
+        {"user_id": user_id, "site_id": site_id},
+    )
+    initial_llm_analyzed_at = (
+        initial_preference.llm_analyzed_at if initial_preference is not None else None
+    )
+    await session.rollback()
+    await _require_model_provider(request, user_id=user_id)
     try:
-        await ingestion_worker.analyze_and_wait(
+        fetch_outcome = await ingestion_worker.analyze_and_wait(
             request.app.state.database,
-            user_id=str(identity.user.id),
+            user_id=user_id,
             site_id=site_id,
         )
     except ingestion_worker.AnalysisQueueFullError as error:
@@ -405,7 +429,63 @@ async def analyze_site(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "analysis_queue_full", "message": str(error)},
         ) from error
-    return await _call(service.get_site(session, identity.user.id, site_id))
+
+    # Read the committed site and its completion marker through one fresh
+    # transaction.  Reusing the injected session here would observe the
+    # pre-analysis authentication snapshot under SQLite WAL mode.
+    async with request.app.state.database.sessions() as result_session:
+        analyzed_site = await _call(service.get_site(result_session, user_id, site_id))
+        completed_preference = await result_session.get(
+            SiteMetadataPreference,
+            {"user_id": user_id, "site_id": site_id},
+        )
+        completed_llm_analyzed_at = (
+            completed_preference.llm_analyzed_at
+            if completed_preference is not None
+            else None
+        )
+        await result_session.rollback()
+    llm_applied = (
+        completed_llm_analyzed_at is not None
+        and completed_llm_analyzed_at != initial_llm_analyzed_at
+    )
+
+    if fetch_outcome is not None:
+        if analyzed_site.analysis_status != fetch_outcome.status:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "analysis_result_superseded",
+                    "message": "网站在分析期间发生变化，本次分析结果未成为当前版本。",
+                },
+            )
+        return SiteAnalysisResponse(
+            site=analyzed_site,
+            outcome=fetch_outcome.status,
+            message=fetch_outcome.reason,
+            llm_applied=llm_applied,
+        )
+
+    if analyzed_site.analysis_status == "complete":
+        message = "网站资料分析已完成"
+    elif analyzed_site.analysis_status == "limited":
+        message = "网站资料分析已完成，但仍有部分资料未能补全"
+    elif analyzed_site.analysis_status == "failed":
+        message = "网站资料分析失败，请稍后重试"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "analysis_not_completed",
+                "message": "网站分析尚未形成可用结果，请稍后重试。",
+            },
+        )
+    return SiteAnalysisResponse(
+        site=analyzed_site,
+        outcome=analyzed_site.analysis_status,
+        message=message,
+        llm_applied=llm_applied,
+    )
 
 
 @router.post("/sites/batch", response_model=SiteBatchResponse)
@@ -432,7 +512,12 @@ async def batch_sites(
         )
 
     items = (
-        await batch.create_batch(session, identity.user.id, urls)
+        await batch.create_batch(
+            session,
+            identity.user.id,
+            urls,
+            source=payload.source,
+        )
         if payload.confirm
         else await batch.preview_batch(session, identity.user.id, urls)
     )
@@ -447,6 +532,7 @@ async def batch_sites(
             item.site_id for item in items if item.status == "created" and item.site_id is not None
         ),
         intent=AnalysisIntent.SITE_ENRICHMENT,
+        bulk=True,
     )
     if scheduled.rejected:
         ingestion_worker.ensure_auto_backfill(

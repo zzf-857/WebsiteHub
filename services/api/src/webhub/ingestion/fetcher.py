@@ -33,7 +33,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from webhub.providers.targets import ProviderTargetError, resolve_resource_target
 
@@ -163,6 +163,7 @@ _REASONS: dict[str, str] = {
     "too_large": "网页内容过大，已停止读取",
     "no_storable_metadata": "该网页没有可写入的简介、图标或预览图",
     "icon_only": "网页内容无法读取，但已获取网站图标",
+    "platform_media_only": "网页内容无法读取，但已获取平台图标或视频封面",
     "ok": "已提取网页元数据",
 }
 
@@ -173,6 +174,93 @@ def _reason(code: str) -> str:
 
 def _outcome(status: AnalysisStatus, code: str) -> FetchOutcome:
     return FetchOutcome(status=status, reason=_reason(code))
+
+
+_YOUTUBE_PAGE_HOSTS = frozenset(
+    {
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "youtu.be",
+        "youtube-nocookie.com",
+        "www.youtube-nocookie.com",
+    }
+)
+_YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_YOUTUBE_FAVICON_URL = "https://www.youtube.com/favicon.ico"
+
+
+def _trusted_platform_metadata(url: str) -> SiteMetadata:
+    """Return media derived only from a narrow, audited first-party URL shape.
+
+    This is intentionally not a general domain-to-favicon guesser. It handles
+    YouTube pages that cannot be fetched from the API host while ensuring that
+    user input can influence only a fully validated eleven-character video id.
+    """
+
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return SiteMetadata()
+    hostname = (parts.hostname or "").rstrip(".").casefold()
+    if (
+        parts.scheme.casefold() not in {"http", "https"}
+        or hostname not in _YOUTUBE_PAGE_HOSTS
+    ):
+        return SiteMetadata()
+
+    video_id: str | None = None
+    segments = [segment for segment in parts.path.split("/") if segment]
+    if hostname == "youtu.be":
+        video_id = segments[0] if segments else None
+    elif parts.path.rstrip("/").casefold() == "/watch":
+        values = parse_qs(parts.query, keep_blank_values=False).get("v", [])
+        video_id = values[0] if values else None
+    elif len(segments) >= 2 and segments[0].casefold() in {
+        "embed",
+        "live",
+        "shorts",
+    }:
+        video_id = segments[1]
+
+    preview_url = None
+    if video_id and _YOUTUBE_VIDEO_ID.fullmatch(video_id):
+        preview_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+    return SiteMetadata(
+        icon_url=_YOUTUBE_FAVICON_URL,
+        image_url=preview_url,
+    )
+
+
+def _merge_trusted_platform_metadata(
+    outcome: FetchOutcome,
+    fallback: SiteMetadata,
+    *,
+    requested_url: str,
+) -> FetchOutcome:
+    """Fill only missing media; fetched page declarations always win."""
+
+    icon_url = outcome.metadata.icon_url or fallback.icon_url
+    image_url = outcome.metadata.image_url or fallback.image_url
+    if icon_url == outcome.metadata.icon_url and image_url == outcome.metadata.image_url:
+        return outcome
+    status = "limited" if outcome.status == "failed" else outcome.status
+    reason = (
+        _reason("platform_media_only")
+        if outcome.status == "failed"
+        else outcome.reason
+    )
+    return replace(
+        outcome,
+        status=status,
+        reason=reason,
+        metadata=replace(
+            outcome.metadata,
+            icon_url=icon_url,
+            image_url=image_url,
+        ),
+        final_url=outcome.final_url or requested_url,
+    )
 
 
 def _origin(url: str) -> _OriginKey | None:
@@ -565,10 +653,12 @@ async def _discover_icon_url(
                 elif cached_root is not None:
                     return cached_root.url
 
-                root_candidate_timeout = min(
-                    candidate_timeout,
-                    root_budget / len(root_candidates),
-                )
+                # Keep the same total root budget, but give the conventional
+                # /favicon.ico candidate a useful first chance. Dividing the
+                # budget equally made DNS + TLS routinely exceed 0.5-1s and
+                # poisoned the whole origin's miss cache. The surrounding
+                # timeout still caps all four candidates together.
+                root_candidate_timeout = min(candidate_timeout, root_budget)
                 root_icon = await first_valid(
                     root_candidates,
                     root_candidate_timeout,
@@ -813,15 +903,21 @@ async def fetch_site_metadata(
         if total_timeout_seconds is None
         else total_timeout_seconds
     )
+    platform_fallback = _trusted_platform_metadata(url)
     try:
         async with asyncio.timeout(total_timeout):
-            return await _fetch_site_metadata(
+            outcome = await _fetch_site_metadata(
                 url,
                 timeout_seconds=timeout_seconds,
                 allow_private=allow_private,
             )
     except TimeoutError:
-        return _outcome("failed", "timeout")
+        outcome = _outcome("failed", "timeout")
+    return _merge_trusted_platform_metadata(
+        outcome,
+        platform_fallback,
+        requested_url=url,
+    )
 
 
 __all__ = [

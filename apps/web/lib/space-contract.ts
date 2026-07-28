@@ -6,6 +6,9 @@ export type SpaceDirection = "asc" | "desc";
 export const MAX_SPACE_NAME_LENGTH = 120;
 export const MAX_SPACE_SITE_ID_LENGTH = 100;
 export const MAX_SPACE_REORDER_MEMBER_COUNT = 100;
+export const MAX_SPACE_BATCH_MEMBER_COUNT = 100;
+export const MAX_SPACE_BATCH_ID_LENGTH = 36;
+export const MAX_SPACE_BATCH_OPERATION_ID_LENGTH = 200;
 export const MAX_SPACE_CURSOR_LENGTH = 2_048;
 
 export type Space = {
@@ -30,6 +33,7 @@ export type SpaceSiteReference = {
   name: string;
   originalUrl: string;
   identityUrl: string;
+  summary: string | null;
   description: string;
   faviconUrl: string | null;
   pinned: boolean;
@@ -58,6 +62,31 @@ export type SpaceMemberDeleteResult = {
   siteId: string;
   memberCount: number;
   version: number;
+};
+
+export type SpaceMemberBatchTarget =
+  | {
+      mode: "existing";
+      spaceId: string;
+      spaceName: string;
+      expectedVersion: number;
+    }
+  | {
+      mode: "create";
+      spaceName: string;
+    };
+
+export type SpaceMemberBatchInput = {
+  target: SpaceMemberBatchTarget;
+  siteIds: string[];
+  operationId: string;
+};
+
+export type SpaceMemberBatchResult = {
+  space: Space;
+  addedCount: number;
+  alreadyMemberCount: number;
+  siteIds: string[];
 };
 
 export type SpaceDeletePreview = {
@@ -127,6 +156,7 @@ const {
   count,
   version,
   absoluteWebUrl,
+  nullableText,
   nullableWebUrl,
   isoDate,
 } = createContractGuards((message) => new SpaceContractError(message));
@@ -172,6 +202,7 @@ function normalizeSiteReferenceAt(value: unknown, path: string): SpaceSiteRefere
     name: text(candidate.name, `${path}.name`),
     originalUrl: absoluteWebUrl(candidate.original_url, `${path}.original_url`),
     identityUrl: absoluteWebUrl(candidate.identity_url, `${path}.identity_url`),
+    summary: nullableText(candidate.summary, `${path}.summary`),
     description: stringValue(candidate.description, `${path}.description`),
     faviconUrl: nullableWebUrl(candidate.favicon_url, `${path}.favicon_url`),
     pinned: boolean(candidate.pinned, `${path}.pinned`),
@@ -241,6 +272,28 @@ export function normalizeSpaceMemberDeleteResult(value: unknown): SpaceMemberDel
     siteId: identifier(candidate.site_id, "member_delete.site_id"),
     memberCount: count(candidate.member_count, "member_delete.member_count"),
     version: version(candidate.version, "member_delete.version"),
+  };
+}
+
+export function normalizeSpaceMemberBatchResult(value: unknown): SpaceMemberBatchResult {
+  const candidate = record(value, "member_batch");
+  if (!Array.isArray(candidate.site_ids)) {
+    throw new SpaceContractError("member_batch.site_ids 必须是数组");
+  }
+  const siteIds = candidate.site_ids.map((siteId, index) =>
+    identifier(siteId, `member_batch.site_ids[${index}]`, MAX_SPACE_BATCH_ID_LENGTH),
+  );
+  if (new Set(siteIds).size !== siteIds.length) {
+    throw new SpaceContractError("member_batch.site_ids 不能重复");
+  }
+  return {
+    space: normalizeSpaceAt(candidate.space, "member_batch.space"),
+    addedCount: count(candidate.added_count, "member_batch.added_count"),
+    alreadyMemberCount: count(
+      candidate.already_member_count,
+      "member_batch.already_member_count",
+    ),
+    siteIds,
   };
 }
 
@@ -355,6 +408,63 @@ export function assertSpaceMemberAddInput(input: SpaceMemberAddInput): SpaceMemb
     expectedVersion: assertSpaceExpectedVersion(input.expectedVersion),
     siteId: identifier(input.siteId, "member.site_id", MAX_SPACE_SITE_ID_LENGTH),
   };
+}
+
+export function assertSpaceMemberBatchInput(input: SpaceMemberBatchInput): SpaceMemberBatchInput {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new SpaceContractError("member_batch 必须是对象");
+  }
+  if (typeof input.target !== "object" || input.target === null || Array.isArray(input.target)) {
+    throw new SpaceContractError("member_batch.target 必须是对象");
+  }
+  if (!Array.isArray(input.siteIds)) {
+    throw new SpaceContractError("member_batch.site_ids 必须是数组");
+  }
+  if (input.siteIds.length > MAX_SPACE_BATCH_MEMBER_COUNT) {
+    throw new SpaceContractError(
+      `member_batch.site_ids 不能超过 ${MAX_SPACE_BATCH_MEMBER_COUNT} 个网站`,
+    );
+  }
+  const siteIds = input.siteIds.map((siteId, index) =>
+    identifier(siteId, `member_batch.site_ids[${index}]`, MAX_SPACE_BATCH_ID_LENGTH),
+  );
+  if (new Set(siteIds).size !== siteIds.length) {
+    throw new SpaceContractError("member_batch.site_ids 不能重复");
+  }
+  const operationId = identifier(
+    input.operationId,
+    "member_batch.operation_id",
+    MAX_SPACE_BATCH_OPERATION_ID_LENGTH,
+  );
+
+  const spaceName = assertSpaceName(input.target.spaceName);
+  if (input.target.mode === "existing") {
+    if (siteIds.length === 0) {
+      throw new SpaceContractError("已有 Space 的批量任务至少需要一个网站");
+    }
+    return {
+      target: {
+        mode: "existing",
+        spaceId: identifier(
+          input.target.spaceId,
+          "member_batch.target.space_id",
+          MAX_SPACE_BATCH_ID_LENGTH,
+        ),
+        spaceName,
+        expectedVersion: assertSpaceExpectedVersion(input.target.expectedVersion),
+      },
+      siteIds,
+      operationId,
+    };
+  }
+  if (input.target.mode === "create") {
+    return {
+      target: { mode: "create", spaceName },
+      siteIds,
+      operationId,
+    };
+  }
+  throw new SpaceContractError("member_batch.target.mode 不是受支持的值");
 }
 
 export function assertSpaceReorderInput(input: SpaceReorderInput): SpaceReorderInput {

@@ -10,16 +10,20 @@ import {
   CircleAlert,
   Clock,
   ExternalLink,
+  FolderInput,
+  FolderPlus,
   Hash,
   Loader,
   PencilLine,
+  RotateCcw,
   Sparkles,
   User,
   Wrench,
+  X,
 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown, type Components } from "streamdown";
 
 import { ShinyText } from "@/components/react-bits/shiny-text";
@@ -36,6 +40,7 @@ import {
   type AgentSiteBatchDraft,
   type AgentSiteUpdateDraft,
   type AgentReclassifyDraft,
+  type AgentSpaceBatchDraft,
   type AgentSpaceMembershipDraft,
   type AgentToolCall,
   type AgentToolLink,
@@ -47,9 +52,13 @@ import {
 export type AgentDraftState = {
   status: "idle" | "saving" | "saved" | "error";
   message?: string;
+  confirmationPending?: boolean;
+  blocksConversation?: boolean;
 };
 
 const IDLE_DRAFT: AgentDraftState = { status: "idle" };
+const SPACE_BATCH_EXCLUSIONS_PREFIX = "webhub:agent-space-batch-exclusions:";
+const SPACE_BATCH_ATTEMPTED_PREFIX = "webhub:agent-space-batch-attempted:";
 
 type ConversationThreadProps = {
   messages: readonly AgentUIMessage[];
@@ -66,6 +75,25 @@ function hostOf(url: string): string {
     return new URL(url).host;
   } catch {
     return url;
+  }
+}
+
+function restoredSpaceBatchExclusions(
+  storageKey: string,
+  sites: readonly (AgentSpaceBatchDraft["sites"][number])[],
+): ReadonlySet<string> {
+  try {
+    const stored = JSON.parse(
+      window.sessionStorage.getItem(`${SPACE_BATCH_EXCLUSIONS_PREFIX}${storageKey}`) ?? "[]",
+    );
+    if (!Array.isArray(stored)) return new Set<string>();
+    const allowed = new Set(sites.map((site) => site.siteId));
+    return new Set(
+      stored.filter((siteId): siteId is string =>
+        typeof siteId === "string" && allowed.has(siteId)),
+    );
+  } catch {
+    return new Set<string>();
   }
 }
 
@@ -103,6 +131,18 @@ function MarkdownAnchor({ href, children, title }: React.ComponentProps<"a"> & {
 }
 
 const MARKDOWN_COMPONENTS = { a: MarkdownAnchor } as Components;
+const STREAM_DISALLOWED_ELEMENTS = ["img"];
+const STREAM_ANIMATION = { animation: "fadeIn", duration: 140 } as const;
+const STREAM_CONTROLS = {
+  code: { copy: true, download: false },
+  table: false,
+  mermaid: false,
+} as const;
+const STREAM_TRANSLATIONS = {
+  copyCode: "复制代码",
+  copied: "已复制",
+  openExternalLink: "打开外部链接",
+} as const;
 
 function AgentMarkdown({
   text,
@@ -120,12 +160,12 @@ function AgentMarkdown({
       className={className}
       mode={streaming ? "streaming" : "static"}
       isAnimating={streaming && !reducedMotion}
-      animated={streaming && !reducedMotion ? { animation: "fadeIn", duration: 140 } : false}
+      animated={streaming && !reducedMotion ? STREAM_ANIMATION : false}
       caret={streaming ? "block" : undefined}
       components={MARKDOWN_COMPONENTS}
-      disallowedElements={["img"]}
-      controls={{ code: { copy: true, download: false }, table: false, mermaid: false }}
-      translations={{ copyCode: "复制代码", copied: "已复制", openExternalLink: "打开外部链接" }}
+      disallowedElements={STREAM_DISALLOWED_ELEMENTS}
+      controls={STREAM_CONTROLS}
+      translations={STREAM_TRANSLATIONS}
     >
       {text}
     </Streamdown>
@@ -143,13 +183,14 @@ function ReasoningDisclosure({
   durationMs?: number;
   reducedMotion: boolean;
 }>) {
-  const [open, setOpen] = useState(streaming);
+  const initializeDetails = useCallback((element: HTMLDetailsElement | null) => {
+    if (element && streaming) element.open = true;
+  }, [streaming]);
 
   return (
     <details
       className="chat-reasoning"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      ref={initializeDetails}
     >
       <summary>
         <Brain aria-hidden="true" />
@@ -238,6 +279,7 @@ function ToolLinkList({ items }: Readonly<{ items: readonly AgentToolLink[] }>) 
   return (
     <ul className="tool-links">
       {items.map((item, index) => {
+        const cardDescription = item.summary || item.description;
         const content = (
           <>
             <SiteFavicon url={item.faviconUrl} name={item.name} size={24} />
@@ -257,7 +299,7 @@ function ToolLinkList({ items }: Readonly<{ items: readonly AgentToolLink[] }>) 
             ) : (
               <span className="tool-link-static">{content}</span>
             )}
-          {item.description && <p className="tool-link-description">{item.description}</p>}
+          {cardDescription && <p className="tool-link-description">{cardDescription}</p>}
           <ChipRow category={item.category} tags={item.tags} />
           </li>
         );
@@ -266,13 +308,16 @@ function ToolLinkList({ items }: Readonly<{ items: readonly AgentToolLink[] }>) 
   );
 }
 
-/** 三类草稿共用的确认区：待确认 / 保存中 / 已生效 / 失败四态都在这里。 */
+/** 所有草稿共用的确认区：待确认 / 保存中 / 已生效 / 失败四态都在这里。 */
 function DraftActions({
   state,
   icon,
   idleLabel,
   busyLabel,
   doneLabel,
+  disabled = false,
+  disabledLabel,
+  hint = "Agent 不会自行写入，需要你确认。",
   onConfirm,
 }: Readonly<{
   state: AgentDraftState;
@@ -280,6 +325,9 @@ function DraftActions({
   idleLabel: string;
   busyLabel: string;
   doneLabel: string;
+  disabled?: boolean;
+  disabledLabel?: string;
+  hint?: string;
   onConfirm: () => void;
 }>) {
   return (
@@ -294,14 +342,18 @@ function DraftActions({
           <button
             type="button"
             className="draft-confirm-button"
-            disabled={state.status === "saving"}
+            disabled={state.status === "saving" || disabled}
             onClick={onConfirm}
           >
             {state.status === "saving" ? <Loader className="spin" aria-hidden="true" /> : icon}
-            {state.status === "saving" ? busyLabel : idleLabel}
+            {state.status === "saving"
+              ? busyLabel
+              : disabled && disabledLabel
+                ? disabledLabel
+                : idleLabel}
           </button>
         )}
-        <span className="draft-card-hint">Agent 不会自行写入，需要你确认。</span>
+        <span className="draft-card-hint">{hint}</span>
       </div>
       {state.status === "error" && state.message && (
         <p className="draft-card-error">{state.message}</p>
@@ -337,7 +389,7 @@ function DraftCard({
       {duplicate && (
         <p className="draft-card-warning">
           <CircleAlert aria-hidden="true" />
-          资料库里已有相似记录「{duplicate.name}」，确认后会新增一条。
+          网址库里已有相似记录「{duplicate.name}」，确认后会新增一条。
         </p>
       )}
       <DraftActions
@@ -345,7 +397,7 @@ function DraftCard({
         icon={<Bookmark aria-hidden="true" />}
         idleLabel="确认保存"
         busyLabel="保存中…"
-        doneLabel="已保存到资料库"
+        doneLabel="已保存到网址库"
         onConfirm={() => onConfirm(toolCallId, { kind: "site", draft })}
       />
     </div>
@@ -490,16 +542,246 @@ function SpaceMembershipCard({
         <strong>{draft.siteName}</strong>
       </div>
       <p className="draft-card-description">
-        {adding ? "将加入 Space" : "将移出 Space"}「{draft.spaceName}」
-        {adding ? "。" : "，网站本身仍保留在资料库中。"}
+        {adding && state.status === "saved" ? (
+          <>已加入 Space「{draft.spaceName}」。</>
+        ) : adding ? (
+          <>
+            这是一份旧版逐项加入草稿。请重新告诉 Agent 加入 Space「{draft.spaceName}」，
+            它会生成一张可一次确认的批量任务。
+          </>
+        ) : (
+          <>将移出 Space「{draft.spaceName}」，网站本身仍保留在网址库中。</>
+        )}
       </p>
       <DraftActions
         state={state}
         icon={<PencilLine aria-hidden="true" />}
-        idleLabel={adding ? "确认加入" : "确认移出"}
+        idleLabel="确认移出"
         busyLabel="处理中…"
         doneLabel={adding ? "已加入 Space" : "已移出 Space"}
+        disabled={adding}
+        disabledLabel="旧版加入草稿已失效"
+        hint={adding && state.status !== "saved" ? "重新发起后只需确认一次。" : undefined}
         onConfirm={() => onConfirm(toolCallId, { kind: "space_membership", draft })}
+      />
+    </div>
+  );
+}
+
+function SpaceBatchCard({
+  storageScope,
+  toolCallId,
+  draft,
+  state,
+  superseded,
+  messagePersisted,
+  agentWaiting,
+  onConfirm,
+}: Readonly<{
+  storageScope: string;
+  toolCallId: string;
+  draft: AgentSpaceBatchDraft;
+  state: AgentDraftState;
+  superseded: boolean;
+  messagePersisted: boolean;
+  agentWaiting: boolean;
+  onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
+}>) {
+  const storageKey = `${storageScope}:${toolCallId}`;
+  const [excludedSiteIds, setExcludedSiteIds] = useState<ReadonlySet<string>>(
+    new Set<string>(),
+  );
+  const [attempted, setAttempted] = useState(false);
+  const [storageReady, setStorageReady] = useState(false);
+  const initialSitesRef = useRef(draft.sites);
+  useEffect(() => {
+    setExcludedSiteIds(restoredSpaceBatchExclusions(storageKey, initialSitesRef.current));
+    try {
+      setAttempted(
+        window.sessionStorage.getItem(`${SPACE_BATCH_ATTEMPTED_PREFIX}${storageKey}`) === "1",
+      );
+    } catch {
+      setAttempted(false);
+    }
+    setStorageReady(true);
+  }, [storageKey]);
+  useEffect(() => {
+    if (!storageReady) return;
+    try {
+      const key = `${SPACE_BATCH_EXCLUSIONS_PREFIX}${storageKey}`;
+      if (excludedSiteIds.size === 0) window.sessionStorage.removeItem(key);
+      else window.sessionStorage.setItem(key, JSON.stringify([...excludedSiteIds]));
+    } catch {
+      // Storage may be disabled; the current mounted card still keeps its selection.
+    }
+  }, [excludedSiteIds, storageKey, storageReady]);
+  const selectedSites = useMemo(
+    () => draft.sites.filter((site) => !excludedSiteIds.has(site.siteId)),
+    [draft.sites, excludedSiteIds],
+  );
+  const replaced = superseded && state.status !== "saving" && state.status !== "saved";
+  const editable = storageReady && messagePersisted && !agentWaiting && !attempted && !replaced &&
+    (state.status === "idle" || state.status === "error");
+  const existingTargetIsEmpty = draft.target.mode === "existing" && selectedSites.length === 0;
+  const creatingEmptySpace = draft.target.mode === "create" && selectedSites.length === 0;
+
+  const toggleSite = (siteId: string) => {
+    if (!editable) return;
+    setExcludedSiteIds((current) => {
+      const next = new Set(current);
+      if (next.has(siteId)) next.delete(siteId);
+      else next.add(siteId);
+      return next;
+    });
+  };
+
+  const idleLabel = draft.target.mode === "create"
+    ? creatingEmptySpace
+      ? "确认创建 Space"
+      : `确认创建并加入 ${selectedSites.length} 个`
+    : `确认执行 ${selectedSites.length} 个`;
+
+  return (
+    <div className="draft-card" data-variant="space-batch">
+      <div className="draft-space-target">
+        <span className="draft-space-target-icon" aria-hidden="true">
+          {draft.target.mode === "create" ? <FolderPlus /> : <FolderInput />}
+        </span>
+        <span className="draft-space-target-copy">
+          <small>{draft.target.mode === "create" ? "新建 Space" : "加入已有 Space"}</small>
+          <strong>{draft.target.spaceName}</strong>
+        </span>
+        {draft.sites.length > 0 && (
+          <span className="draft-space-count">
+            已选择 {selectedSites.length}/{draft.sites.length}
+          </span>
+        )}
+      </div>
+
+      {draft.sites.length > 0 ? (
+        <>
+          <p className="draft-card-description">
+            本次将按以下候选清单整体执行。
+          </p>
+          <ul className="draft-space-sites">
+            {draft.sites.map((site) => {
+              const excluded = excludedSiteIds.has(site.siteId);
+              return (
+                <li key={site.siteId} data-excluded={excluded || undefined}>
+                  <Link
+                    href={`/library/${encodeURIComponent(site.siteId)}`}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    <span className="draft-space-site-name">{site.name}</span>
+                    <span className="draft-space-site-host">{hostOf(site.url)}</span>
+                  </Link>
+                  <button
+                    type="button"
+                    className="draft-space-site-toggle"
+                    disabled={!editable}
+                    aria-label={excluded ? `恢复 ${site.name}` : `剔除 ${site.name}`}
+                    title={excluded ? "恢复候选" : "从本次任务中剔除"}
+                    onClick={() => toggleSite(site.siteId)}
+                  >
+                    {excluded ? <RotateCcw aria-hidden="true" /> : <X aria-hidden="true" />}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {excludedSiteIds.size > 0 && editable && (
+            <button
+              type="button"
+              className="draft-space-restore-all"
+              onClick={() => setExcludedSiteIds(new Set<string>())}
+            >
+              <RotateCcw aria-hidden="true" />
+              恢复全部候选
+            </button>
+          )}
+        </>
+      ) : (
+        <p className="draft-card-description">这次任务只会创建 Space，不会加入网站。</p>
+      )}
+
+      {draft.alreadyMemberCount > 0 && (
+        <p className="draft-card-hint">
+          原始候选中有 {draft.alreadyMemberCount} 个网站已经在该 Space 中，确认时会自动跳过。
+        </p>
+      )}
+      {creatingEmptySpace && draft.sites.length > 0 && (
+        <p className="draft-card-warning">
+          <CircleAlert aria-hidden="true" />
+          当前候选已全部剔除，确认后只创建 Space。
+        </p>
+      )}
+      {replaced && (
+        <p className="draft-card-superseded">
+          这份草稿已被后续方案替代，请确认对话中最新的 Space 任务。
+        </p>
+      )}
+      <DraftActions
+        state={state}
+        icon={draft.target.mode === "create"
+          ? <FolderPlus aria-hidden="true" />
+          : <FolderInput aria-hidden="true" />}
+        idleLabel={state.confirmationPending
+          ? "重试同步状态"
+          : attempted
+            ? "重试原任务"
+            : idleLabel}
+        busyLabel="正在执行整批任务…"
+        doneLabel="Space 任务已完成"
+        disabled={
+          !storageReady || replaced || existingTargetIsEmpty || !messagePersisted || agentWaiting
+        }
+        disabledLabel={!storageReady
+          ? "正在恢复任务状态"
+          : replaced
+          ? "已被后续方案替代"
+          : agentWaiting
+            ? "等待回答完成"
+            : !messagePersisted
+              ? "本轮未完整保存"
+            : "至少保留 1 个网站"}
+        hint={state.confirmationPending
+          ? "网站与 Space 已处理；重试只会同步对话状态。"
+          : attempted && state.status === "error"
+          ? "任务载荷已锁定；如需改变候选，请让 Agent 生成新方案。"
+          : replaced
+          ? "旧方案不会再执行。"
+          : agentWaiting
+            ? "回答完成后即可一次确认。"
+            : !messagePersisted
+              ? "本轮任务没有完整保存，请让 Agent 重新生成。"
+            : "等待确认后整体执行。"}
+        onConfirm={() => {
+          if (!storageReady) return;
+          try {
+            const exclusionsKey = `${SPACE_BATCH_EXCLUSIONS_PREFIX}${storageKey}`;
+            if (excludedSiteIds.size === 0) {
+              window.sessionStorage.removeItem(exclusionsKey);
+            } else {
+              window.sessionStorage.setItem(
+                exclusionsKey,
+                JSON.stringify([...excludedSiteIds]),
+              );
+            }
+            window.sessionStorage.setItem(
+              `${SPACE_BATCH_ATTEMPTED_PREFIX}${storageKey}`,
+              "1",
+            );
+          } catch {
+            // The mounted card still freezes its payload when storage is unavailable.
+          }
+          setAttempted(true);
+          onConfirm(toolCallId, {
+            kind: "space_batch",
+            draft,
+            selectedSiteIds: selectedSites.map((site) => site.siteId),
+          });
+        }}
       />
     </div>
   );
@@ -552,12 +834,20 @@ function ReclassifyCard({
 }
 
 function ToolCard({
+  storageScope,
   result,
   draftState,
+  spaceBatchSuperseded,
+  messagePersisted,
+  agentWaiting,
   onConfirmDraft,
 }: Readonly<{
+  storageScope: string;
   result: AgentToolResult;
   draftState: AgentDraftState;
+  spaceBatchSuperseded: boolean;
+  messagePersisted: boolean;
+  agentWaiting: boolean;
   onConfirmDraft: (toolCallId: string, action: AgentDraftAction) => void;
 }>) {
   const view = describeAgentToolResult(result.name, result.result);
@@ -629,6 +919,18 @@ function ToolCard({
           onConfirm={onConfirmDraft}
         />
       )}
+      {view.kind === "space-batch" && (
+        <SpaceBatchCard
+          storageScope={storageScope}
+          toolCallId={result.toolCallId}
+          draft={view.draft}
+          state={draftState}
+          superseded={spaceBatchSuperseded}
+          messagePersisted={messagePersisted}
+          agentWaiting={agentWaiting}
+          onConfirm={onConfirmDraft}
+        />
+      )}
       {view.kind === "reclassify" && (
         <ReclassifyCard
           toolCallId={result.toolCallId}
@@ -678,10 +980,15 @@ export function ConversationThread({
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({
-      block: "end",
-      behavior: reducedMotion ? "auto" : "smooth",
+    // Message snapshots can update many times per second. Coalesce scroll work
+    // to one paint and avoid restarting a smooth-scroll animation for every token.
+    const frame = window.requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({
+        block: "end",
+        behavior: reducedMotion || status === "streaming" ? "auto" : "smooth",
+      });
     });
+    return () => window.cancelAnimationFrame(frame);
   }, [messages, status, reducedMotion]);
 
   const waiting = status === "submitted" || status === "streaming";
@@ -689,6 +996,23 @@ export function ConversationThread({
   // The placeholder turn only makes sense before the assistant bubble exists.
   const awaitingFirstToken = waiting && (lastMessage === undefined || lastMessage.role === "user");
   const pendingCall = activeToolCalls[activeToolCalls.length - 1];
+  const latestSpaceBatchToolCallId = useMemo(() => {
+    let latest: string | null = null;
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      for (const part of message.parts) {
+        if (part.type !== "data-agent-tool-result") continue;
+        const result = normalizeAgentToolResult(part.data);
+        if (!result) continue;
+        // A later batch attempt also supersedes the previous plan when it
+        // resolves to noop/rejected (for example, the user removed every item).
+        if (result.name === "propose_space_batch") {
+          latest = result.toolCallId;
+        }
+      }
+    }
+    return latest;
+  }, [messages]);
 
   return (
     <div className="chat-thread" role="log" aria-live="polite" aria-busy={waiting}>
@@ -753,11 +1077,23 @@ export function ConversationThread({
                 if (part.type === "data-agent-tool-result") {
                   const result = normalizeAgentToolResult(part.data);
                   if (!result) return null;
+                  // 链接结果由 Agent 面板底部的统一站点卡片区消费；这里再渲染
+                  // 通用 ToolCard 会产生重复 DOM，空最终清单还会给出误导文案。
+                  if (describeAgentToolResult(result.name, result.result).kind === "links") {
+                    return null;
+                  }
                   return (
                     <ToolCard
                       key={`tool-${result.toolCallId}-${index}`}
+                      storageScope={metadata.conversationId ?? result.toolCallId}
                       result={result}
                       draftState={draftStates[result.toolCallId] ?? IDLE_DRAFT}
+                      spaceBatchSuperseded={
+                        result.name === "propose_space_batch" &&
+                        result.toolCallId !== latestSpaceBatchToolCallId
+                      }
+                      messagePersisted={metadata.turnPersisted === true}
+                      agentWaiting={waiting}
                       onConfirmDraft={onConfirmDraft}
                     />
                   );

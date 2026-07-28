@@ -51,6 +51,7 @@ class _MetadataParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.result = ParsedMetadata()
+        self._in_head = False
         self._in_title = False
         self._title_parts: list[str] = []
         self._visible_parts: list[str] = []
@@ -68,6 +69,13 @@ class _MetadataParser(HTMLParser):
             return
         if self._ignored_tags:
             return
+        if tag == "head":
+            self._in_head = True
+            return
+        if tag == "body":
+            # Recover useful body text even when a malformed document omitted
+            # the closing </head> tag.
+            self._in_head = False
         if tag == "title":
             self._in_title = True
             return
@@ -117,6 +125,9 @@ class _MetadataParser(HTMLParser):
             return
         if self._ignored_tags:
             return
+        if tag == "head":
+            self._in_head = False
+            return
         if tag == "title":
             self._in_title = False
 
@@ -125,6 +136,9 @@ class _MetadataParser(HTMLParser):
             return
         if self._in_title:
             self._title_parts.append(data)
+            return
+        if self._in_head:
+            return
         if self._visible_chars >= MAX_PAGE_TEXT_CHARS:
             return
         visible = " ".join(data.split())

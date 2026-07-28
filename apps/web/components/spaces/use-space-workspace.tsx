@@ -368,7 +368,7 @@ export function useSpaceWorkspace(initialSpaceId: string | null) {
       setDialog(null);
       setNotice(
         result.unlinkedSiteCount > 0
-          ? `Space 已删除，${result.unlinkedSiteCount} 个网站仍保留在资料库中`
+          ? `Space 已删除，${result.unlinkedSiteCount} 个网站仍保留在网址库中`
           : "Space 已删除",
       );
       if (selectedSpaceId === target.id) {
@@ -477,7 +477,7 @@ export function useSpaceWorkspace(initialSpaceId: string | null) {
     try {
       await removeSpaceMember(target.id, member.site.id, target.version);
       setDialog(null);
-      setNotice(`已将“${member.site.name}”移出 Space，网站仍保留在资料库中`);
+      setNotice(`已将“${member.site.name}”移出 Space，网站仍保留在网址库中`);
       refreshDetail();
       refreshList();
     } catch (error) {

@@ -14,7 +14,7 @@ import {
 
 const conversation = {
   id: "conv-1",
-  title: "如何整理资料库",
+  title: "如何整理网址库",
   title_is_custom: false,
   version: 2,
   message_count: 4,
@@ -76,7 +76,7 @@ function fakeNow(timezoneOffset: number): Date {
 
 type RecordedCall = { method: string; url: string; body?: Record<string, unknown> };
 
-// 按 URL + method 分派的资料库接口打桩：既返回可通过 contract 归一化的响应，
+// 按 URL + method 分派的网址库接口打桩：既返回可通过 contract 归一化的响应，
 // 也把调用顺序完整记录下来，供 confirmAgentSiteDraft 的编排断言使用。
 function stubLibraryFetch(
   options: { categories?: unknown[]; tags?: unknown[] } = {},

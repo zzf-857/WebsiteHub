@@ -59,8 +59,8 @@ export function cardKey(link: AgentToolLink, index: number): string {
   return link.siteId ?? link.url ?? `${link.name}-${index}`;
 }
 
-// 后端 web_search 结果目前不带 provider 字段；这里防御性读取，
-// 一旦后端补上就自动显示真实名称，绝不硬编码某家搜索商
+// 新结果会回传当前搜索配置的真实展示名；防御性读取同时兼容字段缺失的历史消息，
+// 展示层不硬编码任何一家搜索服务。
 export function readWebProvider(result: unknown): string | null {
   if (typeof result !== "object" || result === null || Array.isArray(result)) return null;
   const provider = (result as Record<string, unknown>).provider;
@@ -91,6 +91,7 @@ export function formatConversationTime(iso: string): string | null {
 /* ---------- 结果卡片（设计稿 1b 的两类卡） ---------- */
 
 export function LibraryResultCard({ link }: Readonly<{ link: AgentToolLink }>) {
+  const cardDescription = link.summary || link.description;
   return (
     <article className="agent-site-card">
       <SiteFavicon url={link.faviconUrl} name={link.name} size={28} />
@@ -99,10 +100,10 @@ export function LibraryResultCard({ link }: Readonly<{ link: AgentToolLink }>) {
           <strong>{link.name}</strong>
           {link.url && <span>{hostOf(link.url)}</span>}
         </div>
-        {link.description && <p className="agent-site-desc">{link.description}</p>}
+        {cardDescription && <p className="agent-site-desc">{cardDescription}</p>}
         <div className="agent-site-meta">
           <span className="agent-site-origin">
-            收藏库{link.category ? ` · ${link.category}` : ""}
+            网址库{link.category ? ` · ${link.category}` : ""}
           </span>
           {link.pinned && <span>已置顶</span>}
         </div>

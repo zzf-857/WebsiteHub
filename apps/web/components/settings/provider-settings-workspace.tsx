@@ -265,8 +265,8 @@ export function ProviderSettingsWorkspace() {
         <span className="page-kicker">设置</span>
         <h1>服务商</h1>
         <p className="provider-page-lead">
-          WebHub 不内置任何厂商密钥。填入你自己的 API Key 后，Agent 才会以你的额度调用模型。
-          密钥加密保存在本账号名下，保存后任何界面都只显示掩码。
+          模型与专业搜索服务可以使用你自己的 API Key，注册表也可能提供无需 Key 的受限服务。
+          需要密钥的配置会加密保存在本账号名下，保存后任何界面都只显示掩码。
         </p>
       </header>
 
@@ -405,7 +405,7 @@ export function ProviderSettingsWorkspace() {
           <>
             <p className="provider-dialog-text">
               将删除{providerKindLabel(dialog.config.kind)}配置“{dialog.config.displayName}”
-              及其加密保存的 API Key。此操作不可撤销。
+              {dialog.config.hasSecret ? "及其加密保存的 API Key" : ""}。此操作不可撤销。
             </p>
             {dialog.config.enabled && (
               <p className="provider-dialog-text">

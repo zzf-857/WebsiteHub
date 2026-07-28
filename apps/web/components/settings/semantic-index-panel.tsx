@@ -93,7 +93,7 @@ export function SemanticIndexPanel() {
         </h2>
       </header>
       <p className="provider-page-lead">
-        为资料库里的网站生成向量，搜索时按「相关度」排序才会用到。
+        为网址库里的网站生成向量，搜索时按「相关度」排序才会用到。
         生成会调用你自己配置的 embedding Provider，<strong>消耗你的额度</strong>，
         所以这里只显示花费、不自动开跑。
       </p>

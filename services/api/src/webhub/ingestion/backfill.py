@@ -22,7 +22,6 @@ from webhub.db.models import (
     Site,
     SiteMetadataBackfillItem,
     SiteMetadataBackfillRun,
-    SiteMetadataPreference,
     new_id,
     utc_now,
 )
@@ -50,6 +49,7 @@ _ITEM_TERMINAL_STATES = ("complete", "limited", "failed", "skipped")
 class MetadataBackfillProgress:
     id: str
     status: str
+    stopped_early: bool
     total_count: int
     queued_count: int
     running_count: int
@@ -120,13 +120,15 @@ def _progress_from_run(run: SiteMetadataBackfillRun) -> MetadataBackfillProgress
     failed = run.failed_count
     skipped = run.skipped_count
     completed = complete + limited + failed + skipped
-    # The storage-level state distinguishes a clean terminal run from one
-    # with fetch failures.  The UI only needs active versus terminal, so expose
-    # one stable terminal value rather than leaking internal recovery states.
-    status = run.state if run.state in {"queued", "running"} else "complete"
+    status = (
+        "failed"
+        if run.stop_requested and run.state not in _ACTIVE_RUN_STATES
+        else run.state
+    )
     return MetadataBackfillProgress(
         id=run.id,
         status=status,
+        stopped_early=run.stop_requested,
         total_count=run.total_count,
         queued_count=queued,
         running_count=running,
@@ -769,7 +771,7 @@ async def item_execution_intent(
         await session.execute(
             select(
                 SiteMetadataBackfillItem.requires_llm,
-                SiteMetadataPreference.llm_analyzed_at,
+                llm_enrichment_missing_condition(),
             )
             .select_from(SiteMetadataBackfillRun)
             .join(
@@ -780,13 +782,11 @@ async def item_execution_intent(
                     SiteMetadataBackfillItem.run_id == SiteMetadataBackfillRun.id,
                 ),
             )
-            .outerjoin(
-                SiteMetadataPreference,
+            .join(
+                Site,
                 and_(
-                    SiteMetadataPreference.user_id
-                    == SiteMetadataBackfillItem.user_id,
-                    SiteMetadataPreference.site_id
-                    == SiteMetadataBackfillItem.site_id,
+                    Site.user_id == SiteMetadataBackfillItem.user_id,
+                    Site.id == SiteMetadataBackfillItem.site_id,
                 ),
             )
             .where(
@@ -810,8 +810,8 @@ async def item_execution_intent(
     ).one_or_none()
     if row is None:
         return None
-    requires_llm, llm_analyzed_at = row
-    return bool(requires_llm and llm_analyzed_at is None)
+    requires_llm, enrichment_missing = row
+    return bool(requires_llm and enrichment_missing)
 
 
 async def renew_item_lease(

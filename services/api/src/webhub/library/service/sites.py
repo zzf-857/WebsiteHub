@@ -76,6 +76,7 @@ async def _site_response(
         name=site.name,
         original_url=site.original_url,
         identity_url=site.identity_url,
+        summary=site.summary,
         description=site.description,
         favicon_url=_safe_favicon_url(site.favicon_url),
         preview_url=site.preview_url,
@@ -129,6 +130,7 @@ async def create_site(
     tags = await _owned_tags(session, user_id, payload.tag_ids)
     # Creation has no prior derived value to clear. Empty form defaults are
     # therefore absence, not a permanent user veto on later enrichment.
+    manual_summary = bool(payload.summary.strip())
     manual_description = bool(payload.description.strip())
     manual_favicon = payload.favicon_url is not None
     manual_category = "category_id" in payload.model_fields_set and not category.is_default
@@ -168,18 +170,27 @@ async def create_site(
         normalized_name=normalized_name,
         original_url=original_url,
         identity_url=identity_url,
+        summary=payload.summary.strip(),
         description=payload.description.strip(),
         favicon_url=payload.favicon_url,
         pinned=payload.pinned,
+        source=payload.source,
     )
     session.add(site)
     try:
         await session.flush()
-        if manual_description or manual_favicon or manual_category or manual_tags:
+        if (
+            manual_summary
+            or manual_description
+            or manual_favicon
+            or manual_category
+            or manual_tags
+        ):
             session.add(
                 SiteMetadataPreference(
                     user_id=user_id,
                     site_id=site.id,
+                    summary_is_manual=manual_summary,
                     description_is_manual=manual_description,
                     favicon_is_manual=manual_favicon,
                     category_is_manual=manual_category,
@@ -191,7 +202,7 @@ async def create_site(
     except IntegrityError as error:
         await session.rollback()
         raise LibraryConflictError(
-            "该网址已存在于当前账号的资料库",
+            "该网址已存在于当前账号的网址库",
             code="duplicate_url",
         ) from error
     return await _site_response(session, user_id, site, category, tags)
@@ -213,9 +224,10 @@ async def update_site(
     fields = payload.model_fields_set - {"expected_version"}
     if not fields:
         raise LibraryValidationError("网站更新至少需要一个字段")
-    if {"url", "category_id", "tag_ids"} & fields:
-        if not await reserve_account_taxonomy(session, user_id):
-            raise LibraryConflictError("账号状态已发生变化，请刷新后重试")
+    if {"url", "category_id", "tag_ids"} & fields and not await reserve_account_taxonomy(
+        session, user_id
+    ):
+        raise LibraryConflictError("账号状态已发生变化，请刷新后重试")
 
     name_update: tuple[str, str] | None = None
     if "name" in fields:
@@ -235,6 +247,8 @@ async def update_site(
     explicit_new_favicon = (
         "favicon_url" in fields and payload.favicon_url != site.favicon_url
     )
+    summary_update = (payload.summary or "").strip() if "summary" in fields else None
+    explicit_new_summary = summary_update is not None and summary_update != (site.summary or "")
     description_update = (payload.description or "").strip() if "description" in fields else None
     explicit_new_description = (
         description_update is not None and description_update != (site.description or "")
@@ -242,6 +256,10 @@ async def update_site(
     # An explicit empty field is a decision even when it was already empty.
     # The current UI sends only dirty fields, so this preserves a clear without
     # turning an ordinary rename into a metadata decision.
+    manual_summary = "summary" in fields and (
+        explicit_new_summary
+        or (not url_changed and summary_update == "")
+    )
     manual_description = "description" in fields and (
         explicit_new_description
         or (not url_changed and description_update == "")
@@ -317,6 +335,7 @@ async def update_site(
         preference: SiteMetadataPreference | None = None
         if (
             url_changed
+            or manual_summary
             or manual_description
             or manual_favicon
             or manual_category
@@ -326,10 +345,12 @@ async def update_site(
         if url_changed and preference is not None:
             # A metadata decision belongs to the previous target. A true URL
             # change makes the new page eligible for derived values again.
+            preference.summary_is_manual = False
             preference.description_is_manual = False
             preference.favicon_is_manual = False
             preference.category_is_manual = False
             preference.tags_are_manual = False
+            preference.summary_is_llm = False
             preference.description_is_llm = False
             preference.category_is_llm = False
             preference.tags_are_llm = False
@@ -345,9 +366,18 @@ async def update_site(
             # fills blanks, even an explicit re-analysis could never repair it.
             site.favicon_url = None
             site.preview_url = None
+            site.summary = ""
             site.description = ""
             site.analysis_status = "not_analyzed"
             site.analysis_updated_at = None
+        if "summary" in fields and (not url_changed or manual_summary):
+            site.summary = summary_update or ""
+            if manual_summary:
+                if preference is None:
+                    preference = SiteMetadataPreference(user_id=user_id, site_id=site_id)
+                    session.add(preference)
+                preference.summary_is_manual = True
+                preference.summary_is_llm = False
         if "description" in fields and (not url_changed or manual_description):
             site.description = description_update or ""
             if manual_description:
@@ -401,10 +431,12 @@ async def update_site(
                 preference.tags_are_llm = False
         if (
             preference is not None
+            and not preference.summary_is_manual
             and not preference.description_is_manual
             and not preference.favicon_is_manual
             and not preference.category_is_manual
             and not preference.tags_are_manual
+            and not preference.summary_is_llm
             and not preference.description_is_llm
             and not preference.category_is_llm
             and not preference.tags_are_llm
@@ -417,7 +449,7 @@ async def update_site(
     except IntegrityError as error:
         await session.rollback()
         raise LibraryConflictError(
-            "该网址已存在于当前账号的资料库",
+            "该网址已存在于当前账号的网址库",
             code="duplicate_url",
         ) from error
     return await _site_response(session, user_id, site)

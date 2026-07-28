@@ -3,8 +3,10 @@ import {
   assertLibraryCategoryName,
   assertLibraryExpectedVersion,
   assertLibrarySiteCreateInput,
+  assertLibrarySiteCreateSource,
   assertLibrarySiteUpdateInput,
   assertLibraryTagName,
+  libraryTagNameKey,
   libraryErrorDetails,
   normalizeLibraryAnalysisBackfill,
   normalizeLibraryBulkDeleteResult,
@@ -12,10 +14,12 @@ import {
   normalizeLibraryCategories,
   normalizeLibraryCategory,
   normalizeLibrarySite,
+  normalizeLibrarySiteAnalysis,
   normalizeLibrarySitePage,
   normalizeLibrarySiteSelection,
   normalizeLibraryTag,
   normalizeLibraryTags,
+  normalizeLibraryTagName,
   normalizeMetadataBackfillProgress,
   type LibraryCategory,
   type LibraryAnalysisBackfill,
@@ -23,7 +27,9 @@ import {
   type LibraryBulkDeleteResult,
   type LibraryCategoryDeletePreview,
   type LibrarySite,
+  type LibrarySiteAnalysisResult,
   type LibrarySiteCreateInput,
+  type LibrarySiteCreateSource,
   type LibrarySitePage,
   type LibrarySiteQuery,
   type LibrarySiteSelectionItem,
@@ -108,11 +114,13 @@ function siteCreatePayload(input: LibrarySiteCreateInput): Record<string, unknow
   return {
     name: normalized.name,
     url: normalized.url,
+    ...(normalized.summary !== undefined ? { summary: normalized.summary } : {}),
     ...(normalized.description !== undefined ? { description: normalized.description } : {}),
     ...(normalized.faviconUrl !== undefined ? { favicon_url: normalized.faviconUrl } : {}),
     ...(normalized.categoryId !== undefined ? { category_id: normalized.categoryId } : {}),
     ...(normalized.tagIds !== undefined ? { tag_ids: normalized.tagIds } : {}),
     ...(normalized.pinned !== undefined ? { pinned: normalized.pinned } : {}),
+    ...(normalized.source !== undefined ? { source: normalized.source } : {}),
   };
 }
 
@@ -122,6 +130,7 @@ function siteUpdatePayload(input: LibrarySiteUpdateInput): Record<string, unknow
     expected_version: normalized.expectedVersion,
     ...(normalized.name !== undefined ? { name: normalized.name } : {}),
     ...(normalized.url !== undefined ? { url: normalized.url } : {}),
+    ...(normalized.summary !== undefined ? { summary: normalized.summary } : {}),
     ...(normalized.description !== undefined ? { description: normalized.description } : {}),
     ...(normalized.faviconUrl !== undefined ? { favicon_url: normalized.faviconUrl } : {}),
     ...(normalized.categoryId !== undefined ? { category_id: normalized.categoryId } : {}),
@@ -165,6 +174,30 @@ export async function createLibraryTag(name: string): Promise<LibraryTag> {
     method: "POST",
     body: JSON.stringify({ name: assertLibraryTagName(name) }),
   }));
+}
+
+export type LibraryTagCreateResolution = {
+  tag: LibraryTag;
+  /** Present only when a 409 required replacing the caller's stale tag list. */
+  latestTags: LibraryTag[] | null;
+};
+
+/** Create a tag, or recover a concurrent/normalization-equivalent creation. */
+export async function createLibraryTagResolvingConflict(
+  name: string,
+): Promise<LibraryTagCreateResolution> {
+  const display = normalizeLibraryTagName(name);
+  const key = libraryTagNameKey(display);
+  try {
+    return { tag: await createLibraryTag(display), latestTags: null };
+  } catch (error) {
+    if (!(error instanceof LibraryApiError) || error.status !== 409) throw error;
+
+    const latestTags = await listLibraryTags();
+    const existing = latestTags.find((tag) => libraryTagNameKey(tag.name) === key);
+    if (!existing) throw error;
+    return { tag: existing, latestTags };
+  }
 }
 
 export async function updateLibraryTag(id: string, name: string): Promise<LibraryTag> {
@@ -244,8 +277,8 @@ export async function deleteLibrarySites(
  * Fetch public page evidence, run the account's model through the three
  * constrained enrichment tools, then atomically store allowed derived fields.
  */
-export async function analyzeLibrarySite(id: string): Promise<LibrarySite> {
-  return normalizeLibrarySite(await request(`/sites/${encodeId(id)}/analyze`, {
+export async function analyzeLibrarySite(id: string): Promise<LibrarySiteAnalysisResult> {
+  return normalizeLibrarySiteAnalysis(await request(`/sites/${encodeId(id)}/analyze`, {
     method: "POST",
   }));
 }
@@ -297,10 +330,17 @@ export type LibrarySiteBatchResult = {
 };
 
 /** 批量入库。逐项独立提交，一条失败不影响其余。 */
-export async function createLibrarySiteBatch(urls: string[]): Promise<LibrarySiteBatchResult> {
+export async function createLibrarySiteBatch(
+  urls: string[],
+  source: LibrarySiteCreateSource = "manual",
+): Promise<LibrarySiteBatchResult> {
   const payload = await request("/sites/batch", {
     method: "POST",
-    body: JSON.stringify({ urls, confirm: true }),
+    body: JSON.stringify({
+      urls,
+      confirm: true,
+      source: assertLibrarySiteCreateSource(source),
+    }),
   });
   const record = (payload ?? {}) as Record<string, unknown>;
   const count = (key: string): number =>

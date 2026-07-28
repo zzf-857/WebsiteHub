@@ -35,7 +35,11 @@ import {
 } from "@/components/agent/agent-result-cards";
 import { QUICK_PROMPTS, useAgentPanel } from "@/components/agent/use-agent-panel";
 
-export function AgentPanel() {
+type AgentPanelProps = {
+  onLibraryChanged?: () => void;
+};
+
+export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
   const {
     activeToolCalls,
     answerStreaming,
@@ -45,6 +49,7 @@ export function AgentPanel() {
     conversationId,
     conversationStarted,
     draftStates,
+    draftWorkflowBusy,
     errorText,
     handleCollect,
     handleConfirmDraft,
@@ -72,7 +77,8 @@ export function AgentPanel() {
     textareaRef,
     toggleHistory,
     webSaves,
-  } = useAgentPanel();
+  } = useAgentPanel({ onLibraryChanged });
+  const interactionLocked = busy || draftWorkflowBusy;
 
   return (
     <section
@@ -104,7 +110,7 @@ export function AgentPanel() {
               aria-pressed={scope === "collection"}
               onClick={() => setScope("collection")}
             >
-              仅收藏库
+              仅网址库
             </button>
             <button
               type="button"
@@ -122,6 +128,7 @@ export function AgentPanel() {
               className="agent-head-button"
               aria-haspopup="menu"
               aria-expanded={historyOpen}
+              disabled={interactionLocked}
               onClick={toggleHistory}
             >
               <History aria-hidden="true" />
@@ -150,6 +157,7 @@ export function AgentPanel() {
                           role="menuitem"
                           className="agent-history-item"
                           data-active={item.id === conversationId || undefined}
+                          disabled={interactionLocked}
                           key={item.id}
                           onClick={() => openConversation(item.id)}
                         >
@@ -163,7 +171,12 @@ export function AgentPanel() {
               </div>
             )}
           </div>
-          <button type="button" className="agent-head-button" onClick={startNewConversation}>
+          <button
+            type="button"
+            className="agent-head-button"
+            disabled={interactionLocked}
+            onClick={startNewConversation}
+          >
             <Plus aria-hidden="true" />
             新对话
           </button>
@@ -200,9 +213,9 @@ export function AgentPanel() {
             {resultGroups && (
               <div className="agent-results">
                 {resultGroups.library.items.length > 0 && (
-                  <section className="agent-result-group" aria-label="来自收藏库的结果">
+                  <section className="agent-result-group" aria-label="来自网址库的结果">
                     <h3 className="agent-result-label">
-                      <span>来自收藏库 · {resultGroups.library.total}</span>
+                      <span>来自网址库 · {resultGroups.library.total}</span>
                     </h3>
                     <StaggerList className="agent-result-grid">
                       {resultGroups.library.items.map((link, index) => (
@@ -255,6 +268,7 @@ export function AgentPanel() {
                 ref={textareaRef}
                 rows={1}
                 value={input}
+                disabled={draftWorkflowBusy}
                 placeholder="继续追问，或让我把结果加入某个 Space…"
                 onChange={handleInputChange}
                 onKeyDown={handleInputKeyDown}
@@ -272,7 +286,7 @@ export function AgentPanel() {
                 <button
                   type="submit"
                   className="agent-send-button"
-                  disabled={!input.trim()}
+                  disabled={draftWorkflowBusy || !input.trim()}
                   aria-label="发送"
                   title="发送"
                 >
@@ -294,6 +308,7 @@ export function AgentPanel() {
               ref={textareaRef}
               rows={1}
               value={input}
+              disabled={draftWorkflowBusy}
               placeholder="描述你要找的网站，或粘贴一个/多个 URL 直接入库…"
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
@@ -318,7 +333,7 @@ export function AgentPanel() {
                 <button
                   type="submit"
                   className="agent-send-button"
-                  disabled={!input.trim()}
+                  disabled={draftWorkflowBusy || !input.trim()}
                   aria-label="发送"
                   title="发送"
                 >

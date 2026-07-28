@@ -1,14 +1,15 @@
-"""Probe a Provider endpoint to verify credentials and list its models.
+"""Probe a Provider endpoint to verify credentials.
 
-This is the only place in the codebase that sends an account's model key to a
+This is the only place in the codebase that sends an account's Provider key to a
 vendor outside of an actual Agent turn, so the rules are tighter than usual:
 
 * **No vendor text ever reaches the caller.**  On a non-2xx response the body is
   never even read — vendor error payloads routinely embed the request URL, the
   echoed request body, and a prefix of the API key.  Every failure collapses
   into one of the fixed Chinese messages in ``_FAILURES``.
-* **Read-only.**  The probe issues a single ``GET`` and writes nothing, so a
-  failed test cannot disturb the stored config or which config is enabled.
+* **Configuration-safe.**  A probe never writes Provider configuration.  Model
+  probes read a catalogue; search probes issue one minimal real query and may
+  consume quota, which the UI states before the user starts it.
 * **The target is re-validated immediately before the call**, because a
   hostname that passed validation at save time can be re-pointed at a private
   address afterwards.
@@ -55,17 +56,23 @@ class ProviderProbeResult:
     models: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderSearchProbeResult:
+    result_count: int
+
+
 # Every failure mode maps to a fixed pair here.  Nothing derived from the
 # vendor response is ever interpolated into these strings.
 _FAILURES: dict[str, str] = {
     "provider_auth_failed": "API Key 无效或没有访问该接口的权限，请核对后重试",
-    "provider_endpoint_not_found": "该地址下没有模型列表接口，请检查 Base URL 是否填对",
+    "provider_endpoint_not_found": "该地址下没有可用的连接测试接口，请检查 Base URL 是否填对",
     "provider_rate_limited": "服务商正在限流，请稍后再试",
+    "provider_quota_exhausted": "搜索额度不足或已达到用量上限，请检查服务商账户",
     "provider_upstream_error": "服务商暂时不可用，请稍后再试",
     "provider_timeout": "连接服务商超时，请检查网络或 Base URL",
     "provider_unreachable": "无法连接到该地址，请检查 Base URL 是否可达",
     "provider_redirected": "该地址发生了跳转，出于安全考虑不会跟随，请填写最终地址",
-    "provider_response_invalid": "服务商返回了无法识别的响应，请检查 Base URL 是否指向模型接口",
+    "provider_response_invalid": "服务商返回了无法识别的响应，请检查 Base URL 是否填对",
     "provider_response_too_large": "服务商返回的内容过大，已中止读取",
     "provider_request_failed": "连接服务商失败，请稍后再试",
 }
@@ -76,6 +83,8 @@ def _fail(code: str) -> ProviderProbeError:
 
 
 def _status_code(status: int) -> str:
+    if status in {402, 432, 433}:
+        return "provider_quota_exhausted"
     if status in {401, 403}:
         return "provider_auth_failed"
     if status == 404:
@@ -87,14 +96,18 @@ def _status_code(status: int) -> str:
     if status >= 500:
         return "provider_upstream_error"
     # 400/405/422 and friends: almost always a Base URL that does not point at
-    # a model-listing endpoint.
+    # the expected catalogue or search endpoint.
     return "provider_response_invalid"
 
 
 def probe_base_url(definition: ProviderDefinition, stored_base_url: str | None) -> str:
     """Resolve the origin the probe should talk to, or raise if there is none."""
 
-    candidate = (stored_base_url or "").strip().rstrip("/")
+    candidate = (
+        ""
+        if definition.fixed_base_url
+        else (stored_base_url or "").strip().rstrip("/")
+    )
     if not candidate:
         candidate = (definition.default_base_url or "").rstrip("/")
     if not candidate:
@@ -144,36 +157,27 @@ def _model_names(payload: Any, definition: ProviderDefinition) -> list[str]:
     return sorted(names)
 
 
-async def probe_models(
-    definition: ProviderDefinition,
+def _search_result_count(payload: Any, definition: ProviderDefinition) -> int:
+    if not isinstance(payload, Mapping):
+        raise _fail("provider_response_invalid")
+    key = "data" if definition.provider == "jina" else "results"
+    entries = payload.get(key)
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        raise _fail("provider_response_invalid")
+    return len(entries)
+
+
+async def _request_json(
     *,
-    base_url: str,
-    api_key: str | None,
+    method: str,
+    url: str,
+    headers: Mapping[str, str],
     timeout_seconds: int,
-) -> ProviderProbeResult:
-    """Issue one read-only catalogue request and return the model names.
-
-    Raises ``ProviderProbeError`` for every failure; the caller may surface
-    ``error.code`` and ``error.message`` verbatim.
-    """
-
+    params: Mapping[str, str] | None = None,
+    json_body: Mapping[str, Any] | None = None,
+) -> Any:
     import httpx
 
-    try:
-        # Re-resolve right now rather than trusting the check done at save time.
-        await validate_connection_target(
-            base_url,
-            allow_private=definition.allows_private_base_url,
-            timeout_seconds=timeout_seconds,
-        )
-    except ProviderTargetError as error:
-        raise ProviderProbeError(error.code, error.message) from error
-
-    headers = {"user-agent": _USER_AGENT, "accept": "application/json"}
-    if api_key:
-        headers["authorization"] = f"Bearer {api_key}"
-
-    url = _catalogue_url(definition, base_url)
     body = bytearray()
     try:
         # Streamed rather than fetched whole so the body can be capped, and so a
@@ -181,7 +185,13 @@ async def probe_models(
         # text is read.
         async with (
             httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client,
-            client.stream("GET", url, headers=headers) as response,
+            client.stream(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=json_body,
+            ) as response,
         ):
             if response.status_code >= 300:
                 raise _fail(_status_code(response.status_code))
@@ -199,10 +209,111 @@ async def probe_models(
         raise _fail("provider_request_failed") from error
 
     try:
-        payload = json.loads(bytes(body))
+        return json.loads(bytes(body))
     except ValueError as error:
         raise _fail("provider_response_invalid") from error
+
+
+async def probe_models(
+    definition: ProviderDefinition,
+    *,
+    base_url: str,
+    api_key: str | None,
+    timeout_seconds: int,
+) -> ProviderProbeResult:
+    """Issue one read-only catalogue request and return the model names.
+
+    Raises ``ProviderProbeError`` for every failure; the caller may surface
+    ``error.code`` and ``error.message`` verbatim.
+    """
+
+    try:
+        # Re-resolve right now rather than trusting the check done at save time.
+        await validate_connection_target(
+            base_url,
+            allow_private=definition.allows_private_base_url,
+            timeout_seconds=timeout_seconds,
+        )
+    except ProviderTargetError as error:
+        raise ProviderProbeError(error.code, error.message) from error
+
+    headers = {"user-agent": _USER_AGENT, "accept": "application/json"}
+    if api_key:
+        headers["authorization"] = f"Bearer {api_key}"
+
+    payload = await _request_json(
+        method="GET",
+        url=_catalogue_url(definition, base_url),
+        headers=headers,
+        timeout_seconds=timeout_seconds,
+    )
     return ProviderProbeResult(models=_model_names(payload, definition))
+
+
+async def probe_search(
+    definition: ProviderDefinition,
+    *,
+    base_url: str,
+    api_key: str | None,
+    timeout_seconds: int,
+) -> ProviderSearchProbeResult:
+    """Run one minimal search to verify a search endpoint and credential.
+
+    This is intentionally a real query: these vendors do not share a stable,
+    read-only key-validation endpoint.  The fixed query carries no user data,
+    requests at most one result where the vendor supports that control, and
+    none of the returned third-party content is exposed to the caller.
+    """
+
+    if not definition.search_test_supported:
+        raise _fail("provider_response_invalid")
+    try:
+        await validate_connection_target(
+            base_url,
+            allow_private=definition.allows_private_base_url,
+            timeout_seconds=timeout_seconds,
+        )
+    except ProviderTargetError as error:
+        raise ProviderProbeError(error.code, error.message) from error
+
+    headers = {"user-agent": _USER_AGENT, "accept": "application/json"}
+    query = "WebHub connectivity test"
+    params: Mapping[str, str] | None = None
+    json_body: Mapping[str, Any] | None = None
+    url = base_url.rstrip("/")
+
+    if definition.provider == "tavily":
+        headers["authorization"] = f"Bearer {api_key or ''}"
+        url = f"{url}/search"
+        json_body = {
+            "query": query,
+            "search_depth": "basic",
+            "max_results": 1,
+            "include_answer": False,
+            "include_raw_content": False,
+            "include_images": False,
+        }
+    elif definition.provider == "exa":
+        headers["x-api-key"] = api_key or ""
+        url = f"{url}/search"
+        json_body = {"query": query, "numResults": 1}
+    elif definition.provider == "jina":
+        headers["authorization"] = f"Bearer {api_key or ''}"
+        params = {"q": query}
+    else:
+        raise _fail("provider_response_invalid")
+
+    payload = await _request_json(
+        method="GET" if definition.provider == "jina" else "POST",
+        url=url,
+        headers=headers,
+        timeout_seconds=timeout_seconds,
+        params=params,
+        json_body=json_body,
+    )
+    return ProviderSearchProbeResult(
+        result_count=_search_result_count(payload, definition),
+    )
 
 
 __all__ = [
@@ -210,6 +321,8 @@ __all__ = [
     "MAX_RESPONSE_BYTES",
     "ProviderProbeError",
     "ProviderProbeResult",
+    "ProviderSearchProbeResult",
     "probe_base_url",
     "probe_models",
+    "probe_search",
 ]

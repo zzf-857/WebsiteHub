@@ -363,7 +363,7 @@ async def apply_candidates(
             raise BookmarkApplyError(
                 409,
                 "bookmark_apply_conflict",
-                "导入过程中资料库发生了并发修改，请重新发起导入",
+                "导入过程中网址库发生了并发修改，请重新发起导入",
             ) from error
     return ApplyOutcome(
         total_candidates=total,

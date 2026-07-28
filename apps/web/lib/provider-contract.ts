@@ -12,11 +12,16 @@ export type ProviderRegistryItem = {
   kinds: ProviderKind[];
   secretRequired: boolean;
   baseUrlRequired: boolean;
+  // 固定地址由后端锁定到 defaultBaseUrl；前端不展示可编辑输入，也不能沿用
+  // 切换厂商前的代理地址。
+  fixedBaseUrl: boolean;
   allowsPrivateBaseUrl: boolean;
   applicationUrl: string | null;
   connectionTestSupported: boolean;
-  // 厂商官方地址，用来预填 Base URL；null 表示该厂商没有固定地址（Ollama、
-  // OpenAI-compatible），必须用户自己填。
+  searchBulkSupported: boolean;
+  usageNotice: string | null;
+  // 厂商官方地址，用来预填或展示 Base URL；null 表示该厂商没有官方地址
+  // （Ollama、OpenAI-compatible），必须用户自己填。
   defaultBaseUrl: string | null;
 };
 
@@ -182,9 +187,12 @@ function normalizeRegistryItemAt(value: unknown, path: string): ProviderRegistry
     kinds: candidate.kinds.map((kind, index) => literal(kind, `${path}.kinds[${index}]`, PROVIDER_KINDS)),
     secretRequired: boolean(candidate.secret_required, `${path}.secret_required`),
     baseUrlRequired: boolean(candidate.base_url_required, `${path}.base_url_required`),
+    fixedBaseUrl: boolean(candidate.fixed_base_url, `${path}.fixed_base_url`),
     allowsPrivateBaseUrl: boolean(candidate.allows_private_base_url, `${path}.allows_private_base_url`),
     applicationUrl: nullableWebUrl(candidate.application_url, `${path}.application_url`),
     connectionTestSupported: boolean(candidate.connection_test_supported, `${path}.connection_test_supported`),
+    searchBulkSupported: boolean(candidate.search_bulk_supported, `${path}.search_bulk_supported`),
+    usageNotice: candidate.usage_notice === null ? null : text(candidate.usage_notice, `${path}.usage_notice`),
     defaultBaseUrl: nullableWebUrl(candidate.default_base_url, `${path}.default_base_url`),
   };
 }

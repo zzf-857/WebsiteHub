@@ -31,6 +31,7 @@ import {
 import {
   SpaceApiError,
 } from "@/lib/space-client";
+import { librarySiteCardSummary } from "@/lib/library-contract";
 import {
   MAX_SPACE_NAME_LENGTH,
   type Space,
@@ -253,7 +254,7 @@ export function SpaceMemberRow({
           {siteHost(member.site.originalUrl)}
           <ExternalLink aria-hidden="true" />
         </a>
-        {member.site.description && <p>{member.site.description}</p>}
+        {librarySiteCardSummary(member.site) && <p>{librarySiteCardSummary(member.site)}</p>}
       </div>
       <div className="space-member-actions" role="group" aria-label={`调整 ${member.site.name} 的顺序`}>
         <button className="icon-button" type="button" disabled={busy || isFirst} onClick={() => onMove("top")} aria-label="移到最前" title="移到最前">

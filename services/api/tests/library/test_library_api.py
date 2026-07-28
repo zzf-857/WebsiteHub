@@ -216,7 +216,7 @@ def test_url_identity_is_strict_per_account(library_client: TestClient) -> None:
     assert duplicate.status_code == 409
     assert duplicate.json()["detail"] == {
         "code": "duplicate_url",
-        "message": "该网址已存在于当前账号的资料库",
+        "message": "该网址已存在于当前账号的网址库",
     }
 
     client.cookies.clear()
@@ -412,7 +412,7 @@ def test_site_update_conflicts_remain_mapped_when_relationships_are_replaced(
     assert duplicate.status_code == 409
     assert duplicate.json()["detail"] == {
         "code": "duplicate_url",
-        "message": "该网址已存在于当前账号的资料库",
+        "message": "该网址已存在于当前账号的网址库",
     }
 
     unchanged = client.get(f"/api/library/sites/{second['id']}")

@@ -4,13 +4,17 @@ import { useEffect, useRef } from "react";
 
 import type { LibrarySite } from "@/lib/library-contract";
 
+// Keep the first updates responsive, then cap the visible pending gap at 15s.
+// Twenty-four attempts cover roughly five minutes without leaving a finished
+// analysis looking stuck for another one or two minutes late in the run.
 export const ANALYSIS_REFRESH_DELAYS_MS = [
   1_000,
   2_000,
   3_000,
   5_000,
   8_000,
-  13_000,
+  12_000,
+  ...Array.from({ length: 18 }, () => 15_000),
 ] as const;
 
 type AnalysisStatus = Pick<LibrarySite, "analysisStatus">;
@@ -126,5 +130,28 @@ export function useBoundedAnalysisRefresh({
     };
 
     scheduleNext();
+  }, [enabled, scope]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let lastRefreshAt = 0;
+
+    const refreshOnActivity = () => {
+      if (!enabledRef.current || document.visibilityState === "hidden") return;
+      const now = Date.now();
+      // Browsers commonly dispatch visibilitychange and focus together.
+      if (now - lastRefreshAt < 1_000) return;
+      lastRefreshAt = now;
+      void Promise.resolve()
+        .then(() => refreshRef.current())
+        .catch(() => undefined);
+    };
+
+    window.addEventListener("focus", refreshOnActivity);
+    document.addEventListener("visibilitychange", refreshOnActivity);
+    return () => {
+      window.removeEventListener("focus", refreshOnActivity);
+      document.removeEventListener("visibilitychange", refreshOnActivity);
+    };
   }, [enabled, scope]);
 }

@@ -450,7 +450,7 @@ async def apply_import(
 
     Nothing before this endpoint ever created a ``Site``: upload, parse and
     preview are all read-only from the library's point of view.  That is what
-    makes "确认前资料库无变化" true by construction rather than by discipline.
+    makes "确认前网址库无变化" true by construction rather than by discipline.
     """
 
     response = await _call(
@@ -477,6 +477,7 @@ async def apply_import(
                 site_ids=tuple(immediate_site_ids),
                 priority=True,
                 intent=AnalysisIntent.SITE_ENRICHMENT,
+                bulk=True,
             )
     ingestion_worker.ensure_auto_backfill(
         request.app.state.database,

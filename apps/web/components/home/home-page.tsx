@@ -41,7 +41,7 @@ export function HomePage() {
         onSelectCategory={handleSelect}
       />
       <div className="home-main">
-        <AgentPanel />
+        <AgentPanel onLibraryChanged={refreshMetadataViews} />
         <HomeMetadataBackfillToolbar onCompleted={refreshMetadataViews} />
         <PinnedSites key={`pinned-${metadataRefreshRevision}`} />
         <SpaceShortcuts key={`spaces-${metadataRefreshRevision}`} />

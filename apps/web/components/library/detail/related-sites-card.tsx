@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Spinner } from "@/components/react-bits/spinner";
 import { SiteFavicon } from "@/components/site-favicon";
 import { listLibrarySites } from "@/lib/library-client";
+import { librarySiteCardSummary } from "@/lib/library-contract";
 import type { LibrarySite } from "@/lib/library-contract";
 
 import { hostOf } from "./meta";
@@ -105,10 +106,8 @@ export function RelatedSitesCard({ siteId, categoryId, categoryName }: Readonly<
                   <span className="sd-related-body">
                     <span className="sd-related-name">{item.name}</span>
                     <span className="sd-related-desc">
-                      {/* 描述可能是空字符串（?? 只兜 null/undefined），这里显式判空后回落到主机名 */}
-                      {item.description?.trim()
-                        ? item.description
-                        : hostOf(item.identityUrl || item.originalUrl)}
+                      {librarySiteCardSummary(item)
+                        || hostOf(item.identityUrl || item.originalUrl)}
                     </span>
                   </span>
                   <ArrowUpRight size={16} className="sd-related-arrow" aria-hidden="true" />

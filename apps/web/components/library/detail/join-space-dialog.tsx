@@ -90,6 +90,7 @@ export function JoinSpaceDialog({
       open={open}
       title="加入 Space"
       description={`选择要收纳「${siteName}」的 Space。`}
+      closeDisabled={joiningId !== null}
       onClose={onClose}
     >
       {state.status === "loading" && (

@@ -7,7 +7,7 @@ export default function SemanticIndexSettingsPage() {
         <span className="page-kicker">设置</span>
         <h1>语义索引</h1>
         <p className="provider-page-lead">
-          管理资料库的向量索引与重建任务。索引只用于增强相关度排序，不会改变已保存的网站。
+          管理网址库的向量索引与重建任务。索引只用于增强相关度排序，不会改变已保存的网站。
         </p>
       </header>
 

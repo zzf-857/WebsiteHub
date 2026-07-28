@@ -20,8 +20,30 @@ from webhub.bookmarks.privacy import agent_safe_label
 MIN_SITE_TAGS = 2
 MAX_SITE_TAGS = 6
 MAX_NEW_SITE_TAGS = 2
-MIN_SITE_DESCRIPTION_CHARS = 80
-MAX_SITE_DESCRIPTION_CHARS = 1_000
+MIN_SITE_SUMMARY_CHARS = 20
+MAX_SITE_SUMMARY_CHARS = 50
+MIN_SITE_DESCRIPTION_CHARS = 100
+MAX_SITE_DESCRIPTION_CHARS = 300
+MIN_META_DESCRIPTION_EVIDENCE_CHARS = 24
+MIN_PAGE_TEXT_EVIDENCE_CHARS = 80
+MAX_BLOCK_PAGE_EVIDENCE_CHARS = 1_500
+
+_BLOCK_PAGE_MARKERS = (
+    "access denied",
+    "checking your browser",
+    "enable javascript and cookies",
+    "just a moment",
+    "log in to continue",
+    "sign in to continue",
+    "verify you are human",
+    "访问被拒绝",
+    "请启用javascript",
+    "请启用 javascript",
+    "请先登录",
+    "人机验证",
+    "安全验证",
+    "登录后继续",
+)
 
 _MARKDOWN_PATTERN = re.compile(
     r"```|`[^`]+`|\[[^\]]+\]\([^)]+\)|"
@@ -62,7 +84,7 @@ def normalize_site_tag_name(value: str) -> tuple[str, str]:
 
 
 def normalize_site_description(value: str) -> str:
-    """Normalize one model description and reject rendered-markup syntax."""
+    """Normalize one focused 100-300 character detail and reject markup."""
 
     normalized = unicodedata.normalize("NFKC", value)
     if any(
@@ -78,7 +100,34 @@ def normalize_site_description(value: str) -> str:
         raise ValueError("介绍不能直接包含 URL")
     normalized = " ".join(normalized.split())
     if not MIN_SITE_DESCRIPTION_CHARS <= len(normalized) <= MAX_SITE_DESCRIPTION_CHARS:
-        raise ValueError("介绍必须为 80 至 1000 个字符")
+        raise ValueError("介绍必须为 100 至 300 个字符")
+    return normalized
+
+
+def normalize_site_summary(value: str) -> str:
+    """Normalize one 20-50 character sentence and reject rendered markup."""
+
+    normalized = unicodedata.normalize("NFKC", value)
+    if any(
+        not character.isprintable() and character not in "\r\n\t"
+        for character in normalized
+    ):
+        raise ValueError("摘要包含不可见字符")
+    if _MARKDOWN_PATTERN.search(normalized):
+        raise ValueError("摘要必须是纯文本，不能包含 Markdown")
+    if _HTML_PATTERN.search(normalized):
+        raise ValueError("摘要必须是纯文本，不能包含 HTML")
+    if _URL_PATTERN.search(normalized):
+        raise ValueError("摘要不能直接包含 URL")
+    normalized = " ".join(normalized.split())
+    sentence_body = normalized.rstrip("。！？!? .")
+    if re.search(r"[。！？!?]", sentence_body) or re.search(
+        r"(?<!\d)\.(?=\s+\S)",
+        sentence_body,
+    ):
+        raise ValueError("摘要必须只包含一句话")
+    if not MIN_SITE_SUMMARY_CHARS <= len(normalized) <= MAX_SITE_SUMMARY_CHARS:
+        raise ValueError("摘要必须为 20 至 50 个字符")
     return normalized
 
 
@@ -122,13 +171,25 @@ class SiteEnrichmentRequest:
     current_tag_ids: tuple[str, ...]
     categories: tuple[SiteCategoryOption, ...]
     existing_tags: tuple[SiteTagOption, ...]
+    bulk: bool = False
 
     @property
-    def has_page_evidence(self) -> bool:
-        return bool(
-            self.page_title.strip()
-            or self.meta_description.strip()
-            or self.page_text.strip()
+    def has_substantial_page_evidence(self) -> bool:
+        """Require enough real page copy to support a 100+ character description."""
+
+        meta_description = " ".join(self.meta_description.split())
+        page_text = " ".join(self.page_text.split())
+        combined = unicodedata.normalize(
+            "NFKC",
+            " ".join((self.page_title, meta_description, page_text)),
+        ).casefold()
+        if len(combined) <= MAX_BLOCK_PAGE_EVIDENCE_CHARS and any(
+            marker in combined for marker in _BLOCK_PAGE_MARKERS
+        ):
+            return False
+        return (
+            len(meta_description) >= MIN_META_DESCRIPTION_EVIDENCE_CHARS
+            or len(page_text) >= MIN_PAGE_TEXT_EVIDENCE_CHARS
         )
 
 
@@ -137,6 +198,7 @@ class SiteEnrichmentResult:
     category_id: str
     existing_tag_ids: tuple[str, ...]
     new_tag_names: tuple[str, ...]
+    summary: str
     description: str
 
 
@@ -165,8 +227,10 @@ __all__ = [
     "AnalysisIntent",
     "MAX_NEW_SITE_TAGS",
     "MAX_SITE_DESCRIPTION_CHARS",
+    "MAX_SITE_SUMMARY_CHARS",
     "MAX_SITE_TAGS",
     "MIN_SITE_DESCRIPTION_CHARS",
+    "MIN_SITE_SUMMARY_CHARS",
     "MIN_SITE_TAGS",
     "SiteCategoryOption",
     "SiteEnricher",
@@ -175,5 +239,6 @@ __all__ = [
     "SiteEnrichmentUnavailableError",
     "SiteTagOption",
     "normalize_site_description",
+    "normalize_site_summary",
     "normalize_site_tag_name",
 ]

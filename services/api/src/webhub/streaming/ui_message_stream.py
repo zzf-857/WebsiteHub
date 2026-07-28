@@ -34,7 +34,12 @@ DONE_MARKER = b"data: [DONE]\n\n"
 # ``no-cache``, while chat responses must never be persisted by a shared proxy.
 UI_MESSAGE_STREAM_HEADERS: dict[str, str] = {
     "content-type": "text/event-stream",
-    "cache-control": "no-cache, no-store",
+    # Next's external rewrite proxy otherwise treats this response as a
+    # compressible stream. Its gzip layer can retain several small SSE events
+    # before flushing, which makes a genuinely streamed model reply appear all
+    # at once in the browser. ``no-transform`` keeps every event observable as
+    # soon as the upstream yields it without disabling compression site-wide.
+    "cache-control": "no-cache, no-store, no-transform",
     "connection": "keep-alive",
     "x-vercel-ai-ui-message-stream": "v1",
     "x-accel-buffering": "no",

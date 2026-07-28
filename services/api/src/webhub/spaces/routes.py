@@ -19,6 +19,8 @@ from webhub.spaces.schemas import (
     SpaceListResponse,
     SpaceMemberAddRequest,
     SpaceMemberAddResponse,
+    SpaceMemberBatchRequest,
+    SpaceMemberBatchResponse,
     SpaceMemberDeleteResponse,
     SpaceReorderRequest,
     SpaceResponse,
@@ -68,6 +70,16 @@ async def add_space(
     _: WriteOriginDependency,
 ) -> SpaceResponse:
     return await _call(service.create_space(session, identity.user.id, payload))
+
+
+@router.post("/member-batches", response_model=SpaceMemberBatchResponse)
+async def add_space_members_batch(
+    payload: SpaceMemberBatchRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> SpaceMemberBatchResponse:
+    return await _call(service.add_members_batch(session, identity.user.id, payload))
 
 
 @router.get("/{space_id}", response_model=SpaceDetailResponse)

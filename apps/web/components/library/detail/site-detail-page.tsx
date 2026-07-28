@@ -11,6 +11,7 @@ import {
   Pin,
   RefreshCw,
   Trash2,
+  WandSparkles,
   X,
   ZoomIn,
 } from "lucide-react";
@@ -23,7 +24,12 @@ import { SiteForm } from "@/components/library/site-form";
 import { Spinner } from "@/components/react-bits/spinner";
 import { SiteFavicon } from "@/components/site-favicon";
 import {
+  hasRefreshableSiteAnalysis,
+  useBoundedAnalysisRefresh,
+} from "@/lib/analysis-refresh";
+import {
   analyzeLibrarySite,
+  createLibraryTagResolvingConflict,
   deleteLibrarySite,
   getLibrarySite,
   LibraryApiError,
@@ -62,6 +68,11 @@ type LoadState =
 type StatusState = Exclude<LoadState, { status: "ready" }>;
 
 type DialogKind = "edit" | "delete" | "space" | null;
+
+type NoticeState = {
+  tone: "success" | "warning" | "error";
+  message: string;
+};
 
 type TaxonomyState =
   | { status: "loading" }
@@ -123,7 +134,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [busy, setBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<NoticeState | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -162,6 +173,31 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
     return () => controller.abort();
   }, [loadAttempt, normalizedSiteId]);
 
+  const analysisRefreshEnabled = state.status === "ready"
+    ? hasRefreshableSiteAnalysis([state.site])
+    : false;
+  const refreshAnalysis = useCallback(async () => {
+    if (!normalizedSiteId) return;
+    try {
+      const site = await getLibrarySite(normalizedSiteId);
+      setState((current) => (
+        current.status === "ready"
+        && current.site.id === site.id
+        && site.version >= current.site.version
+          ? { status: "ready", site }
+          : current
+      ));
+    } catch {
+      // A background status refresh must not replace a usable detail page with
+      // a transient network error. The explicit retry path remains available.
+    }
+  }, [normalizedSiteId]);
+  useBoundedAnalysisRefresh({
+    scope: normalizedSiteId ?? "invalid-site",
+    enabled: analysisRefreshEnabled,
+    refresh: refreshAnalysis,
+  });
+
   // loading 态在打开弹层/点击重试的事件里同步设置，效果内只负责发请求
   useEffect(() => {
     if (dialog !== "edit") return;
@@ -179,6 +215,21 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
 
     return () => controller.abort();
   }, [dialog, taxonomyAttempt]);
+
+  const handleCreateTag = async (name: string): Promise<LibraryTag> => {
+    const result = await createLibraryTagResolvingConflict(name);
+    setTaxonomy((current) => {
+      if (current.status !== "ready") return current;
+      if (result.latestTags !== null) {
+        return { ...current, tags: result.latestTags };
+      }
+      const tags = current.tags.filter((tag) => tag.id !== result.tag.id);
+      tags.push(result.tag);
+      tags.sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+      return { ...current, tags };
+    });
+    return result.tag;
+  };
 
   const previewUrl = state.status === "ready" ? state.site.previewUrl : null;
   const previewAvailable = Boolean(previewUrl && previewUrl !== failedPreviewUrl);
@@ -223,23 +274,34 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
     setMutationError(null);
   };
 
-  /** 抓取公开网页，再由账号模型原子补全分类、标签和介绍。 */
+  /** 抓取公开网页，再由账号模型原子补全分类、标签、简介和详细介绍。 */
   const handleAnalyze = async (id: string) => {
     if (analyzing) return;
     setAnalyzing(true);
     setNotice(null);
     try {
-      const latest = await analyzeLibrarySite(id);
-      setState({ status: "ready", site: latest });
-      setNotice(
-        latest.analysisStatus === "complete"
-          ? "LLM 网站资料分析已完成；图标和预览图会在可安全获取且允许更新时同步"
-          : latest.analysisStatus === "limited"
-            ? "只完成了部分资料：请检查模型 Provider 或稍后重试"
-            : "没能完成网站资料分析，稍后可以再试",
-      );
+      const result = await analyzeLibrarySite(id);
+      setState({ status: "ready", site: result.site });
+      setNotice({
+        tone:
+          result.outcome === "complete" && result.llmApplied
+            ? "success"
+            : result.outcome === "limited" || result.outcome === "complete"
+              ? "warning"
+              : "error",
+        message: result.llmApplied
+          ? result.outcome === "complete"
+            ? "AI 分析入库已完成；分类、标签、简介和详细介绍中可写的字段已更新，人工维护内容已保留。"
+            : `AI 分类、标签、简介和详细介绍已处理；${result.message}`
+          : result.outcome === "complete"
+            ? "网页资料已更新，但分类、标签、简介和详细介绍没有确认到 LLM 结果入库，请重试或检查 Provider。"
+            : result.message,
+      });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "分析失败，请稍后重试。");
+      setNotice({
+        tone: "error",
+        message: error instanceof Error ? error.message : "AI 分析入库失败，请稍后重试。",
+      });
     } finally {
       setAnalyzing(false);
     }
@@ -274,7 +336,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
       const updated = await updateLibrarySite(id, input);
       setState({ status: "ready", site: updated });
       setDialog(null);
-      setNotice("网站信息已更新");
+      setNotice({ tone: "success", message: "网站信息已更新" });
     } catch (error) {
       if (isLibraryErrorCode(error, "version_conflict")) {
         await recoverConflict(id, "edit");
@@ -336,9 +398,17 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
       </nav>
 
       {notice && (
-        <p className="sd-notice" role="status">
-          <Check size={16} aria-hidden="true" />
-          {notice}
+        <p
+          className="sd-notice"
+          data-tone={notice.tone}
+          role={notice.tone === "error" ? "alert" : "status"}
+        >
+          {notice.tone === "success" ? (
+            <Check size={16} aria-hidden="true" />
+          ) : (
+            <CircleAlert size={16} aria-hidden="true" />
+          )}
+          {notice.message}
         </p>
       )}
 
@@ -364,8 +434,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
                 <p className="sd-hero-domain">
                   {host}
                 </p>
-                {/* 后端只有一个 description 字段：这里截断做导语，全文在下方「详细介绍」卡展示 */}
-                {site.description && <p className="sd-hero-desc">{site.description}</p>}
+                {site.summary && <p className="sd-hero-desc">{site.summary}</p>}
               </div>
               <div className="sd-hero-actions">
                 <a
@@ -457,16 +526,28 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
                   <time dateTime={site.updatedAt}>{formatDay(site.updatedAt)}</time>
                 </div>
                 <div>
-                  来源：{SOURCE_LABELS[site.source]} · 内容分析：{ANALYSIS_STATUS_LABELS[site.analysisStatus]}
-                  {" "}
+                  <span>
+                    来源：{SOURCE_LABELS[site.source]} · 内容分析：
+                    {ANALYSIS_STATUS_LABELS[site.analysisStatus]}
+                  </span>
                   <button
-                    className="sd-inline-action"
+                    className="sd-ai-analysis-action"
                     type="button"
                     disabled={analyzing}
+                    aria-busy={analyzing}
                     onClick={() => void handleAnalyze(site.id)}
-                    title="重新抓取公开网页，并用模型分析分类、标签和详细介绍；人工内容不会被覆盖"
+                    title="重新抓取公开网页，并用模型分析分类、标签、简介和详细介绍；人工内容不会被覆盖"
                   >
-                    {analyzing ? "分析中…" : "重新分析"}
+                    {analyzing ? (
+                      <Spinner size={13} />
+                    ) : (
+                      <WandSparkles size={13} aria-hidden="true" />
+                    )}
+                    {analyzing
+                      ? "AI 分析中"
+                      : site.analysisStatus === "not_analyzed" || site.analysisStatus === "failed"
+                        ? "AI 分析入库"
+                        : "重新 AI 分析"}
                   </button>
                 </div>
               </div>
@@ -481,7 +562,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
               <p className="sd-desc">{site.description}</p>
             ) : (
               <p className="sd-desc sd-desc-empty">
-                暂无详细介绍，可以点击「重新分析」让 LLM 根据网页公开内容补全。
+                暂无详细介绍，可以点击「AI 分析入库」让 LLM 根据网页公开内容补全。
               </p>
             )}
           </section>
@@ -506,6 +587,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
         title="编辑网站"
         description="修改会立即保存到当前账号的网址库。"
         size="wide"
+        closeDisabled={busy}
         onClose={closeDialog}
       >
         {dialog === "edit" && taxonomy.status === "loading" && (
@@ -538,6 +620,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
             busy={busy}
             error={mutationError}
             onCancel={closeDialog}
+            onCreateTag={handleCreateTag}
             onUpdate={handleUpdate}
           />
         )}
@@ -547,6 +630,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
         open={dialog === "delete"}
         title="删除网站"
         description="此操作会从当前账号的网址库中移除该网站。"
+        closeDisabled={busy}
         onClose={closeDialog}
       >
         {dialog === "delete" && (
@@ -590,7 +674,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
         onClose={closeDialog}
         onJoined={(spaceName) => {
           setDialog(null);
-          setNotice(`已加入 Space「${spaceName}」`);
+          setNotice({ tone: "success", message: `已加入 Space「${spaceName}」` });
         }}
       />
 

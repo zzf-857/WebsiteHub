@@ -42,7 +42,7 @@
   white-space: nowrap;
 }
 
-/* ---------- 成功提示 ---------- */
+/* ---------- 操作结果 ---------- */
 
 .sd-notice {
   display: flex;
@@ -59,6 +59,18 @@
 
 .sd-notice svg {
   flex-shrink: 0;
+}
+
+.sd-notice[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  color: var(--warning);
+}
+
+.sd-notice[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  color: var(--danger);
 }
 
 /* ---------- 双栏布局 ---------- */
@@ -924,25 +936,36 @@
   }
 }
 
-/* 元信息行里的行内动作（「重新分析」），看着像链接但语义是按钮 */
-.sd-inline-action {
-  padding: 0;
-  border: none;
-  background: none;
+/* 元信息行中的单站 LLM 入库动作。 */
+.sd-ai-analysis-action {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 28%, var(--line));
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
   color: var(--accent-strong);
   cursor: pointer;
   font: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  font-weight: 600;
+  line-height: 1;
 }
 
-.sd-inline-action:disabled {
+.sd-ai-analysis-action:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+}
+
+.sd-ai-analysis-action:disabled {
   color: var(--text-subtle);
-  cursor: default;
-  text-decoration: none;
+  cursor: wait;
+  opacity: 0.7;
 }
 
-.sd-inline-action:focus-visible {
+.sd-ai-analysis-action:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

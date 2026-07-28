@@ -223,8 +223,8 @@ async def confirm_draft(
     """Record that the user confirmed one Agent draft.
 
     The browser performs the actual write through the ordinary library/spaces
-    endpoints; this only tells the transcript it happened, so the next turn
-    does not replay a history claiming the draft is still pending.
+    endpoints; this records a server-owned marker so both model history and the
+    restored UI know that the draft is no longer pending.
     """
 
     return await _call(
@@ -236,5 +236,6 @@ async def confirm_draft(
             kind=payload.kind,
             site_id=payload.site_id,
             space_id=payload.space_id,
+            site_ids=payload.site_ids,
         )
     )

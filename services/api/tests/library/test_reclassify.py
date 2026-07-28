@@ -165,7 +165,7 @@ def test_reclassify_propose_rejects_a_partial_budget_without_model_calls(
         assert response.status_code == 200
         assert response.json() == {
             "status": "rejected",
-            "reason": "资料库规模超出当前全量重分类上限，未发起任何模型请求。",
+            "reason": "网址库规模超出当前全量重分类上限，未发起任何模型请求。",
         }
 
 
@@ -194,7 +194,7 @@ def test_reclassify_propose_does_not_silently_skip_private_hosts(
         assert response.status_code == 200
         assert response.json() == {
             "status": "rejected",
-            "reason": "资料库包含不能安全发送给模型的本地或私网网址，未发起任何模型请求。",
+            "reason": "网址库包含不能安全发送给模型的本地或私网网址，未发起任何模型请求。",
         }
 
 
@@ -602,7 +602,7 @@ def test_reclassify_apply_rejects_model_time_version_change_atomically(
 
         safe_message, first_state, second_state = asyncio.run(scenario())
 
-        assert safe_message == "资料库状态已发生变化，请重新发起重分类草稿。"
+        assert safe_message == "网址库状态已发生变化，请重新发起重分类草稿。"
         assert first_state == (original_category_id, 0, 1, False)
         assert second_state == (original_category_id, 1, 2, True)
 
@@ -767,7 +767,7 @@ def test_reclassify_apply_rejects_partial_version_snapshot_before_model_call(
         )
 
         assert response.status_code == 409
-        assert response.json()["detail"] == "资料库状态已发生变化，请重新发起重分类草稿。"
+        assert response.json()["detail"] == "网址库状态已发生变化，请重新发起重分类草稿。"
 
 
 def test_reclassify_apply_rejects_taxonomy_changed_after_proposal_without_model_call(

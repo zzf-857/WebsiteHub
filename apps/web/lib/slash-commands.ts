@@ -8,7 +8,7 @@ export type SlashCommand = {
 export const slashCommands: readonly SlashCommand[] = [
   {
     name: "/搜索",
-    description: "检索收藏库，需要时联网",
+    description: "检索网址库，需要时联网",
     argument: "<关键词>",
     icon: "search",
   },

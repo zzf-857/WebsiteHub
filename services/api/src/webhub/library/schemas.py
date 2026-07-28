@@ -33,6 +33,18 @@ def normalize_favicon_url(value: object) -> object:
 
 
 FaviconUrl = Annotated[str | None, BeforeValidator(normalize_favicon_url)]
+SiteCreateSource = Literal["manual", "agent"]
+
+
+def normalize_site_summary_input(value: object) -> object:
+    """Allow an intentional blank; otherwise enforce the shared 20-50 contract."""
+
+    if not isinstance(value, str):
+        return value
+    normalized = value.strip()
+    if normalized and len(normalized) < 20:
+        raise ValueError("摘要留空表示不设置；填写时长度必须为 20 到 50 个字符")
+    return normalized
 
 
 class StrictRequest(BaseModel):
@@ -108,22 +120,35 @@ class TagDeleteResponse(BaseModel):
 class SiteCreateRequest(StrictRequest):
     name: str = Field(min_length=1, max_length=160)
     url: str = Field(min_length=1, max_length=16_384)
+    summary: str = Field(default="", max_length=50)
     description: str = Field(default="", max_length=4_000)
     favicon_url: FaviconUrl = Field(default=None, max_length=4_096)
     category_id: str | None = None
     tag_ids: list[str] = Field(default_factory=list, max_length=50)
     pinned: bool = False
+    source: SiteCreateSource = "manual"
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def normalize_summary(cls, value: object) -> object:
+        return normalize_site_summary_input(value)
 
 
 class SiteUpdateRequest(StrictRequest):
     expected_version: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=160)
     url: str | None = Field(default=None, min_length=1, max_length=16_384)
+    summary: str | None = Field(default=None, max_length=50)
     description: str | None = Field(default=None, max_length=4_000)
     favicon_url: FaviconUrl = Field(default=None, max_length=4_096)
     category_id: str | None = None
     tag_ids: list[str] | None = Field(default=None, max_length=50)
     pinned: bool | None = None
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def normalize_summary(cls, value: object) -> object:
+        return normalize_site_summary_input(value)
 
 
 class SiteResponse(BaseModel):
@@ -131,6 +156,7 @@ class SiteResponse(BaseModel):
     name: str
     original_url: str
     identity_url: str
+    summary: str
     description: str
     favicon_url: FaviconUrl
     preview_url: str | None = None
@@ -142,6 +168,15 @@ class SiteResponse(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+
+
+class SiteAnalysisResponse(BaseModel):
+    """Committed site state plus the real outcome of one requested analysis."""
+
+    site: SiteResponse
+    outcome: Literal["complete", "limited", "failed"]
+    message: str
+    llm_applied: bool
 
 
 class SiteListAggregate(BaseModel):
@@ -179,7 +214,14 @@ class MetadataBackfillProgressResponse(BaseModel):
     """A fixed-denominator snapshot for the homepage metadata command."""
 
     id: str
-    status: Literal["queued", "running", "complete"]
+    status: Literal[
+        "queued",
+        "running",
+        "completed",
+        "completed_with_errors",
+        "failed",
+    ]
+    stopped_early: bool
     total_count: int = Field(ge=0)
     queued_count: int = Field(ge=0)
     running_count: int = Field(ge=0)
@@ -230,6 +272,7 @@ class SiteBatchRequest(StrictRequest):
     urls: list[str] | None = Field(default=None, max_length=MAX_BATCH_URLS)
     text: str | None = Field(default=None, max_length=20_000)
     confirm: bool = False
+    source: SiteCreateSource = "manual"
 
 
 class SiteBatchItemResponse(BaseModel):

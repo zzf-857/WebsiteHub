@@ -34,6 +34,7 @@ const member = {
     name: "MDN",
     original_url: "https://developer.mozilla.org/",
     identity_url: "https://developer.mozilla.org",
+    summary: "提供权威且系统的 Web 开发标准参考资料",
     description: "",
     favicon_url: "https://developer.mozilla.org/favicon.ico",
     pinned: true,

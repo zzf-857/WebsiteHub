@@ -55,9 +55,9 @@ class ReclassificationError(RuntimeError):
 
 def _incomplete_plan_reason(plan: ClassificationBatchPlan) -> str | None:
     if plan.privacy_excluded_source_ids or plan.privacy_excluded_member_source_ids:
-        return "资料库包含不能安全发送给模型的本地或私网网址，未发起任何模型请求。"
+        return "网址库包含不能安全发送给模型的本地或私网网址，未发起任何模型请求。"
     if plan.budget_exhausted_source_ids:
-        return "资料库规模超出当前全量重分类上限，未发起任何模型请求。"
+        return "网址库规模超出当前全量重分类上限，未发起任何模型请求。"
     return None
 
 
@@ -134,7 +134,7 @@ async def propose_reclassification(
     if not sites:
         return {
             "status": "noop",
-            "message": "资料库中没有需要分类的网站。",
+            "message": "网址库中没有需要分类的网站。",
         }
 
     cat_stmt = select(Category).where(Category.user_id == user_id)
@@ -203,7 +203,7 @@ async def apply_reclassification(
     if set(expected_versions) != set(site_map):
         raise ReclassificationError(
             "reclassification draft does not cover the current library",
-            safe_message="资料库状态已发生变化，请重新发起重分类草稿。",
+            safe_message="网址库状态已发生变化，请重新发起重分类草稿。",
             status_code=409,
         )
 
@@ -213,7 +213,7 @@ async def apply_reclassification(
         if site_map[site_id].version != exp_ver:
             raise ReclassificationError(
                 f"网站“{site_map[site_id].name}”在生成方案后已被改动，请重新发起提案。",
-                safe_message="资料库状态已发生变化，请重新发起重分类草稿。",
+                safe_message="网址库状态已发生变化，请重新发起重分类草稿。",
                 status_code=409,
             )
 
@@ -310,7 +310,7 @@ async def apply_reclassification(
         await session.rollback()
         raise ReclassificationError(
             "could not acquire the reclassification write lock",
-            safe_message="资料库正忙，重分类结果未写入，请稍后重新发起操作。",
+            safe_message="网址库正忙，重分类结果未写入，请稍后重新发起操作。",
             status_code=503,
         ) from error
     current_rows = (
@@ -331,7 +331,7 @@ async def apply_reclassification(
         await session.rollback()
         raise ReclassificationError(
             "library changed while reclassification was running",
-            safe_message="资料库状态已发生变化，请重新发起重分类草稿。",
+            safe_message="网址库状态已发生变化，请重新发起重分类草稿。",
             status_code=409,
         )
 
@@ -411,7 +411,7 @@ async def apply_reclassification(
             await session.rollback()
             raise ReclassificationError(
                 "site version claim was lost before reclassification commit",
-                safe_message="资料库状态已发生变化，请重新发起重分类草稿。",
+                safe_message="网址库状态已发生变化，请重新发起重分类草稿。",
                 status_code=409,
             )
         next_positions[target_category_id] += 1

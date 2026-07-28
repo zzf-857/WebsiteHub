@@ -12,6 +12,7 @@ import {
 } from "@/components/home/home-shared";
 import { SiteFavicon } from "@/components/site-favicon";
 import { listLibrarySites } from "@/lib/library-client";
+import { librarySiteCardSummary } from "@/lib/library-contract";
 import type { LibrarySite } from "@/lib/library-contract";
 
 // 首页「最近收录」分区（设计稿 1a 行 137–156）：单卡片内的行列表。
@@ -126,7 +127,7 @@ export function RecentSites() {
                 <SiteFavicon url={site.faviconUrl} name={site.name} size={20} />
               </span>
               <span className="home-recent-name">{site.name}</span>
-              <span className="home-recent-desc">{site.description?.trim() ?? ""}</span>
+              <span className="home-recent-desc">{librarySiteCardSummary(site)}</span>
               <span className="home-recent-cat">{site.category.name}</span>
               <span className="home-recent-time">{formatRelativeTime(site.createdAt)}</span>
               <ChevronRight className="home-recent-arrow" aria-hidden="true" />

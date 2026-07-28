@@ -6,22 +6,31 @@ import {
   type AgentConversation,
   type AgentConversationDetail,
   type AgentConversationHistory,
+  type AgentDraftConfirmationKind,
   type AgentSiteDraft,
   type AgentSiteBatchDraft,
   type AgentSiteUpdateDraft,
+  type AgentSpaceBatchDraft,
   type AgentSpaceMembershipDraft,
 } from "./agent-contract.ts";
 import {
   createLibraryCategory,
   createLibrarySite,
-  createLibraryTag,
+  createLibraryTagResolvingConflict,
   listLibraryCategories,
   createLibrarySiteBatch,
   listLibraryTags,
   updateLibrarySite,
 } from "./library-client.ts";
-import type { LibrarySite, LibrarySiteUpdateInput } from "./library-contract.ts";
-import { addSpaceMember, removeSpaceMember } from "./space-client.ts";
+import {
+  libraryTagNameKey,
+  normalizeLibraryTagName,
+  type LibrarySite,
+  type LibrarySiteUpdateInput,
+  type LibraryTag,
+} from "./library-contract.ts";
+import { addSpaceMember, addSpaceMembersBatch, removeSpaceMember } from "./space-client.ts";
+import type { SpaceMemberBatchResult } from "./space-contract.ts";
 
 const CONVERSATION_BASE = "/api/backend/conversations";
 export const AGENT_CHAT_API = "/api/backend/agent/chat";
@@ -130,6 +139,20 @@ function findByName<T extends { id: string; name: string }>(
   return items.find((item) => item.name.trim().toLocaleLowerCase("zh-CN") === normalized);
 }
 
+function normalizedTagNames(names: readonly string[]): string[] {
+  const unique = new Map<string, string>();
+  for (const rawName of names) {
+    const name = normalizeLibraryTagName(rawName);
+    if (name) unique.set(libraryTagNameKey(name), name);
+  }
+  return [...unique.values()];
+}
+
+function findTagByName(tags: readonly LibraryTag[], name: string): LibraryTag | undefined {
+  const key = libraryTagNameKey(name);
+  return tags.find((tag) => libraryTagNameKey(tag.name) === key);
+}
+
 /**
  * Turn a confirmed `propose_site` draft into a real Site.
  *
@@ -147,37 +170,40 @@ export async function confirmAgentSiteDraft(draft: AgentSiteDraft): Promise<Libr
     categoryId = (existing ?? (await createLibraryCategory(categoryName))).id;
   }
 
-  const wanted = Array.from(
-    new Map(
-      draft.tags
-        .map((tag) => tag.trim())
-        .filter(Boolean)
-        .map((tag) => [tag.toLocaleLowerCase("zh-CN"), tag]),
-    ).values(),
-  );
-  const tagIds: string[] = [];
-  if (wanted.length > 0) {
-    const existingTags = await listLibraryTags();
-    for (const tag of wanted) {
-      const found = findByName(existingTags, tag);
-      tagIds.push((found ?? (await createLibraryTag(tag))).id);
-    }
-  }
+  const tagIds = await resolveTagIds(draft.tags);
 
   return createLibrarySite({
     name: draft.name,
     url: draft.url,
+    source: "agent",
     ...(draft.description ? { description: draft.description } : {}),
     ...(categoryId ? { categoryId } : {}),
     ...(tagIds.length > 0 ? { tagIds } : {}),
   });
 }
 
-export type AgentDraftConfirmationKind =
-  | "site_created"
-  | "site_updated"
-  | "space_member_added"
-  | "space_member_removed";
+export type AgentDraftConfirmationInput =
+  | {
+      toolCallId: string;
+      kind: "site_created" | "site_updated";
+      siteId: string;
+    }
+  | {
+      toolCallId: string;
+      kind: "site_batch_created" | "reclassify_applied";
+    }
+  | {
+      toolCallId: string;
+      kind: "space_member_added" | "space_member_removed";
+      siteId: string;
+      spaceId: string;
+    }
+  | {
+      toolCallId: string;
+      kind: "space_batch_applied";
+      spaceId: string;
+      siteIds: string[];
+    };
 
 /**
  * Tell the transcript that a draft was confirmed.
@@ -187,41 +213,46 @@ export type AgentDraftConfirmationKind =
  * otherwise keep showing the draft as still pending — which is how the Agent
  * ended up insisting a site "was never saved" right after saving it.
  *
- * Deliberately sends identifiers only: the server composes the recorded
- * sentence from the rows themselves, so the browser cannot write a claim about
- * the library into history.
+ * Deliberately sends identifiers and a bounded operation kind only. The server
+ * composes the recorded sentence and owns the confirmation metadata.
  *
- * Failures here are swallowed by the caller: losing a transcript note must not
- * make a write the user already completed look like it failed.
+ * The caller keeps business success separate from marker sync failure, so a
+ * retry can repair history without repeating the already completed write.
  */
 export async function recordAgentDraftConfirmation(
   conversationId: string,
-  input: {
-    toolCallId: string;
-    kind: AgentDraftConfirmationKind;
-    siteId: string;
-    spaceId?: string;
-  },
+  input: AgentDraftConfirmationInput,
+  signal?: AbortSignal,
 ): Promise<void> {
+  const kind: AgentDraftConfirmationKind = input.kind;
   await request(`/${encodeId(conversationId)}/draft-confirmations`, {
     method: "POST",
     body: JSON.stringify({
       tool_call_id: input.toolCallId,
-      kind: input.kind,
-      site_id: input.siteId,
-      ...(input.spaceId ? { space_id: input.spaceId } : {}),
+      kind,
+      ...("siteId" in input ? { site_id: input.siteId } : {}),
+      ...("spaceId" in input ? { space_id: input.spaceId } : {}),
+      ...("siteIds" in input ? { site_ids: input.siteIds } : {}),
     }),
+    signal,
   });
 }
 
-/** 把标签名解析成 id，缺失的现建。顺序保持草稿里的顺序。 */
+/** 把标签名按服务端规则解析成 id；缺失时创建，并恢复并发同名冲突。 */
 async function resolveTagIds(names: readonly string[]): Promise<string[]> {
-  if (names.length === 0) return [];
-  const existing = await listLibraryTags();
+  const wanted = normalizedTagNames(names);
+  if (wanted.length === 0) return [];
+  let knownTags = await listLibraryTags();
   const ids: string[] = [];
-  for (const name of names) {
-    const found = findByName(existing, name);
-    ids.push((found ?? (await createLibraryTag(name))).id);
+  for (const name of wanted) {
+    const found = findTagByName(knownTags, name);
+    if (found) {
+      ids.push(found.id);
+      continue;
+    }
+    const result = await createLibraryTagResolvingConflict(name);
+    ids.push(result.tag.id);
+    knownTags = result.latestTags ?? [...knownTags, result.tag];
   }
   return ids;
 }
@@ -264,7 +295,7 @@ export type AgentBatchConfirmResult = { created: number; duplicate: number; fail
 export async function confirmAgentSiteBatch(
   draft: AgentSiteBatchDraft,
 ): Promise<AgentBatchConfirmResult> {
-  const result = await createLibrarySiteBatch(draft.urls);
+  const result = await createLibrarySiteBatch(draft.urls, "agent");
   return { created: result.created, duplicate: result.duplicate, failed: result.failed };
 }
 
@@ -285,4 +316,29 @@ export async function confirmAgentSpaceMembership(
     return;
   }
   await removeSpaceMember(draft.spaceId, draft.siteId, draft.expectedVersion);
+}
+
+/**
+ * Apply one user-approved Space task. The server creates the target when asked
+ * and adds the currently selected candidates as one guarded operation.
+ */
+export async function confirmAgentSpaceBatch(
+  draft: AgentSpaceBatchDraft,
+  selectedSiteIds: readonly string[],
+  operationId: string,
+  signal?: AbortSignal,
+): Promise<SpaceMemberBatchResult> {
+  const allowed = new Set(draft.sites.map((site) => site.siteId));
+  const siteIds = [...new Set(selectedSiteIds)];
+  if (siteIds.some((siteId) => !allowed.has(siteId))) {
+    throw new Error("Space 任务候选已经变化，请使用最新草稿。");
+  }
+  if (draft.target.mode === "existing" && siteIds.length === 0) {
+    throw new Error("至少保留一个要加入 Space 的网站。");
+  }
+  return addSpaceMembersBatch({
+    target: draft.target,
+    siteIds,
+    operationId,
+  }, signal);
 }

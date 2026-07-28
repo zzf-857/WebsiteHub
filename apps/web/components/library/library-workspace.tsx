@@ -10,6 +10,8 @@ import {
   List,
   ListChecks,
   LoaderCircle,
+  Maximize2,
+  Minimize2,
   Pin,
   Plus,
   RefreshCw,
@@ -19,6 +21,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import {
   LibraryDialog,
 } from "@/components/library/library-dialog";
@@ -39,7 +42,13 @@ import {
 import { useLibraryWorkspace } from "@/components/library/use-library-workspace";
 import { MAX_LIBRARY_BULK_DELETE_SITES } from "@/lib/library-contract";
 
+type LibraryLayoutMode = "centered" | "full";
+
+const LIBRARY_LAYOUT_STORAGE_KEY = "webhub:library-layout-mode";
+
 export function LibraryWorkspace() {
+  const [layoutMode, setLayoutMode] = useState<LibraryLayoutMode>("centered");
+  const [layoutReady, setLayoutReady] = useState(false);
   const {
     allLoadedSelected,
     allMatchingSelected,
@@ -55,6 +64,7 @@ export function LibraryWorkspace() {
     dialog,
     direction,
     handleCreate,
+    handleCreateTag,
     handleAnalysisBackfill,
     handleDelete,
     handleBulkDelete,
@@ -101,15 +111,65 @@ export function LibraryWorkspace() {
     viewMode,
   } = useLibraryWorkspace();
 
+  useEffect(() => {
+    let readyFrame = 0;
+    try {
+      const stored = window.localStorage.getItem(LIBRARY_LAYOUT_STORAGE_KEY);
+      if (stored === "centered" || stored === "full") setLayoutMode(stored);
+    } catch {
+      // 隐私模式或浏览器策略禁用存储时，保留默认的居中阅读布局。
+    }
+    // 先无动画应用持久化宽度，下一帧再允许后续的用户触发动画。
+    readyFrame = window.requestAnimationFrame(() => setLayoutReady(true));
+    return () => window.cancelAnimationFrame(readyFrame);
+  }, []);
+
+  const selectLayoutMode = (nextMode: LibraryLayoutMode) => {
+    setLayoutMode(nextMode);
+    try {
+      window.localStorage.setItem(LIBRARY_LAYOUT_STORAGE_KEY, nextMode);
+    } catch {
+      // 布局切换本身不依赖持久化，存储不可用时仅本次会话生效。
+    }
+  };
+
   return (
-    <main className="site-main library-workspace">
+    <main
+      className="site-main library-workspace"
+      data-layout={layoutMode}
+      data-layout-ready={layoutReady || undefined}
+    >
       <header className="workspace-page-header library-page-header">
         <div>
           <span className="page-kicker">WebHub</span>
-          <h1>资料库</h1>
+          <h1>网址库</h1>
           <p>整理、检索并维护当前账号保存的网站。</p>
         </div>
         <div className="library-page-actions">
+          <div className="library-layout-toggle" role="group" aria-label="网址库页面宽度">
+            <button
+              className="icon-button"
+              type="button"
+              data-active={layoutMode === "centered" || undefined}
+              aria-pressed={layoutMode === "centered"}
+              aria-label="居中阅读"
+              title="居中阅读"
+              onClick={() => selectLayoutMode("centered")}
+            >
+              <Minimize2 aria-hidden="true" />
+            </button>
+            <button
+              className="icon-button"
+              type="button"
+              data-active={layoutMode === "full" || undefined}
+              aria-pressed={layoutMode === "full"}
+              aria-label="铺满页面"
+              title="铺满页面"
+              onClick={() => selectLayoutMode("full")}
+            >
+              <Maximize2 aria-hidden="true" />
+            </button>
+          </div>
           <button
             className="library-button secondary"
             type="button"
@@ -140,7 +200,7 @@ export function LibraryWorkspace() {
       </header>
 
       <div className="library-layout">
-        <aside className="library-sidebar" aria-label="资料库分类">
+        <aside className="library-sidebar" aria-label="网址库分类">
           <section className="library-sidebar-section">
             <h2>浏览</h2>
             <button
@@ -202,7 +262,7 @@ export function LibraryWorkspace() {
           <div className="library-toolbar">
             <label className="library-search-field">
               <Search aria-hidden="true" />
-              <span className="sr-only">搜索资料库</span>
+              <span className="sr-only">搜索网址库</span>
               <input
                 ref={searchInputRef}
                 type="search"
@@ -281,7 +341,7 @@ export function LibraryWorkspace() {
           </div>
 
           <div className="library-results-heading" aria-live="polite">
-            <span>{sitesLoading ? "正在读取资料库" : `共 ${totalMatched} 个结果`}</span>
+            <span>{sitesLoading ? "正在读取网址库" : `共 ${totalMatched} 个结果`}</span>
             <div className="library-results-actions">
               {hasActiveFilters && (
                 <button
@@ -394,7 +454,7 @@ export function LibraryWorkspace() {
           ) : !hasSites && !sitesError ? (
             <section className="library-empty-state">
               <span className="library-empty-icon" aria-hidden="true"><Search /></span>
-              <h2>{hasActiveFilters ? "没有匹配的网站" : "资料库还是空的"}</h2>
+              <h2>{hasActiveFilters ? "没有匹配的网站" : "网址库还是空的"}</h2>
               <p>{hasActiveFilters ? "调整关键词或筛选条件后再试。" : "新增第一个网站，开始建立个人网站知识库。"}</p>
               {hasActiveFilters ? (
                 <button
@@ -466,8 +526,9 @@ export function LibraryWorkspace() {
       <LibraryDialog
         open={dialog?.kind === "create" || dialog?.kind === "edit"}
         title={dialog?.kind === "edit" ? "编辑网站" : "新增网站"}
-        description={dialog?.kind === "edit" ? "修改资料库中的网站信息。" : "保存一个网站到当前账号的资料库。"}
+        description={dialog?.kind === "edit" ? "修改网址库中的网站信息。" : "保存一个网站到当前账号的网址库。"}
         size="wide"
+        closeDisabled={mutationBusy}
         onClose={closeDialog}
       >
         {dialog?.kind === "create" && (
@@ -477,6 +538,7 @@ export function LibraryWorkspace() {
             busy={mutationBusy}
             error={mutationError}
             onCancel={closeDialog}
+            onCreateTag={handleCreateTag}
             onCreate={handleCreate}
           />
         )}
@@ -488,6 +550,7 @@ export function LibraryWorkspace() {
             busy={mutationBusy}
             error={mutationError}
             onCancel={closeDialog}
+            onCreateTag={handleCreateTag}
             onUpdate={handleUpdate}
           />
         )}
@@ -496,7 +559,8 @@ export function LibraryWorkspace() {
       <LibraryDialog
         open={dialog?.kind === "delete"}
         title="删除网站"
-        description="此操作会从当前账号的资料库中移除该网站。"
+        description="此操作会从当前账号的网址库中移除该网站。"
+        closeDisabled={mutationBusy}
         onClose={closeDialog}
       >
         {dialog?.kind === "delete" && (
@@ -508,7 +572,7 @@ export function LibraryWorkspace() {
                 <span>{siteHost(dialog.site)}</span>
               </div>
             </div>
-            <p>删除后，该网站将不再出现在资料库和关联浏览视图中。</p>
+            <p>删除后，该网站将不再出现在网址库和关联浏览视图中。</p>
             {mutationError && <p className="library-form-error" role="alert">{mutationError}</p>}
             <footer className="library-form-actions">
               <button className="library-button secondary" type="button" onClick={closeDialog} disabled={mutationBusy}>取消</button>
@@ -546,6 +610,7 @@ export function LibraryWorkspace() {
         description={dialog?.kind === "bulk-delete" && dialog.sites.length > MAX_LIBRARY_BULK_DELETE_SITES
           ? `所选网站将按每批最多 ${MAX_LIBRARY_BULK_DELETE_SITES} 个依次删除；每批单独进行版本校验，发生冲突时停止后续批次。`
           : "仅删除本次明确选中的网站；任一网站已被更新时，本批都不会删除。"}
+        closeDisabled={mutationBusy}
         onClose={closeDialog}
       >
         {dialog?.kind === "bulk-delete" && (

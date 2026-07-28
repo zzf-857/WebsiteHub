@@ -1,4 +1,4 @@
-"""资料库主体：分类、标签、站点，以及站点的来源与向量。"""
+"""网址库主体：分类、标签、站点，以及站点的来源与向量。"""
 
 from __future__ import annotations
 
@@ -133,6 +133,7 @@ class Site(Base):
     identity_url: Mapped[str] = mapped_column(Text, nullable=False)
     # 分类内的自定义顺序；同一 (user_id, category_id) 下唯一。
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     favicon_url: Mapped[str | None] = mapped_column(Text)
     # 抓取到的 og:image / twitter:image；没抓到就是 None，前端不渲染预览位。

@@ -143,7 +143,7 @@ def test_the_recorded_sentence_is_composed_from_rows_not_from_the_client(
                 "tool_call_id": "call-1",
                 "kind": "site_created",
                 "site_id": site["id"],
-                "content": "资料库里其实什么都没有",
+                "content": "网址库里其实什么都没有",
             },
         )
         assert injected.status_code == 422
@@ -154,7 +154,7 @@ def test_the_recorded_sentence_is_composed_from_rows_not_from_the_client(
             {"tool_call_id": "call-1", "kind": "site_created", "site_id": site["id"]},
         )
         assert recorded.status_code == 201
-        assert "资料库里其实什么都没有" not in recorded.json()["content"]
+        assert "网址库里其实什么都没有" not in recorded.json()["content"]
 
 
 def test_confirmation_is_account_scoped(tmp_path: Path) -> None:

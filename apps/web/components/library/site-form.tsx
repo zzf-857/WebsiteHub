@@ -1,9 +1,16 @@
 "use client";
 
-import { LoaderCircle, Save } from "lucide-react";
+import { LoaderCircle, Plus, Save } from "lucide-react";
 import { useId, useMemo, useState, type FormEvent } from "react";
 
-import { MAX_LIBRARY_SITE_NAME_LENGTH } from "@/lib/library-contract";
+import {
+  libraryTagNameKey,
+  MAX_LIBRARY_SITE_NAME_LENGTH,
+  MAX_LIBRARY_SITE_SUMMARY_LENGTH,
+  MAX_LIBRARY_TAG_NAME_LENGTH,
+  MIN_LIBRARY_SITE_SUMMARY_LENGTH,
+  normalizeLibraryTagName,
+} from "@/lib/library-contract";
 import type {
   LibraryCategory,
   LibrarySite,
@@ -23,6 +30,7 @@ type SiteFormProps = {
   busy: boolean;
   error: string | null;
   onCancel: () => void;
+  onCreateTag: (name: string) => Promise<LibraryTag>;
   onCreate?: (input: LibrarySiteCreateInput) => Promise<void>;
   onUpdate?: (input: LibrarySiteUpdateInput) => Promise<void>;
 };
@@ -31,6 +39,7 @@ function initialState(site: LibrarySite | undefined): LibrarySiteFormValues {
   return {
     name: site?.name ?? "",
     url: site?.originalUrl ?? "",
+    summary: site?.summary ?? "",
     description: site?.description ?? "",
     faviconUrl: site?.faviconUrl ?? "",
     categoryId: site?.category.id ?? "",
@@ -51,22 +60,62 @@ function SiteFormContent({
   busy,
   error,
   onCancel,
+  onCreateTag,
   onCreate,
   onUpdate,
 }: Readonly<SiteFormProps>) {
   const [values, setValues] = useState<LibrarySiteFormValues>(() => initialState(site));
   const [tagQuery, setTagQuery] = useState("");
+  const [newTagName, setNewTagName] = useState("");
+  const [tagCreating, setTagCreating] = useState(false);
+  const [tagCreateError, setTagCreateError] = useState<string | null>(null);
   const errorId = useId();
+  const tagCreateErrorId = useId();
   const isEdit = Boolean(site);
 
   const visibleTags = useMemo(() => {
-    const query = tagQuery.trim().toLocaleLowerCase();
-    return query ? tags.filter((tag) => tag.name.toLocaleLowerCase().includes(query)) : tags;
+    const query = libraryTagNameKey(tagQuery);
+    return query ? tags.filter((tag) => libraryTagNameKey(tag.name).includes(query)) : tags;
   }, [tagQuery, tags]);
+
+  const selectTag = (tag: LibraryTag) => {
+    setValues((current) => ({
+      ...current,
+      tagIds: current.tagIds.includes(tag.id) ? current.tagIds : [...current.tagIds, tag.id],
+    }));
+  };
+
+  const handleCreateTag = async () => {
+    if (busy || tagCreating) return;
+    const name = normalizeLibraryTagName(newTagName);
+    if (!name) return;
+
+    const existing = tags.find((tag) => libraryTagNameKey(tag.name) === libraryTagNameKey(name));
+    if (existing) {
+      selectTag(existing);
+      setNewTagName("");
+      setTagQuery("");
+      setTagCreateError(null);
+      return;
+    }
+
+    setTagCreating(true);
+    setTagCreateError(null);
+    try {
+      const tag = await onCreateTag(name);
+      selectTag(tag);
+      setNewTagName("");
+      setTagQuery("");
+    } catch (caught) {
+      setTagCreateError(caught instanceof Error ? caught.message : "新建标签失败，请重试");
+    } finally {
+      setTagCreating(false);
+    }
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (busy) return;
+    if (busy || tagCreating) return;
     if (site && onUpdate) {
       const update = buildLibrarySiteUpdate(site, values);
       if (update === null) {
@@ -80,6 +129,7 @@ function SiteFormContent({
     const shared = {
       name: values.name,
       url: values.url,
+      summary: values.summary.trim() || null,
       description: values.description.trim() || null,
       faviconUrl: values.faviconUrl.trim() || null,
       tagIds: values.tagIds,
@@ -88,6 +138,7 @@ function SiteFormContent({
     if (!site && onCreate) {
       await onCreate({
         ...shared,
+        summary: shared.summary ?? undefined,
         description: shared.description ?? undefined,
         faviconUrl: shared.faviconUrl ?? undefined,
         categoryId: values.categoryId || undefined,
@@ -122,7 +173,18 @@ function SiteFormContent({
           />
         </label>
         <label className="library-field library-field-wide">
-          <span>描述</span>
+          <span>简介</span>
+          <textarea
+            rows={2}
+            minLength={MIN_LIBRARY_SITE_SUMMARY_LENGTH}
+            maxLength={MAX_LIBRARY_SITE_SUMMARY_LENGTH}
+            value={values.summary}
+            onChange={(event) => setValues((current) => ({ ...current, summary: event.target.value }))}
+            disabled={busy}
+          />
+        </label>
+        <label className="library-field library-field-wide">
+          <span>详细介绍</span>
           <textarea
             rows={4}
             maxLength={4000}
@@ -166,8 +228,45 @@ function SiteFormContent({
         </label>
       </div>
 
-      <fieldset className="library-tag-picker" disabled={busy}>
+      <fieldset className="library-tag-picker" disabled={busy || tagCreating}>
         <legend>标签</legend>
+        <div className="taxonomy-create">
+          <label className="library-field">
+            <span className="sr-only">新标签名称</span>
+            <input
+              maxLength={MAX_LIBRARY_TAG_NAME_LENGTH}
+              placeholder="输入新标签名称"
+              value={newTagName}
+              aria-describedby={tagCreateError ? tagCreateErrorId : undefined}
+              onChange={(event) => {
+                setNewTagName(event.target.value);
+                setTagCreateError(null);
+              }}
+              onKeyDown={(event) => {
+                // 新建必须来自明确的按钮操作，不能让输入框 Enter 隐式写库。
+                if (event.key === "Enter") event.preventDefault();
+              }}
+            />
+          </label>
+          <button
+            className="library-button secondary"
+            type="button"
+            disabled={busy || tagCreating || !normalizeLibraryTagName(newTagName)}
+            onClick={() => void handleCreateTag()}
+          >
+            {tagCreating ? (
+              <LoaderCircle className="loading-spinner" aria-hidden="true" />
+            ) : (
+              <Plus aria-hidden="true" />
+            )}
+            {tagCreating ? "正在新建" : "新建标签"}
+          </button>
+        </div>
+        {tagCreateError && (
+          <p className="library-form-error" id={tagCreateErrorId} role="alert">
+            {tagCreateError}
+          </p>
+        )}
         {tags.length > 8 && (
           <label className="library-field library-tag-search">
             <span className="sr-only">筛选标签</span>
@@ -204,7 +303,7 @@ function SiteFormContent({
       {error && <p className="library-form-error" id={errorId} role="alert">{error}</p>}
       <footer className="library-form-actions">
         <button className="library-button secondary" type="button" onClick={onCancel} disabled={busy}>取消</button>
-        <button className="library-button primary" type="submit" disabled={busy || !values.name.trim() || !values.url.trim()}>
+        <button className="library-button primary" type="submit" disabled={busy || tagCreating || !values.name.trim() || !values.url.trim()}>
           {busy ? <LoaderCircle className="loading-spinner" aria-hidden="true" /> : <Save aria-hidden="true" />}
           <span>{busy ? "正在保存" : isEdit ? "保存修改" : "新增网站"}</span>
         </button>
