@@ -231,7 +231,8 @@ export function useLibraryWorkspace() {
     // A selection snapshot belongs to exactly one filter scope. Clear the
     // stored state as well as hiding selection mode, otherwise returning to a
     // previous filter could revive stale expected_version values.
-    clearSelection();
+    const frame = window.requestAnimationFrame(clearSelection);
+    return () => window.cancelAnimationFrame(frame);
   }, [clearSelection, selectionScope]);
 
   const cancelPaginationRequests = useCallback((clearFailedCursors = false) => {

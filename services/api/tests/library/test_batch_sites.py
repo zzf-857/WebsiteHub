@@ -5,14 +5,28 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from webhub.config import Settings
 from webhub.db.migrations import upgrade_database
+from webhub.ingestion.worker import AnalysisSchedule
 from webhub.library.batch import MAX_BATCH_URLS, extract_urls
 from webhub.main import create_app
 
 ORIGIN = {"Origin": "http://testserver"}
+
+
+@pytest.fixture(autouse=True)
+def _disable_background_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "webhub.library.routes.ingestion_worker.schedule_analysis",
+        lambda *_args, **_kwargs: AnalysisSchedule(
+            queued=0,
+            already_queued=0,
+            rejected=0,
+        ),
+    )
 
 
 @contextmanager

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 import pytest
 
 from webhub.agent.provider_binding import ProviderBinding
-from webhub.agent.web_search import WebSearchUnavailableError, search_web
+from webhub.agent.web_search import (
+    WebSearchUnavailableError,
+    search_web,
+    trusted_source_url,
+)
 
 
 def _binding(provider: str) -> ProviderBinding:
@@ -39,6 +45,15 @@ class _FakeResponse:
     def json(self) -> Any:
         return self._payload
 
+    async def __aenter__(self) -> _FakeResponse:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def aiter_bytes(self) -> AsyncIterator[bytes]:
+        yield json.dumps(self._payload).encode()
+
 
 def _install_client(
     monkeypatch: pytest.MonkeyPatch,
@@ -56,7 +71,7 @@ def _install_client(
         async def __aexit__(self, *args: object) -> None:
             return None
 
-        async def request(self, **kwargs: Any) -> _FakeResponse:
+        def stream(self, **kwargs: Any) -> _FakeResponse:
             requests.append({**kwargs, "client": self.kwargs})
             if isinstance(response, Exception):
                 raise response
@@ -136,3 +151,22 @@ def test_blank_query_never_reaches_the_vendor(monkeypatch: pytest.MonkeyPatch) -
 
     assert asyncio.run(search_web(_binding("tavily"), "   ")) == []
     assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("candidate", "expected"),
+    [
+        (" https://Example.com/docs?q=rag#section ", "https://example.com/docs?q=rag"),
+        ("https://example.com:443/docs", "https://example.com/docs"),
+        ("http://example.com:80/docs", "http://example.com/docs"),
+        ("javascript:alert(1)", None),
+        ("https://user:password@example.com/docs", None),
+        ("https://example.com/docs?access_token=secret", None),
+        ("http://127.0.0.1/private", None),
+    ],
+)
+def test_trusted_source_url_normalizes_public_urls_and_rejects_private_or_sensitive(
+    candidate: str,
+    expected: str | None,
+) -> None:
+    assert trusted_source_url(candidate) == expected

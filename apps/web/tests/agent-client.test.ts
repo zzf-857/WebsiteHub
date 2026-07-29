@@ -3,14 +3,28 @@ import test from "node:test";
 
 import {
   AgentApiError,
+  buildAgentConversationLink,
   confirmAgentSiteDraft,
   conversationTimezoneOffsetMinutes,
   DEFAULT_CONVERSATION_PAGE_SIZE,
   deleteAgentConversation,
+  listAllAgentConversations,
   listAgentConversations,
   loadAgentConversation,
   renameAgentConversation,
 } from "../lib/agent-client.ts";
+
+test("conversation share links keep only the controlled conversation parameter", () => {
+  const result = buildAgentConversationLink(
+    "https://webhub.test/library?ask=hello&trace=debug#private-fragment",
+    "conversation / 1",
+  );
+  const url = new URL(result);
+  assert.equal(url.origin, "https://webhub.test");
+  assert.equal(url.pathname, "/library");
+  assert.deepEqual([...url.searchParams], [["c", "conversation / 1"]]);
+  assert.equal(url.hash, "");
+});
 
 const conversation = {
   id: "conv-1",
@@ -167,14 +181,15 @@ test("conversation detail encodes ids and rejects blank ids before fetching", as
   const requests: string[] = [];
   globalThis.fetch = async (input) => {
     requests.push(String(input));
-    return jsonResponse({ conversation, messages: [storedMessage] });
+    return jsonResponse({ conversation, messages: [storedMessage], next_cursor: null });
   };
 
   const detail = await loadAgentConversation(" conv/one ");
   assert.equal(requests[0], "/api/backend/conversations/conv%2Fone?limit=100");
   assert.equal(detail.conversation.id, "conv-1");
   assert.equal(detail.messages[0]?.status, "complete");
-  assert.equal(detail.messages[0]?.sources[0]?.name, "search_library");
+  const firstSource = detail.messages[0]?.sources[0];
+  assert.equal(firstSource && "name" in firstSource ? firstSource.name : null, "search_library");
 
   await assert.rejects(loadAgentConversation("   "), (error: unknown) => {
     assert.ok(error instanceof TypeError);
@@ -182,6 +197,57 @@ test("conversation detail encodes ids and rejects blank ids before fetching", as
     return true;
   });
   assert.equal(requests.length, 1);
+});
+
+test("conversation history and detail consume every cursor page without duplicates", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  const requests: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requests.push(url);
+    const parsed = new URL(url, "http://localhost");
+    const cursor = parsed.searchParams.get("cursor");
+    if (parsed.pathname === "/api/backend/conversations") {
+      return cursor === null
+        ? jsonResponse({
+            groups: [{ key: "today", label: "今天", items: [conversation] }],
+            next_cursor: "history-2",
+            total_count: 2,
+          })
+        : jsonResponse({
+            groups: [{
+              key: "today",
+              label: "今天",
+              items: [conversation, { ...conversation, id: "conv-2", title: "第二个会话" }],
+            }],
+            next_cursor: null,
+            total_count: 2,
+          });
+    }
+    return cursor === null
+      ? jsonResponse({
+          conversation,
+          messages: [storedMessage],
+          next_cursor: "messages-2",
+        })
+      : jsonResponse({
+          conversation,
+          messages: [storedMessage, { ...storedMessage, id: "message-2", content: "第二页" }],
+          next_cursor: null,
+        });
+  };
+
+  const history = await listAllAgentConversations();
+  const detail = await loadAgentConversation("conv-1");
+
+  assert.deepEqual(history.groups[0]?.items.map((item) => item.id), ["conv-1", "conv-2"]);
+  assert.equal(history.nextCursor, null);
+  assert.deepEqual(detail.messages.map((message) => message.id), ["message-1", "message-2"]);
+  assert.equal(detail.nextCursor, null);
+  assert.equal(requests.length, 4);
+  assert.match(requests[1] ?? "", /cursor=history-2/u);
+  assert.match(requests[3] ?? "", /cursor=messages-2/u);
 });
 
 test("rename and delete serialize snake_case optimistic concurrency", async (context) => {
@@ -269,6 +335,7 @@ test("draft confirmation reuses existing categories and tags without creating", 
     url: "https://react.dev/",
     category_id: "category-1",
     tag_ids: ["tag-react"],
+    source: "agent",
   });
   assert.equal("description" in body, false);
   assert.equal(site.id, "site-1");
@@ -303,6 +370,7 @@ test("draft confirmation creates missing categories and tags before the site", a
     description: "渐进式前端框架",
     category_id: "category-new-1",
     tag_ids: ["tag-react", "tag-new-1"],
+    source: "agent",
   });
 });
 
@@ -322,5 +390,9 @@ test("draft confirmation skips category and tag endpoints when the draft has non
   assert.deepEqual(calls.map((call) => `${call.method} ${call.url}`), [
     "POST /api/backend/library/sites",
   ]);
-  assert.deepEqual(calls[0]?.body, { name: "示例站点", url: "https://example.com/" });
+  assert.deepEqual(calls[0]?.body, {
+    name: "示例站点",
+    url: "https://example.com/",
+    source: "agent",
+  });
 });

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {
+  ANALYSIS_REFRESH_DELAYS_MS,
+  analysisRefreshDelay,
+} from "../lib/analysis-refresh.ts";
 
 const HOME_COMPONENTS = [
   new URL("../components/home/category-sections.tsx", import.meta.url),
@@ -41,10 +45,15 @@ test("saved-site cards lead to the internal detail page", async () => {
 
 test("metadata backfill refreshes the visible library for a bounded period", async () => {
   const source = await readFile(LIBRARY_WORKSPACE_HOOK, "utf8");
-  assert.match(source, /ANALYSIS_REFRESH_DELAYS_MS = \[1_000, 2_000, 3_000, 5_000, 8_000, 13_000\]/);
-  assert.match(source, /result\.queuedCount > 0 \|\| result\.activeCount > 0/);
-  assert.match(source, /startAnalysisRefresh\(\)/);
-  assert.match(source, /clearTimeout\(analysisRefreshTimer\.current\)/);
+  assert.deepEqual(
+    [...ANALYSIS_REFRESH_DELAYS_MS],
+    [1_000, 2_000, 3_000, 5_000, 8_000, 12_000, ...Array(18).fill(15_000)],
+  );
+  assert.equal(analysisRefreshDelay(ANALYSIS_REFRESH_DELAYS_MS.length - 1), 15_000);
+  assert.equal(analysisRefreshDelay(ANALYSIS_REFRESH_DELAYS_MS.length), null);
+  assert.match(source, /hasRefreshableSiteAnalysis\(\[\.\.\.pinnedPage\.items, \.\.\.regularPage\.items\]\)/);
+  assert.match(source, /useBoundedAnalysisRefresh\(\{[\s\S]*?scope: selectionScope,[\s\S]*?enabled: analysisRefreshEnabled,[\s\S]*?refresh: refreshSitesForAnalysis/);
+  assert.match(source, /const result = await startMetadataBackfill\(\)[\s\S]*?refreshSites\(\)/);
 });
 
 test("site detail renders a compact, dismissible preview only when previewUrl exists", async () => {

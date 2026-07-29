@@ -57,10 +57,16 @@ def _client(tmp_path: Path) -> Iterator[TestClient]:
         yield client
 
 
-def _stub_page(monkeypatch: pytest.MonkeyPatch, body: str = PAGE, status: int = 200) -> None:
+def _stub_page(
+    monkeypatch: pytest.MonkeyPatch,
+    body: str = PAGE,
+    status: int = 200,
+    *,
+    with_icon: bool = True,
+) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         if _request.url.path == "/favicon.ico":
-            if status != 200:
+            if status != 200 or not with_icon:
                 return httpx.Response(404)
             return httpx.Response(
                 200,
@@ -99,69 +105,132 @@ def _site(client: TestClient, **overrides: object) -> dict[str, object]:
     return created.json()
 
 
-def test_analysis_fills_an_empty_description_and_icon(
+def _disable_created_site_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "webhub.library.routes.ingestion_worker.schedule_analysis",
+        lambda *_args, **_kwargs: AnalysisSchedule(queued=0, already_queued=0, rejected=0),
+    )
+
+
+def _analyze_metadata(tmp_path: Path, site_id: object) -> FetchOutcome:
+    with sqlite3.connect(tmp_path / "main.sqlite3") as connection:
+        user_id = str(
+            connection.execute(
+                "SELECT user_id FROM sites WHERE id = ?", (site_id,)
+            ).fetchone()[0]
+        )
+
+    async def scenario() -> FetchOutcome:
+        database = Database(f"sqlite+aiosqlite:///{(tmp_path / 'main.sqlite3').as_posix()}")
+        try:
+            async with database.sessions() as session:
+                outcome = await ingestion_service.analyze_site(session, user_id, str(site_id))
+                assert outcome is not None
+                return outcome
+        finally:
+            await database.dispose()
+
+    return asyncio.run(scenario())
+
+
+def test_metadata_analysis_fills_an_empty_description_and_icon(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _disable_created_site_analysis(monkeypatch)
     _stub_page(monkeypatch)
     with _client(tmp_path) as client:
         site = _site(client)
         assert not site["description"]
 
-        analyzed = client.post(f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN)
-        assert analyzed.status_code == 200, analyzed.text
-        body = analyzed.json()
+        outcome = _analyze_metadata(tmp_path, site["id"])
+        assert outcome.status == "complete"
+        stored = client.get(f"/api/library/sites/{site['id']}")
+        assert stored.status_code == 200, stored.text
+        body = stored.json()
         assert body["analysis_status"] == "complete"
         assert body["description"] == "抓来的描述"
         assert body["favicon_url"] == "https://example.com/favicon.ico"
         assert body["preview_url"] == "https://example.com/preview.png"
 
 
-def test_analysis_never_overwrites_what_the_user_typed(
+def test_metadata_analysis_never_overwrites_what_the_user_typed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A typed sentence is a decision; a meta tag is a guess about it. Guesses lose."""
 
+    _disable_created_site_analysis(monkeypatch)
     _stub_page(monkeypatch)
     with _client(tmp_path) as client:
         site = _site(client, description="我自己写的说明")
 
-        analyzed = client.post(f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN)
-        assert analyzed.status_code == 200
-        body = analyzed.json()
+        outcome = _analyze_metadata(tmp_path, site["id"])
+        assert outcome.status == "complete"
+        stored = client.get(f"/api/library/sites/{site['id']}")
+        assert stored.status_code == 200, stored.text
+        body = stored.json()
         assert body["analysis_status"] == "complete"
         # Description untouched, and the name was never a candidate at all.
         assert body["description"] == "我自己写的说明"
         assert body["name"] == "手填的名字"
 
 
-def test_analysis_status_reaches_a_terminal_state_on_failure(
+def test_metadata_analysis_status_reaches_a_terminal_state_on_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Never leave a row in `pending`; that reads as "still working" forever."""
 
+    _disable_created_site_analysis(monkeypatch)
     _stub_page(monkeypatch, status=500)
     with _client(tmp_path) as client:
         site = _site(client)
-        analyzed = client.post(f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN)
-        assert analyzed.status_code == 200
-        assert analyzed.json()["analysis_status"] == "failed"
+        outcome = _analyze_metadata(tmp_path, site["id"])
+        assert outcome.status == "failed"
+        stored = client.get(f"/api/library/sites/{site['id']}")
+        assert stored.status_code == 200, stored.text
+        assert stored.json()["analysis_status"] == "failed"
 
 
-def test_a_page_without_metadata_is_limited_not_failed(
+def test_metadata_analysis_without_metadata_is_limited_not_failed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _stub_page(monkeypatch, body="<html><head></head><body><div id=root></div></body></html>")
+    _disable_created_site_analysis(monkeypatch)
+    _stub_page(
+        monkeypatch,
+        body="<html><head></head><body><div id=root></div></body></html>",
+        with_icon=False,
+    )
     with _client(tmp_path) as client:
         site = _site(client)
+        outcome = _analyze_metadata(tmp_path, site["id"])
+        assert outcome.status == "limited"
+        stored = client.get(f"/api/library/sites/{site['id']}")
+        assert stored.status_code == 200, stored.text
+        assert stored.json()["analysis_status"] == "limited"
+
+
+def test_explicit_analysis_requires_an_enabled_model_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_created_site_analysis(monkeypatch)
+    with _client(tmp_path) as client:
+        site = _site(client)
+
         analyzed = client.post(f"/api/library/sites/{site['id']}/analyze", headers=ORIGIN)
-        assert analyzed.json()["analysis_status"] == "limited"
+
+        assert analyzed.status_code == 422
+        assert analyzed.json()["detail"]["code"] == "model_provider_required"
+        stored = client.get(f"/api/library/sites/{site['id']}")
+        assert stored.status_code == 200, stored.text
+        assert stored.json()["analysis_status"] == "not_analyzed"
 
 
 def test_analysis_is_account_scoped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _disable_created_site_analysis(monkeypatch)
     _stub_page(monkeypatch)
     with _client(tmp_path) as client:
         site = _site(client)
@@ -182,6 +251,7 @@ def test_analysis_requires_a_trusted_origin(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _disable_created_site_analysis(monkeypatch)
     _stub_page(monkeypatch)
     with _client(tmp_path) as client:
         site = _site(client)
@@ -478,7 +548,12 @@ def test_older_analysis_claim_cannot_overwrite_a_newer_result(
                         ingestion_service.analyze_site(first_session, user_id, str(site["id"]))
                     )
                     await first_started.wait()
-                    await ingestion_service.analyze_site(second_session, user_id, str(site["id"]))
+                    await ingestion_service.analyze_site(
+                        second_session,
+                        user_id,
+                        str(site["id"]),
+                        stale_before=datetime.now(UTC) + timedelta(seconds=1),
+                    )
                     release_first.set()
                     await first
             finally:
@@ -539,7 +614,7 @@ def test_worker_shutdown_releases_an_in_flight_pending_claim(
         assert stored["analysis_status"] == "not_analyzed"
 
 
-def test_explicit_backfill_retries_failed_limited_and_stale_pending_sites(
+def test_explicit_backfill_retries_terminal_states_without_stealing_pending_sites(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -573,8 +648,15 @@ def test_explicit_backfill_retries_failed_limited_and_stale_pending_sites(
         def pending(_database: object, _user_id: str) -> frozenset[str]:
             return frozenset(active)
 
-        def schedule(_database: object, *, user_id: str, site_ids: tuple[str, ...]):
+        def schedule(
+            _database: object,
+            *,
+            user_id: str,
+            site_ids: tuple[str, ...],
+            priority: bool,
+        ) -> AnalysisSchedule:
             assert user_id
+            assert priority is False
             captured.append(site_ids)
             active.update(site_ids)
             return AnalysisSchedule(queued=len(site_ids), already_queued=0, rejected=0)
@@ -594,13 +676,12 @@ def test_explicit_backfill_retries_failed_limited_and_stale_pending_sites(
         )
         assert response.status_code == 202, response.text
         assert response.json() == {
-            "queued_count": 4,
-            "active_count": 5,
+            "queued_count": 3,
+            "active_count": 4,
             "remaining_count": 0,
         }
         assert set(captured[0]) == {
             str(sites[0]["id"]),
-            str(sites[1]["id"]),
             str(sites[3]["id"]),
             str(sites[4]["id"]),
         }
@@ -626,6 +707,8 @@ def test_auto_backfill_excludes_recent_pending_failed_and_limited_sites(
         cutoff = datetime.now(UTC) - timedelta(minutes=5)
         stale = cutoff - timedelta(minutes=1)
         recent = cutoff + timedelta(minutes=1)
+        stale_db = stale.replace(tzinfo=None).isoformat(sep=" ")
+        recent_db = recent.replace(tzinfo=None).isoformat(sep=" ")
         with sqlite3.connect(tmp_path / "main.sqlite3") as connection:
             user_id = str(
                 connection.execute(
@@ -635,22 +718,22 @@ def test_auto_backfill_excludes_recent_pending_failed_and_limited_sites(
             connection.execute(
                 "UPDATE sites SET analysis_status = 'pending', analysis_updated_at = ? "
                 "WHERE id = ?",
-                (stale.isoformat(), sites[1]["id"]),
+                (stale_db, sites[1]["id"]),
             )
             connection.execute(
                 "UPDATE sites SET analysis_status = 'pending', analysis_updated_at = ? "
                 "WHERE id = ?",
-                (recent.isoformat(), sites[2]["id"]),
+                (recent_db, sites[2]["id"]),
             )
             connection.execute(
                 "UPDATE sites SET analysis_status = 'failed', analysis_updated_at = ? "
                 "WHERE id = ?",
-                (stale.isoformat(), sites[3]["id"]),
+                (stale_db, sites[3]["id"]),
             )
             connection.execute(
                 "UPDATE sites SET analysis_status = 'limited', analysis_updated_at = ? "
                 "WHERE id = ?",
-                (stale.isoformat(), sites[4]["id"]),
+                (stale_db, sites[4]["id"]),
             )
             connection.commit()
 
@@ -735,10 +818,6 @@ def test_auto_backfill_shutdown_releases_claim_and_forgets_pending_state(
     monkeypatch.setattr(
         "webhub.library.routes.ingestion_worker.schedule_analysis",
         lambda *_args, **_kwargs: AnalysisSchedule(queued=0, already_queued=0, rejected=0),
-    )
-    monkeypatch.setattr(
-        "webhub.library.routes.ingestion_worker.ensure_auto_backfill",
-        lambda *_args, **_kwargs: False,
     )
     with _client(tmp_path) as client:
         site = _site(client)

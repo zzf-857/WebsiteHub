@@ -509,10 +509,49 @@
 
 /* ========== 阶段进度条（真实工具事件驱动） ========== */
 
+.agent-task-timeline {
+  overflow: hidden;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.agent-task-timeline > summary {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  padding: 8px 11px;
+  gap: 7px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 620;
+  list-style: none;
+}
+
+.agent-task-timeline > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-task-timeline > summary svg {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-task-timeline > summary svg:last-child {
+  margin-left: auto;
+  transition: transform var(--duration-panel) var(--ease-standard);
+}
+
+.agent-task-timeline[open] > summary svg:last-child {
+  transform: rotate(180deg);
+}
+
 .agent-stages {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  padding: 0 11px 10px;
   color: var(--text-muted);
   font-size: 13px;
   gap: 10px 18px;

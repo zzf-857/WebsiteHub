@@ -3,8 +3,9 @@
 import { motion, useInView, useReducedMotion } from "motion/react";
 import { useEffect, useRef } from "react";
 
-// Adapted from React Bits BlurText (MIT + Commons Clause):
+// Upstream reference: React Bits BlurText, HEAD 61909958 (checked 2026-07-29).
 // https://reactbits.dev/text-animations/blur-text
+// Local changes: character-level aria labeling, one-shot viewport trigger and reduced-motion fallback.
 type BlurTextProps = {
   text: string;
   className?: string;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { LoaderCircle } from "lucide-react";
+import { Spinner } from "@/components/react-bits/spinner";
 import { libraryAutoLoadMode } from "@/lib/library-pagination";
 
 const LIBRARY_LOAD_AHEAD_MARGIN = "0px 0px 640px 0px";
@@ -64,7 +64,7 @@ export function LibraryAutoLoad({
         disabled={loading}
         onClick={() => void loadMoreRef.current()}
       >
-        {loading && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
+        {loading && <Spinner size={16} />}
         {loading ? loadingLabel : fallbackLabel}
       </button>
     );
@@ -80,7 +80,7 @@ export function LibraryAutoLoad({
     >
       {loading && (
         <>
-          <LoaderCircle className="loading-spinner" aria-hidden="true" />
+          <Spinner size={16} />
           <span className="sr-only">{loadingLabel}</span>
         </>
       )}

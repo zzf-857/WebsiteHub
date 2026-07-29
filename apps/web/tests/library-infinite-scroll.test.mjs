@@ -57,7 +57,7 @@ test("library pagination rejects duplicate and stale requests", async () => {
 
   const loadMoreSource = source.slice(
     source.indexOf("const loadMore"),
-    source.indexOf("const openDialog"),
+    source.indexOf("const toggleAllMatchingSites"),
   );
   assert.doesNotMatch(loadMoreSource, /setSitesError\(null\)/);
 });

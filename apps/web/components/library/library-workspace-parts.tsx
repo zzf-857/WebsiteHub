@@ -11,7 +11,6 @@ import {
   ChevronsDown,
   ChevronsUp,
   GripVertical,
-  LoaderCircle,
   Pencil,
   Pin,
   PinOff,
@@ -22,6 +21,7 @@ import { DynamicIcon } from "@/components/ui/dynamic-icon";
 import {
   SiteFavicon,
 } from "@/components/site-favicon";
+import { Spinner } from "@/components/react-bits/spinner";
 import {
   LibraryApiError,
 } from "@/lib/library-client";
@@ -280,11 +280,12 @@ export function SiteCollection({
                   type="button"
                   disabled={isBusy}
                   onClick={() => onTogglePinned(site)}
-                  aria-label={`${site.pinned ? "取消置顶" : "置顶"} ${site.name}`}
-                  title={site.pinned ? "取消置顶" : "置顶"}
+                  aria-busy={isBusy || undefined}
+                  aria-label={`${isBusy ? "正在" : ""}${site.pinned ? "取消置顶" : "置顶"} ${site.name}`}
+                  title={`${isBusy ? "正在" : ""}${site.pinned ? "取消置顶" : "置顶"}`}
                 >
                   {isBusy ? (
-                    <LoaderCircle className="loading-spinner" aria-hidden="true" />
+                    <Spinner />
                   ) : site.pinned ? (
                     <PinOff aria-hidden="true" />
                   ) : (

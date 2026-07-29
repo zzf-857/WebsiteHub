@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -38,19 +39,28 @@ export function LibraryDialog({
   const openRef = useRef(open);
   const closeDisabledRef = useRef(closeDisabled);
   const onCloseRef = useRef(onClose);
-  const snapshotRef = useRef({ title, description, children });
+  const [snapshot, setSnapshot] = useState({ title, description, children });
   const [closing, setClosing] = useState(false);
   const titleId = useId();
   const descriptionId = useId();
 
-  openRef.current = open;
-  closeDisabledRef.current = closeDisabled;
-  onCloseRef.current = onClose;
-  if (open) snapshotRef.current = { title, description, children };
+  useLayoutEffect(() => {
+    openRef.current = open;
+    closeDisabledRef.current = closeDisabled;
+    onCloseRef.current = onClose;
+  }, [closeDisabled, onClose, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      setSnapshot({ title, description, children });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [children, description, open, title]);
 
   const displayed = open
     ? { title, description, children }
-    : snapshotRef.current;
+    : snapshot;
 
   const beginClose = useCallback(() => {
     const dialog = dialogRef.current;
@@ -84,9 +94,11 @@ export function LibraryDialog({
         closeTimerRef.current = null;
       }
       closingRef.current = false;
-      setClosing(false);
+      const readyFrame = window.requestAnimationFrame(() => {
+        if (openRef.current) setClosing(false);
+      });
       if (!dialog.open) dialog.showModal();
-      return;
+      return () => window.cancelAnimationFrame(readyFrame);
     }
     if (dialog.open) beginClose();
   }, [beginClose, open]);

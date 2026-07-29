@@ -125,9 +125,10 @@ export function JoinSpaceDialog({
                   className="sd-btn sd-btn-secondary sd-btn-small"
                   onClick={() => void join(space)}
                   disabled={joiningId !== null}
+                  aria-busy={joiningId === space.id}
                 >
                   {joiningId === space.id ? <Spinner size={16} /> : <Plus size={16} aria-hidden="true" />}
-                  加入
+                  {joiningId === space.id ? "正在加入" : "加入"}
                 </button>
               </li>
             ))}

@@ -5,17 +5,16 @@ This is the adapter the route has been waiting for.  It owns four jobs:
 1. resolve the account's own Provider credentials (never a built-in key);
 2. replay the conversation from the WebHub tables so history survives restarts;
 3. translate LangGraph events into AI SDK UI Message Stream v1 chunks;
-4. persist the finished assistant turn.
+4. checkpoint partial output and persist every terminal assistant state.
 
-Failure handling is deliberately blunt.  Anything unexpected propagates as
-``AgentProviderNotConfiguredError`` or a bare exception, and the route's
-``_guard_runner_source`` turns it into a generic error chunk — vendor
-exception text (which routinely embeds URLs, request bodies and key
-fragments) must never reach the browser.
+Failures are terminalized against the same durable Assistant placeholder and
+rendered with a fixed safe message. Vendor exception text (which routinely
+embeds URLs, request bodies and key fragments) never reaches the browser.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections import deque
@@ -26,19 +25,21 @@ from typing import Any
 from uuid import uuid4
 
 from webhub.chat import service as chat_service
-from webhub.chat.service import ChatError
 from webhub.config import Settings
 from webhub.db.database import Database
 from webhub.space_batch_state import (
     normalize_space_batch_state_artifact,
-    space_batch_state_artifacts,
 )
 from webhub.streaming.ui_message_stream import (
+    abort_chunk,
     data_chunk,
+    error_chunk,
     finish_chunk,
+    message_metadata_chunk,
     reasoning_delta_chunk,
     reasoning_end_chunk,
     reasoning_start_chunk,
+    source_url_chunk,
     start_chunk,
     text_delta_chunk,
     text_end_chunk,
@@ -55,7 +56,6 @@ from .provider_binding import (
 )
 from .runner import (
     AgentProviderNotConfiguredError,
-    AgentRunnerExecutionError,
     AgentRunRequest,
 )
 from .tools import (
@@ -64,10 +64,25 @@ from .tools import (
     deterministic_collection_text,
     propose_sites_from_text,
 )
+from .turns import (
+    TURN_ABORTED_CODE,
+    TURN_EXPIRED_CODE,
+    TURN_RUNNER_ERROR_CODE,
+    AgentTurnClaim,
+    AgentTurnJournal,
+    AgentTurnLease,
+    AgentTurnLeaseLostError,
+    AgentTurnMessages,
+    bind_turn_messages_in_session,
+    claim_turn,
+    close_expired_turns,
+    finish_claimed_turn,
+    load_turn_assistant,
+)
+from .web_search import trusted_source_url
 
-MAX_PERSISTED_CONTENT = 32_000
-MAX_PERSISTED_REASONING = 32_000
 _EMPTY_REPLY = "（本轮没有生成任何内容，请换一种说法再试一次。）"
+_TRUSTED_SEARCH_PROVIDERS = frozenset({"tavily", "jina", "exa", "exa_mcp_free"})
 
 
 def _message_text(message: Any) -> str:
@@ -222,18 +237,209 @@ def _web_search_declined(metadata: Mapping[str, Any]) -> bool:
     return metadata.get("webSearch") is False
 
 
+def _source_url_chunks(
+    tool_result: Mapping[str, Any],
+    seen_urls: set[str],
+) -> list[dict[str, object]]:
+    """Promote only server-owned web-search hits to native AI SDK sources."""
+
+    if tool_result.get("name") != "web_search":
+        return []
+    result = tool_result.get("result")
+    if not isinstance(result, Mapping) or result.get("source") != "联网搜索":
+        return []
+    provider_id = result.get("provider_id")
+    if provider_id not in _TRUSTED_SEARCH_PROVIDERS:
+        return []
+    items = result.get("items")
+    if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
+        return []
+
+    chunks: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        url = trusted_source_url(item.get("url"))
+        if url is None or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        raw_title = item.get("title")
+        title = " ".join(raw_title.split())[:160] if isinstance(raw_title, str) else ""
+        source_id = f"web:{hashlib.sha256(url.encode()).hexdigest()[:24]}"
+        chunks.append(
+            source_url_chunk(
+                source_id,
+                url,
+                title=title or None,
+                provider_metadata={"webhub": {"searchProvider": provider_id}},
+            )
+        )
+    return chunks
+
+
 @dataclass(frozen=True, slots=True)
 class _TurnContext:
     conversation_id: str
     history: list[Any]
-    model_binding: ProviderBinding
-    search_binding: ProviderBinding | None
+    messages: AgentTurnMessages
 
 
-@dataclass(frozen=True, slots=True)
-class _ConversationContext:
-    conversation_id: str
-    history: list[Any]
+def _safe_turn_error(code: str | None) -> str:
+    if code == AgentProviderNotConfiguredError.code:
+        return AgentProviderNotConfiguredError.safe_message
+    if code == TURN_EXPIRED_CODE:
+        return "上一次执行已中断，请重新发送。"
+    if code == TURN_ABORTED_CODE:
+        return "本次回答已停止。"
+    return "Agent 暂时无法完成请求，请稍后重试。"
+
+
+def _runtime_metadata(
+    *,
+    run_started: float,
+    first_output_at: float | None,
+    reasoning_elapsed: float,
+    reasoning_started: float | None,
+    usage_rounds: Sequence[Mapping[str, int]],
+    finished_at: float | None = None,
+) -> dict[str, Any]:
+    """Return only measured timing and Provider-reported usage fields."""
+
+    finished_at = perf_counter() if finished_at is None else finished_at
+    result: dict[str, Any] = {
+        "elapsedMs": max(0, round((finished_at - run_started) * 1_000))
+    }
+    if first_output_at is not None:
+        result["timeToFirstTokenMs"] = max(
+            0,
+            round((first_output_at - run_started) * 1_000),
+        )
+    reasoning_seconds = reasoning_elapsed
+    if reasoning_started is not None:
+        reasoning_seconds += max(0, finished_at - reasoning_started)
+    if reasoning_seconds > 0:
+        result["reasoningMs"] = max(0, round(reasoning_seconds * 1_000))
+    usage: dict[str, int] = {}
+    for round_usage in usage_rounds:
+        _add_usage(usage, round_usage)
+    if usage:
+        result["usage"] = usage
+    return result
+
+
+async def _turn_status_stream(
+    request: AgentRunRequest,
+    claim: AgentTurnClaim,
+) -> AsyncIterator[Mapping[str, Any]]:
+    code = "turn_in_progress" if claim.action == "in_progress" else "turn_conflict"
+    message = (
+        "同一请求仍在处理中，请稍后查看本次对话。"
+        if claim.action == "in_progress"
+        else "这个 turn id 已用于另一份请求，请重新发送。"
+    )
+    metadata: dict[str, Any] = {
+        "turnId": request.turn_id,
+        "turnState": claim.state,
+        "messageStatus": "error",
+        "errorCode": code,
+        "turnPersisted": (
+            claim.action == "in_progress" and claim.assistant_message_id is not None
+        ),
+    }
+    if claim.action == "in_progress" and claim.assistant_message_id is not None:
+        metadata["assistantMessageId"] = claim.assistant_message_id
+    conversation_id = (
+        claim.conversation_id if claim.action == "in_progress" else request.conversation_id
+    )
+    if conversation_id is not None:
+        metadata["conversationId"] = conversation_id
+    if claim.retry_after_seconds is not None:
+        metadata["retryAfterSeconds"] = claim.retry_after_seconds
+    yield start_chunk(
+        # A duplicate request is a separate transient notification. Reusing the
+        # durable Assistant id would let AI SDK overwrite the active bubble.
+        message_id=f"assistant-{uuid4()}",
+        message_metadata=metadata,
+    )
+    yield data_chunk("agent-error", {"code": code, "message": message}, transient=True)
+    yield error_chunk(message)
+
+
+async def _replay_turn(
+    database: Database,
+    request: AgentRunRequest,
+    claim: AgentTurnClaim,
+) -> AsyncIterator[Mapping[str, Any]]:
+    message = await load_turn_assistant(
+        database,
+        user_id=request.account_id,
+        message_id=claim.assistant_message_id,
+    )
+    metadata = dict(message.metadata) if message is not None else {}
+    metadata.update(
+        {
+            "turnId": request.turn_id,
+            "turnState": claim.state,
+            "messageStatus": claim.state,
+            "turnReplayed": True,
+            "turnPersisted": message is not None,
+        }
+    )
+    if claim.assistant_message_id is not None:
+        metadata["assistantMessageId"] = claim.assistant_message_id
+    if claim.conversation_id is not None:
+        metadata["conversationId"] = claim.conversation_id
+    yield start_chunk(
+        message_id=message.id if message is not None else f"assistant-{uuid4()}",
+        message_metadata=metadata,
+    )
+
+    if message is not None:
+        for index, part in enumerate(message.parts):
+            if not isinstance(part, Mapping):
+                continue
+            part_type = part.get("type")
+            text = part.get("text")
+            if part_type == "reasoning" and isinstance(text, str) and text:
+                part_id = f"replay-reasoning-{index}"
+                yield reasoning_start_chunk(part_id)
+                yield reasoning_delta_chunk(part_id, text)
+                yield reasoning_end_chunk(part_id)
+        for source in message.sources:
+            if isinstance(source, Mapping):
+                yield data_chunk("agent-tool-result", dict(source))
+        for part in message.parts:
+            if isinstance(part, Mapping) and part.get("type") == "source-url":
+                yield dict(part)
+        emitted_text = False
+        for index, part in enumerate(message.parts):
+            if not isinstance(part, Mapping) or part.get("type") != "text":
+                continue
+            text = part.get("text")
+            if not isinstance(text, str) or not text:
+                continue
+            part_id = f"replay-text-{index}"
+            yield text_start_chunk(part_id)
+            yield text_delta_chunk(part_id, text)
+            yield text_end_chunk(part_id)
+            emitted_text = True
+        if not emitted_text and message.content:
+            yield text_start_chunk("replay-text")
+            yield text_delta_chunk("replay-text", message.content)
+            yield text_end_chunk("replay-text")
+
+    if claim.state == "complete":
+        yield finish_chunk(finish_reason="stop", message_metadata=metadata)
+    elif claim.state == "error":
+        error_message = _safe_turn_error(claim.error_code)
+        yield data_chunk(
+            "agent-error",
+            {"code": claim.error_code or TURN_RUNNER_ERROR_CODE, "message": error_message},
+            transient=True,
+        )
+        yield error_chunk(error_message)
+    else:
+        yield abort_chunk(_safe_turn_error(claim.error_code))
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,24 +473,12 @@ class LangGraphAgentRunner:
             )
         return model_binding, search_binding
 
-    async def _prepare_turn(self, request: AgentRunRequest) -> _TurnContext:
-        # Narrow-only: the hint can turn browsing off for this turn, never on.
-        declined = _web_search_declined(request.metadata)
-        model_binding, search_binding = await self._resolve_bindings(
-            request.account_id,
-            allow_web_search=not declined,
-        )
-
-        conversation = await self._prepare_conversation(request)
-        return _TurnContext(
-            conversation_id=conversation.conversation_id,
-            history=conversation.history,
-            model_binding=model_binding,
-            search_binding=search_binding,
-        )
-
-    async def _prepare_conversation(self, request: AgentRunRequest) -> _ConversationContext:
-        """Persist a user turn without requiring any external Provider."""
+    async def _prepare_conversation(
+        self,
+        request: AgentRunRequest,
+        lease: AgentTurnLease,
+    ) -> _TurnContext:
+        """Persist user and streaming assistant rows before any Provider work."""
 
         history: list[Any] = []
         async with self.database.sessions() as session:
@@ -294,6 +488,7 @@ class LangGraphAgentRunner:
                     session,
                     request.account_id,
                     title=None,
+                    commit=False,
                 )
                 conversation_id = conversation.id
             else:
@@ -305,273 +500,275 @@ class LangGraphAgentRunner:
                 )
                 history = _history_messages(recent)
 
-            # Persist the user's turn before calling out, so an aborted or
-            # failed model call still leaves a faithful transcript.
-            await chat_service.append_message(
+            # Keep the transcript rows and the turn receipt in one transaction:
+            # a process exit cannot leave an unbound streaming placeholder.
+            user_result = await chat_service.append_message(
                 session,
                 request.account_id,
                 conversation_id,
                 role="user",
                 content=request.message,
                 metadata=(
-                    {"slashCommand": request.slash_command.metadata()}
-                    if request.slash_command is not None
-                    else None
+                    {
+                        "turnId": request.turn_id,
+                        **(
+                            {"slashCommand": request.slash_command.metadata()}
+                            if request.slash_command is not None
+                            else {}
+                        ),
+                    }
                 ),
+                idempotency_key=f"agent-turn:{request.turn_id}:user",
+                commit=False,
             )
-        return _ConversationContext(
-            conversation_id=conversation_id,
-            history=history,
-        )
+            assistant_result = await chat_service.append_message(
+                session,
+                request.account_id,
+                conversation_id,
+                role="assistant",
+                content="",
+                parts=[],
+                sources=[],
+                artifacts=[],
+                metadata={
+                    "conversationId": conversation_id,
+                    "turnId": request.turn_id,
+                    "messageStatus": "streaming",
+                    "turnState": "streaming",
+                    "turnPersisted": False,
+                },
+                status="streaming",
+                idempotency_key=f"agent-turn:{request.turn_id}:assistant",
+                commit=False,
+            )
+            messages = AgentTurnMessages(
+                conversation_id=conversation_id,
+                user_message_id=user_result.message.id,
+                assistant_message_id=assistant_result.message.id,
+                assistant_version=assistant_result.message.version,
+            )
+            await bind_turn_messages_in_session(session, lease, messages)
+            await session.commit()
+        return _TurnContext(conversation_id=conversation_id, history=history, messages=messages)
 
-    async def _persist_reply(
-        self,
-        request: AgentRunRequest,
-        conversation_id: str,
-        text: str,
-        reasoning: str,
-        sources: list[dict[str, Any]],
-        metadata: dict[str, Any],
-    ) -> bool:
-        parts: list[dict[str, str]] = []
-        if reasoning:
-            parts.append(
+    async def run(self, request: AgentRunRequest) -> AsyncIterator[Mapping[str, Any]]:
+        """Stream one durable and idempotent turn as UI Message Stream v1 chunks."""
+
+        run_started = perf_counter()
+        await close_expired_turns(self.database, user_id=request.account_id)
+        claim = await claim_turn(self.database, request)
+        if claim.action in {"in_progress", "conflict"}:
+            async for chunk in _turn_status_stream(request, claim):
+                yield chunk
+            return
+        if claim.action == "replay":
+            async for chunk in _replay_turn(self.database, request, claim):
+                yield chunk
+            return
+        if claim.action != "execute" or claim.lease is None:
+            raise AgentTurnLeaseLostError("turn claim did not provide an execution lease")
+
+        lease = claim.lease
+        journal: AgentTurnJournal | None = None
+        stream_started = False
+        terminalized = False
+        first_output_at: float | None = None
+        reasoning_started: float | None = None
+        reasoning_elapsed = 0.0
+        usage_rounds: list[dict[str, int]] = [{}]
+        base_metadata: dict[str, Any] = {
+            "turnId": request.turn_id,
+            "turnState": "running",
+            "messageStatus": "streaming",
+            "turnPersisted": False,
+        }
+        try:
+            context = await self._prepare_conversation(request, lease)
+            message_id = context.messages.assistant_message_id
+            base_metadata.update(
                 {
-                    "type": "reasoning",
-                    "text": reasoning[:MAX_PERSISTED_REASONING],
+                    "conversationId": context.conversation_id,
+                    "assistantMessageId": message_id,
+                    "recommendationManifestVersion": 1,
                 }
             )
-        parts.append({"type": "text", "text": text[:MAX_PERSISTED_CONTENT]})
-        try:
-            async with self.database.sessions() as session:
-                await chat_service.append_message(
-                    session,
-                    request.account_id,
-                    conversation_id,
-                    role="assistant",
-                    content=text[:MAX_PERSISTED_CONTENT],
-                    parts=parts,
-                    sources=sources or None,
-                    artifacts=space_batch_state_artifacts(sources) or None,
-                    metadata=metadata,
-                    status="complete",
+            journal = AgentTurnJournal(
+                database=self.database,
+                lease=lease,
+                turn_id=request.turn_id,
+                messages=context.messages,
+                metadata=dict(base_metadata),
+            )
+            # The durable placeholder must contain its public identity before
+            # any model Provider can be invoked.
+            await journal.checkpoint(force=True)
+            journal.start()
+            stream_started = True
+            yield start_chunk(message_id=message_id, message_metadata=dict(base_metadata))
+
+            if request.slash_command is None:
+                slash_command_name = None
+            elif request.slash_command.definition is not None:
+                slash_command_name = request.slash_command.definition.name
+            else:
+                slash_command_name = request.slash_command.name
+            proposal_text = deterministic_collection_text(
+                request.message,
+                slash_command_name=slash_command_name,
+                slash_command_argument=(
+                    request.slash_command.argument_text if request.slash_command else ""
+                ),
+            )
+            if proposal_text is not None:
+                tool_call_id = _namespaced_tool_call_id(
+                    message_id,
+                    1,
+                    f"deterministic-{uuid4()}",
+                    "propose_sites",
                 )
-        except ChatError:
-            # Losing the archive copy must not corrupt a stream the user has
-            # already read; the transcript gap is preferable to a failed turn.
-            return False
-        return True
+                yield data_chunk(
+                    "agent-tool-call",
+                    {
+                        "toolCallId": tool_call_id,
+                        "name": "propose_sites",
+                        "arguments": {"text": proposal_text},
+                    },
+                    transient=True,
+                )
+                result = await propose_sites_from_text(
+                    AgentToolContext(
+                        database=self.database,
+                        settings=self.settings,
+                        user_id=request.account_id,
+                    ),
+                    proposal_text,
+                )
+                tool_result = {
+                    "toolCallId": tool_call_id,
+                    "name": "propose_sites",
+                    "result": result,
+                }
+                journal.add_tool_result(tool_result)
+                await journal.checkpoint(force=True)
+                yield data_chunk("agent-tool-result", tool_result)
 
-    async def _run_collection_proposal(
-        self,
-        request: AgentRunRequest,
-        proposal_text: str,
-        *,
-        run_started: float,
-    ) -> AsyncIterator[Mapping[str, Any]]:
-        """Stream a server-owned collect draft without spending a model call."""
+                status = result.get("status")
+                if status == "awaiting_confirmation":
+                    reply = "已生成收录草稿，请确认后保存。"
+                elif status == "noop":
+                    reply = str(result.get("message") or "没有需要新增的网址。")
+                else:
+                    reply = str(result.get("reason") or "没有找到可收录的网址。")
+                journal.add_text(reply)
+                text_id = f"text-{uuid4()}"
+                yield text_start_chunk(text_id)
+                yield text_delta_chunk(text_id, reply)
+                yield text_end_chunk(text_id)
 
-        conversation = await self._prepare_conversation(request)
-        message_id = f"assistant-{uuid4()}"
-        yield start_chunk(
-            message_id=message_id,
-            message_metadata={
-                "conversationId": conversation.conversation_id,
-                "mode": "deterministic",
-            },
-        )
+                finish_metadata = {
+                    **base_metadata,
+                    "mode": "deterministic",
+                    "turnState": "complete",
+                    "messageStatus": "complete",
+                    "turnPersisted": True,
+                    **_runtime_metadata(
+                        run_started=run_started,
+                        first_output_at=first_output_at,
+                        reasoning_elapsed=reasoning_elapsed,
+                        reasoning_started=reasoning_started,
+                        usage_rounds=usage_rounds,
+                    ),
+                }
+                await journal.finish("complete", metadata=finish_metadata)
+                terminalized = True
+                yield message_metadata_chunk(finish_metadata)
+                yield finish_chunk(finish_reason="stop", message_metadata=finish_metadata)
+                return
 
-        tool_call_id = _namespaced_tool_call_id(
-            message_id,
-            1,
-            f"deterministic-{uuid4()}",
-            "propose_sites",
-        )
-        arguments = {"text": proposal_text}
-        yield data_chunk(
-            "agent-tool-call",
-            {
-                "toolCallId": tool_call_id,
-                "name": "propose_sites",
-                "arguments": arguments,
-            },
-            transient=True,
-        )
-        result = await propose_sites_from_text(
-            AgentToolContext(
+            model_binding, search_binding = await self._resolve_bindings(
+                request.account_id,
+                allow_web_search=not _web_search_declined(request.metadata),
+            )
+            provider_metadata = {
+                "provider": model_binding.provider,
+                "model": model_binding.model_name,
+                "webSearch": search_binding is not None,
+            }
+            base_metadata.update(provider_metadata)
+            journal.update_metadata(provider_metadata)
+            await journal.checkpoint(force=True)
+            yield message_metadata_chunk(dict(base_metadata))
+
+            tool_context = AgentToolContext(
                 database=self.database,
                 settings=self.settings,
                 user_id=request.account_id,
-            ),
-            proposal_text,
-        )
-        tool_result = {
-            "toolCallId": tool_call_id,
-            "name": "propose_sites",
-            "result": result,
-        }
-        yield data_chunk("agent-tool-result", tool_result)
+                search_binding=search_binding,
+            )
+            graph = build_agent_graph(
+                model=build_chat_model(model_binding),
+                tools=build_tools(tool_context),
+                system_prompt=build_system_prompt(
+                    slash_command=request.slash_command,
+                    web_search_available=search_binding is not None,
+                    web_search_declined=_web_search_declined(request.metadata),
+                ),
+            )
 
-        status = result.get("status")
-        if status == "awaiting_confirmation":
-            reply = "已生成收录草稿，请确认后保存。"
-        elif status == "noop":
-            reply = str(result.get("message") or "没有需要新增的网址。")
-        else:
-            reply = str(result.get("reason") or "没有找到可收录的网址。")
+            from langchain_core.messages import HumanMessage
 
-        text_id = f"text-{uuid4()}"
-        yield text_start_chunk(text_id)
-        yield text_delta_chunk(text_id, reply)
-        yield text_end_chunk(text_id)
-        finish_metadata: dict[str, Any] = {
-            "conversationId": conversation.conversation_id,
-            "mode": "deterministic",
-            "elapsedMs": max(0, round((perf_counter() - run_started) * 1_000)),
-            "turnPersisted": True,
-        }
-        persisted = await self._persist_reply(
-            request,
-            conversation.conversation_id,
-            reply,
-            "",
-            [tool_result],
-            finish_metadata,
-        )
-        if not persisted:
-            finish_metadata["turnPersisted"] = False
-        yield finish_chunk(finish_reason="stop", message_metadata=finish_metadata)
+            text_id = f"text-{uuid4()}"
+            text_open = False
+            reasoning_id: str | None = None
+            reasoning_open = False
+            pending_tool_call_ids: dict[tuple[str, str], deque[str]] = {}
+            tool_instance_sequence = 0
+            seen_source_urls: set[str] = set()
 
-    async def run(self, request: AgentRunRequest) -> AsyncIterator[Mapping[str, Any]]:
-        """Stream one turn as UI Message Stream v1 chunks."""
-
-        run_started = perf_counter()
-        if request.slash_command is None:
-            slash_command_name = None
-        elif request.slash_command.definition is not None:
-            slash_command_name = request.slash_command.definition.name
-        else:
-            slash_command_name = request.slash_command.name
-        proposal_text = deterministic_collection_text(
-            request.message,
-            slash_command_name=slash_command_name,
-            slash_command_argument=(
-                request.slash_command.argument_text if request.slash_command else ""
-            ),
-        )
-        if proposal_text is not None:
-            try:
-                async for chunk in self._run_collection_proposal(
-                    request,
-                    proposal_text,
-                    run_started=run_started,
-                ):
-                    yield chunk
-            except Exception as error:
-                raise AgentRunnerExecutionError(
-                    stage="deterministic_collection",
-                    error_type=type(error).__name__,
-                ) from error
-            return
-
-        try:
-            context = await self._prepare_turn(request)
-        except AgentProviderNotConfiguredError:
-            raise
-        except Exception as error:
-            raise AgentRunnerExecutionError(
-                stage="prepare_turn",
-                error_type=type(error).__name__,
-            ) from error
-        message_id = f"assistant-{uuid4()}"
-        yield start_chunk(
-            message_id=message_id,
-            message_metadata={
-                "conversationId": context.conversation_id,
-                "provider": context.model_binding.provider,
-                "model": context.model_binding.model_name,
-                "recommendationManifestVersion": 1,
-                # The effective capability after narrowing, not the request hint.
-                "webSearch": context.search_binding is not None,
-            },
-        )
-
-        tool_context = AgentToolContext(
-            database=self.database,
-            settings=self.settings,
-            user_id=request.account_id,
-            search_binding=context.search_binding,
-        )
-        graph = build_agent_graph(
-            model=build_chat_model(context.model_binding),
-            tools=build_tools(tool_context),
-            system_prompt=build_system_prompt(
-                slash_command=request.slash_command,
-                web_search_available=context.search_binding is not None,
-                web_search_declined=_web_search_declined(request.metadata),
-            ),
-        )
-
-        from langchain_core.messages import HumanMessage
-
-        text_id = f"text-{uuid4()}"
-        text_open = False
-        reasoning_id: str | None = None
-        reasoning_open = False
-        reasoning_started: float | None = None
-        reasoning_elapsed = 0.0
-        first_output_at: float | None = None
-        collected: list[str] = []
-        collected_reasoning: list[str] = []
-        sources: list[dict[str, Any]] = []
-        usage_rounds: list[dict[str, int]] = [{}]
-        pending_tool_call_ids: dict[tuple[str, str], deque[str]] = {}
-        tool_instance_sequence = 0
-
-        async for stream_mode, payload in graph.astream(
-            {"messages": [*context.history, HumanMessage(content=request.message)]},
-            stream_mode=["messages", "updates"],
-            config={"recursion_limit": self.settings.agent_max_steps},
-        ):
-            if stream_mode == "messages":
-                chunk, _ = payload
-                if getattr(chunk, "type", None) == "tool":
-                    continue
-                # Provider usage is normally emitted once at the end of a
-                # model round, but compatible endpoints may repeat cumulative
-                # counters on several chunks.  Take the maximum within a round
-                # and only sum distinct rounds separated by tool events.
-                _merge_usage_max(usage_rounds[-1], _message_usage(chunk))
-                reasoning = _message_reasoning(chunk)
-                if reasoning:
+            async for stream_mode, payload in graph.astream(
+                {"messages": [*context.history, HumanMessage(content=request.message)]},
+                stream_mode=["messages", "updates"],
+                config={"recursion_limit": self.settings.agent_max_steps},
+            ):
+                await journal.ensure_active()
+                if stream_mode == "messages":
+                    chunk, _ = payload
+                    if getattr(chunk, "type", None) == "tool":
+                        continue
+                    _merge_usage_max(usage_rounds[-1], _message_usage(chunk))
+                    reasoning = _message_reasoning(chunk)
+                    if reasoning:
+                        now = perf_counter()
+                        if first_output_at is None:
+                            first_output_at = now
+                        if not reasoning_open:
+                            reasoning_id = f"reasoning-{uuid4()}"
+                            yield reasoning_start_chunk(reasoning_id)
+                            reasoning_open = True
+                            reasoning_started = now
+                        journal.add_reasoning(reasoning)
+                        yield reasoning_delta_chunk(reasoning_id, reasoning)
+                    delta = _message_text(chunk)
+                    if not delta:
+                        continue
                     now = perf_counter()
                     if first_output_at is None:
                         first_output_at = now
-                    if not reasoning_open:
-                        reasoning_id = f"reasoning-{uuid4()}"
-                        yield reasoning_start_chunk(reasoning_id)
-                        reasoning_open = True
-                        reasoning_started = now
-                    collected_reasoning.append(reasoning)
-                    yield reasoning_delta_chunk(reasoning_id, reasoning)
-                delta = _message_text(chunk)
-                if not delta:
+                    if reasoning_open and reasoning_id is not None:
+                        yield reasoning_end_chunk(reasoning_id)
+                        reasoning_open = False
+                        if reasoning_started is not None:
+                            reasoning_elapsed += now - reasoning_started
+                        reasoning_started = None
+                    if not text_open:
+                        yield text_start_chunk(text_id)
+                        text_open = True
+                    journal.add_text(delta)
+                    yield text_delta_chunk(text_id, delta)
                     continue
-                now = perf_counter()
-                if first_output_at is None:
-                    first_output_at = now
-                if reasoning_open and reasoning_id is not None:
-                    yield reasoning_end_chunk(reasoning_id)
-                    reasoning_open = False
-                    if reasoning_started is not None:
-                        reasoning_elapsed += now - reasoning_started
-                    reasoning_started = None
-                if not text_open:
-                    yield text_start_chunk(text_id)
-                    text_open = True
-                collected.append(delta)
-                yield text_delta_chunk(text_id, delta)
-            elif stream_mode == "updates":
+
+                if stream_mode != "updates":
+                    continue
                 tool_events = _tool_events(payload)
                 if tool_events and usage_rounds[-1]:
                     usage_rounds.append({})
@@ -595,10 +792,9 @@ class LangGraphAgentRunner:
                             raw_tool_call_id,
                             tool_name,
                         )
-                        pending_tool_call_ids.setdefault(
-                            mapping_key,
-                            deque(),
-                        ).append(namespaced_id)
+                        pending_tool_call_ids.setdefault(mapping_key, deque()).append(
+                            namespaced_id
+                        )
                     else:
                         pending_ids = pending_tool_call_ids.get(mapping_key)
                         if pending_ids:
@@ -616,64 +812,150 @@ class LangGraphAgentRunner:
                     data = {**data, "toolCallId": namespaced_id}
                     if event["kind"] == "call":
                         yield data_chunk("agent-tool-call", data, transient=True)
-                    else:
-                        sources.append(data)
-                        yield data_chunk("agent-tool-result", data)
+                        continue
 
-        if reasoning_open and reasoning_id is not None:
-            now = perf_counter()
-            yield reasoning_end_chunk(reasoning_id)
-            reasoning_open = False
-            if reasoning_started is not None:
-                reasoning_elapsed += now - reasoning_started
-        if not text_open:
-            # A model that answers with tool calls only would otherwise finish
-            # with an empty bubble.
-            yield text_start_chunk(text_id)
-            text_open = True
-            collected.append(_EMPTY_REPLY)
-            if first_output_at is None:
-                first_output_at = perf_counter()
-            yield text_delta_chunk(text_id, _EMPTY_REPLY)
-        yield text_end_chunk(text_id)
+                    source_parts = _source_url_chunks(data, seen_source_urls)
+                    journal.add_tool_result(data)
+                    for source_part in source_parts:
+                        journal.add_source(source_part)
+                    # Tool results and their provenance are business state, so
+                    # they bypass the two-second text checkpoint cadence.
+                    await journal.checkpoint(force=True)
+                    yield data_chunk("agent-tool-result", data)
+                    for source_part in source_parts:
+                        yield source_part
 
-        reply = "".join(collected)
-        finished_at = perf_counter()
-        usage: dict[str, int] = {}
-        for round_usage in usage_rounds:
-            _add_usage(usage, round_usage)
-        finish_metadata: dict[str, Any] = {
-            "conversationId": context.conversation_id,
-            "provider": context.model_binding.provider,
-            "model": context.model_binding.model_name,
-            "webSearch": context.search_binding is not None,
-            "recommendationManifestVersion": 1,
-            "elapsedMs": max(0, round((finished_at - run_started) * 1_000)),
-            "turnPersisted": True,
-        }
-        if first_output_at is not None:
-            finish_metadata["timeToFirstTokenMs"] = max(
-                0,
-                round((first_output_at - run_started) * 1_000),
+            if reasoning_open and reasoning_id is not None:
+                now = perf_counter()
+                yield reasoning_end_chunk(reasoning_id)
+                if reasoning_started is not None:
+                    reasoning_elapsed += now - reasoning_started
+                reasoning_started = None
+            if not text_open:
+                yield text_start_chunk(text_id)
+                text_open = True
+                journal.add_text(_EMPTY_REPLY)
+                if first_output_at is None:
+                    first_output_at = perf_counter()
+                yield text_delta_chunk(text_id, _EMPTY_REPLY)
+            yield text_end_chunk(text_id)
+
+            finished_at = perf_counter()
+            finish_metadata = {
+                **base_metadata,
+                "turnState": "complete",
+                "messageStatus": "complete",
+                "turnPersisted": True,
+                **_runtime_metadata(
+                    run_started=run_started,
+                    first_output_at=first_output_at,
+                    reasoning_elapsed=reasoning_elapsed,
+                    reasoning_started=reasoning_started,
+                    usage_rounds=usage_rounds,
+                    finished_at=finished_at,
+                ),
+            }
+            await journal.finish("complete", metadata=finish_metadata)
+            terminalized = True
+            yield message_metadata_chunk(finish_metadata)
+            yield finish_chunk(finish_reason="stop", message_metadata=finish_metadata)
+        except (asyncio.CancelledError, GeneratorExit):
+            aborted_metadata = {
+                **base_metadata,
+                "turnState": "aborted",
+                "messageStatus": "aborted",
+                "turnPersisted": True,
+                **_runtime_metadata(
+                    run_started=run_started,
+                    first_output_at=first_output_at,
+                    reasoning_elapsed=reasoning_elapsed,
+                    reasoning_started=reasoning_started,
+                    usage_rounds=usage_rounds,
+                ),
+            }
+            if journal is not None and not terminalized:
+                try:
+                    await journal.finish(
+                        "aborted",
+                        metadata=aborted_metadata,
+                        error_code=TURN_ABORTED_CODE,
+                    )
+                    terminalized = True
+                except Exception:
+                    # Preserve task cancellation; the lease sweeper will close
+                    # the partial placeholder if storage is unavailable here.
+                    pass
+            elif not terminalized:
+                try:
+                    await finish_claimed_turn(
+                        self.database,
+                        lease,
+                        turn_id=request.turn_id,
+                        state="aborted",
+                        metadata=aborted_metadata,
+                        error_code=TURN_ABORTED_CODE,
+                    )
+                    terminalized = True
+                except Exception:
+                    # Preserve cancellation; an expired lease is still fenced
+                    # and recovered by the bounded startup/request sweeper.
+                    pass
+            raise
+        except Exception as error:
+            error_code = (
+                AgentProviderNotConfiguredError.code
+                if isinstance(error, AgentProviderNotConfiguredError)
+                else TURN_RUNNER_ERROR_CODE
             )
-        if reasoning_elapsed > 0:
-            finish_metadata["reasoningMs"] = max(0, round(reasoning_elapsed * 1_000))
-        if usage:
-            finish_metadata["usage"] = usage
-        persisted = await self._persist_reply(
-            request,
-            context.conversation_id,
-            reply,
-            "".join(collected_reasoning),
-            sources,
-            finish_metadata,
-        )
-        if not persisted:
-            finish_metadata["turnPersisted"] = False
-        yield finish_chunk(
-            finish_reason="stop",
-            message_metadata=finish_metadata,
-        )
+            error_message = _safe_turn_error(error_code)
+            error_metadata = {
+                **base_metadata,
+                "turnState": "error",
+                "messageStatus": "error",
+                "errorCode": error_code,
+                "turnPersisted": journal is not None,
+                **_runtime_metadata(
+                    run_started=run_started,
+                    first_output_at=first_output_at,
+                    reasoning_elapsed=reasoning_elapsed,
+                    reasoning_started=reasoning_started,
+                    usage_rounds=usage_rounds,
+                ),
+            }
+            if journal is not None and not terminalized:
+                await journal.finish("error", metadata=error_metadata, error_code=error_code)
+                terminalized = True
+                error_metadata["turnPersisted"] = True
+            elif not terminalized:
+                await finish_claimed_turn(
+                    self.database,
+                    lease,
+                    turn_id=request.turn_id,
+                    state="error",
+                    metadata=error_metadata,
+                    error_code=error_code,
+                )
+                terminalized = True
+            if not stream_started:
+                yield start_chunk(
+                    message_id=(
+                        str(base_metadata["assistantMessageId"])
+                        if "assistantMessageId" in base_metadata
+                        else f"assistant-{uuid4()}"
+                    ),
+                    message_metadata=error_metadata,
+                )
+            else:
+                yield message_metadata_chunk(error_metadata)
+            yield data_chunk(
+                "agent-error",
+                {"code": error_code, "message": error_message},
+                transient=True,
+            )
+            yield error_chunk(error_message)
+        finally:
+            if journal is not None:
+                await journal.close()
 
 
 def _history_messages(items: Sequence[Any]) -> list[Any]:
@@ -698,6 +980,15 @@ def _history_messages(items: Sequence[Any]) -> list[Any]:
         )
         and confirmation.get("kind") == "space_batch_applied"
         and isinstance(confirmation.get("toolCallId"), str)
+    }
+    incomplete_turn_ids = {
+        turn_id
+        for item in items
+        if item.role == "assistant"
+        and item.status != "complete"
+        and isinstance(item.metadata, Mapping)
+        and isinstance((turn_id := item.metadata.get("turnId")), str)
+        and turn_id
     }
     latest_message_index: int | None = None
     latest_state: dict[str, Any] | None = None
@@ -728,6 +1019,9 @@ def _history_messages(items: Sequence[Any]) -> list[Any]:
         if not item.content:
             continue
         if item.role == "user":
+            turn_id = item.metadata.get("turnId") if isinstance(item.metadata, Mapping) else None
+            if isinstance(turn_id, str) and turn_id in incomplete_turn_ids:
+                continue
             messages.append(HumanMessage(content=item.content))
         elif item.role == "assistant" and item.status == "complete":
             content = item.content

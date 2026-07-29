@@ -1,4 +1,4 @@
-import type { UIMessage } from "ai";
+import type { SourceUrlUIPart, UIMessage } from "ai";
 
 /**
  * Wire contract for the Agent chat stream.
@@ -93,6 +93,9 @@ export type AgentDraftConfirmation = {
 
 export type AgentMessageMetadata = {
   conversationId?: string;
+  turnId?: string;
+  assistantMessageId?: string;
+  messageStatus?: AgentMessageStatus;
   provider?: string;
   model?: string;
   webSearch?: boolean;
@@ -105,6 +108,8 @@ export type AgentMessageMetadata = {
   usage?: AgentTokenUsage;
   draftConfirmation?: AgentDraftConfirmation;
 };
+
+export type AgentMessageStatus = "streaming" | "complete" | "error" | "aborted";
 
 export type AgentTokenUsage = {
   inputTokens?: number;
@@ -157,6 +162,18 @@ function asWebUrl(value: unknown): string | null {
   }
 }
 
+/**
+ * Produce the comparison key used when one trusted source is restored from
+ * both the message `parts` checkpoint and the legacy `sources` sidecar.
+ */
+export function normalizeAgentSourceUrlKey(value: unknown): string | null {
+  const candidate = asWebUrl(value);
+  if (candidate === null) return null;
+  const parsed = new URL(candidate);
+  parsed.hash = "";
+  return parsed.toString();
+}
+
 export function normalizeAgentToolCall(value: unknown): AgentToolCall | null {
   const candidate = asRecord(value);
   if (candidate === null) return null;
@@ -193,6 +210,9 @@ export function normalizeAgentMessageMetadata(value: unknown): AgentMessageMetad
   const candidate = asRecord(value);
   if (candidate === null) return {};
   const conversationId = asTrimmed(candidate.conversationId);
+  const turnId = asTrimmed(candidate.turnId);
+  const assistantMessageId = asTrimmed(candidate.assistantMessageId);
+  const messageStatus = asTrimmed(candidate.messageStatus) ?? asTrimmed(candidate.turnState);
   const provider = asTrimmed(candidate.provider);
   const model = asTrimmed(candidate.model);
   const errorCode = asTrimmed(candidate.errorCode);
@@ -231,6 +251,11 @@ export function normalizeAgentMessageMetadata(value: unknown): AgentMessageMetad
       };
   return {
     ...(conversationId ? { conversationId } : {}),
+    ...(turnId ? { turnId } : {}),
+    ...(assistantMessageId ? { assistantMessageId } : {}),
+    ...(messageStatus !== null && MESSAGE_STATUSES.has(messageStatus)
+      ? { messageStatus: messageStatus as AgentMessageStatus }
+      : {}),
     ...(provider ? { provider } : {}),
     ...(model ? { model } : {}),
     ...(typeof candidate.webSearch === "boolean" ? { webSearch: candidate.webSearch } : {}),
@@ -817,6 +842,7 @@ export function agentSourceLabels(results: readonly AgentToolResult[]): string[]
 
 export type AgentChatRequestInput = {
   message: string;
+  turnId: string;
   conversationId?: string | null;
   metadata?: Record<string, unknown>;
 };
@@ -865,8 +891,13 @@ export function prepareAgentChatRequest(input: AgentChatRequestInput): JsonRecor
     throw new AgentContractError(`消息不能超过 ${MAX_AGENT_MESSAGE_LENGTH} 个字符`);
   }
   const conversationId = asTrimmed(input.conversationId);
+  const turnId = asTrimmed(input.turnId);
+  if (turnId === null || turnId.length > 128) {
+    throw new AgentContractError("回合标识无效");
+  }
   return {
     message,
+    turn_id: turnId,
     ...(conversationId ? { conversation_id: conversationId } : {}),
     ...(input.metadata && Object.keys(input.metadata).length > 0
       ? { metadata: input.metadata }
@@ -900,14 +931,41 @@ export type AgentStoredMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   parts: AgentStoredPart[];
-  sources: AgentToolResult[];
+  sources: AgentStoredSource[];
   metadata: AgentMessageMetadata;
-  status: "streaming" | "complete" | "error" | "aborted";
+  status: AgentMessageStatus;
 };
+
+export type AgentSourceUrl = {
+  type: "source-url";
+  sourceId: string;
+  url: string;
+  title?: string;
+  providerMetadata?: SourceUrlUIPart["providerMetadata"];
+};
+
+export type AgentStoredSource = AgentToolResult | AgentSourceUrl;
+
+function isAgentSourceUrl(source: AgentStoredSource): source is AgentSourceUrl {
+  return "type" in source && source.type === "source-url";
+}
+
+function uniqueAgentSourceUrls(sources: readonly AgentSourceUrl[]): AgentSourceUrl[] {
+  const seen = new Set<string>();
+  const unique: AgentSourceUrl[] = [];
+  for (const source of sources) {
+    const key = normalizeAgentSourceUrlKey(source.url);
+    if (key === null || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(source);
+  }
+  return unique;
+}
 
 export type AgentStoredPart =
   | { type: "reasoning"; text: string }
-  | { type: "text"; text: string };
+  | { type: "text"; text: string }
+  | AgentSourceUrl;
 
 function requiredRecord(value: unknown, path: string): JsonRecord {
   const candidate = asRecord(value);
@@ -965,10 +1023,34 @@ export function normalizeAgentConversationHistory(value: unknown): AgentConversa
 const MESSAGE_ROLES = new Set(["system", "user", "assistant", "tool"]);
 const MESSAGE_STATUSES = new Set(["streaming", "complete", "error", "aborted"]);
 
+function normalizeAgentSourceUrl(value: unknown): AgentSourceUrl | null {
+  const candidate = asRecord(value);
+  if (candidate?.type !== "source-url") return null;
+  const sourceId = asTrimmed(candidate.sourceId);
+  const url = asWebUrl(candidate.url);
+  if (sourceId === null || url === null) return null;
+  const title = asTrimmed(candidate.title);
+  const providerMetadata = asRecord(candidate.providerMetadata);
+  return {
+    type: "source-url",
+    sourceId,
+    url,
+    ...(title ? { title } : {}),
+    ...(providerMetadata ? {
+      providerMetadata: providerMetadata as SourceUrlUIPart["providerMetadata"],
+    } : {}),
+  };
+}
+
 function normalizeAgentStoredParts(value: unknown): AgentStoredPart[] {
   if (!Array.isArray(value)) return [];
   const parts: AgentStoredPart[] = [];
   for (const entry of value) {
+    const source = normalizeAgentSourceUrl(entry);
+    if (source) {
+      parts.push(source);
+      continue;
+    }
     const candidate = asRecord(entry);
     if (
       (candidate?.type === "text" || candidate?.type === "reasoning") &&
@@ -989,8 +1071,8 @@ export function normalizeAgentStoredMessage(value: unknown): AgentStoredMessage 
   if (!MESSAGE_STATUSES.has(status)) throw new AgentContractError("message.status 不是受支持的值");
   const sources = Array.isArray(candidate.sources)
     ? candidate.sources
-        .map(normalizeAgentToolResult)
-        .filter((entry): entry is AgentToolResult => entry !== null)
+        .map((entry) => normalizeAgentSourceUrl(entry) ?? normalizeAgentToolResult(entry))
+        .filter((entry): entry is AgentStoredSource => entry !== null)
     : [];
   return {
     id: requiredText(candidate.id, "message.id"),
@@ -999,13 +1081,14 @@ export function normalizeAgentStoredMessage(value: unknown): AgentStoredMessage 
     parts: normalizeAgentStoredParts(candidate.parts),
     sources,
     metadata: normalizeAgentMessageMetadata(candidate.metadata),
-    status: status as AgentStoredMessage["status"],
+    status: status as AgentMessageStatus,
   };
 }
 
 export type AgentConversationDetail = {
   conversation: AgentConversation;
   messages: AgentStoredMessage[];
+  nextCursor: string | null;
 };
 
 export function normalizeAgentConversationDetail(value: unknown): AgentConversationDetail {
@@ -1016,6 +1099,7 @@ export function normalizeAgentConversationDetail(value: unknown): AgentConversat
   return {
     conversation: normalizeAgentConversation(candidate.conversation),
     messages: candidate.messages.map(normalizeAgentStoredMessage),
+    nextCursor: asTrimmed(candidate.next_cursor),
   };
 }
 
@@ -1027,23 +1111,42 @@ export function toAgentUIMessages(messages: readonly AgentStoredMessage[]): Agen
   const restored: AgentUIMessage[] = [];
   for (const message of messages) {
     if (message.role !== "user" && message.role !== "assistant") continue;
-    if (!message.content && message.parts.length === 0 && message.sources.length === 0) continue;
+    if (
+      !message.content &&
+      message.parts.length === 0 &&
+      message.sources.length === 0 &&
+      (message.role !== "assistant" || message.status === "complete")
+    ) continue;
     const reasoningParts = message.parts.filter((part) => part.type === "reasoning");
     const textParts = message.parts.filter((part) => part.type === "text");
+    const sourceParts = message.parts.filter((part) => part.type === "source-url");
+    const storedSourceParts = message.sources.filter(isAgentSourceUrl);
+    const uniqueSourceParts = uniqueAgentSourceUrls([...storedSourceParts, ...sourceParts]);
+    const toolResults = message.sources.filter(
+      (source): source is AgentToolResult => !isAgentSourceUrl(source),
+    );
     const parts: AgentUIMessage["parts"] = [...reasoningParts];
-    parts.push(...message.sources.map((source) => ({
+    parts.push(...toolResults.map((source) => ({
       type: "data-agent-tool-result",
       data: source,
     }) as const));
+    parts.push(...uniqueSourceParts);
     parts.push(...textParts);
     if (message.content && textParts.length === 0) {
       parts.push({ type: "text", text: message.content });
     }
+    const metadata = message.role === "assistant"
+      ? {
+          ...message.metadata,
+          messageStatus: message.status,
+          assistantMessageId: message.id,
+        }
+      : message.metadata;
     restored.push({
       id: message.id,
       role: message.role,
       parts,
-      ...(Object.keys(message.metadata).length > 0 ? { metadata: message.metadata } : {}),
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     });
   }
   return restored;

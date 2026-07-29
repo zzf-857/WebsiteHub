@@ -8,6 +8,7 @@ import pytest
 
 from webhub.bookmarks import routes as bookmark_routes
 from webhub.bookmarks.schemas import BookmarkImportApplyRequest, BookmarkImportApplyResponse
+from webhub.ingestion.enrichment import AnalysisIntent
 from webhub.ingestion.worker import AnalysisSchedule
 from webhub.library import routes as library_routes
 from webhub.library.batch import BatchItem
@@ -58,9 +59,15 @@ def test_bookmark_apply_prioritizes_a_small_fresh_slice_then_starts_backfill(
         user_id: str,
         site_ids: tuple[str, ...],
         priority: bool = False,
+        interactive: bool = False,
+        intent: AnalysisIntent,
+        bulk: bool,
     ):
         assert user_id == "user-1"
         assert priority is True
+        assert interactive is False
+        assert intent is AnalysisIntent.SITE_ENRICHMENT
+        assert bulk is True
         scheduled.append(site_ids)
         return AnalysisSchedule(queued=len(site_ids), already_queued=0, rejected=0)
 
@@ -110,8 +117,21 @@ def test_confirmed_url_batch_queues_only_created_items(monkeypatch: pytest.Monke
 
     captured: list[tuple[str, ...]] = []
 
-    def fake_schedule(_database: object, *, user_id: str, site_ids: tuple[str, ...]):
+    def fake_schedule(
+        _database: object,
+        *,
+        user_id: str,
+        site_ids: tuple[str, ...],
+        priority: bool = False,
+        interactive: bool = False,
+        intent: AnalysisIntent,
+        bulk: bool,
+    ):
         assert user_id == "user-1"
+        assert priority is False
+        assert interactive is False
+        assert intent is AnalysisIntent.SITE_ENRICHMENT
+        assert bulk is True
         captured.append(site_ids)
         return AnalysisSchedule(queued=len(site_ids), already_queued=0, rejected=0)
 
@@ -145,9 +165,15 @@ def test_url_edit_queues_fresh_analysis_when_metadata_was_reset(
         user_id: str,
         site_ids: tuple[str, ...],
         priority: bool = False,
+        interactive: bool,
+        intent: AnalysisIntent,
+        bulk: bool,
     ):
         assert user_id == "user-1"
         assert priority is True
+        assert interactive is True
+        assert intent is AnalysisIntent.SITE_ENRICHMENT
+        assert bulk is False
         captured.append(site_ids)
         return AnalysisSchedule(queued=1, already_queued=0, rejected=0)
 
@@ -195,9 +221,15 @@ def test_historical_backfill_is_explicit_bounded_and_skips_active_sites(
         user_id: str,
         site_ids: tuple[str, ...],
         priority: bool = True,
+        interactive: bool = False,
+        intent: AnalysisIntent = AnalysisIntent.METADATA_ONLY,
+        bulk: bool = False,
     ):
         assert user_id == "user-1"
         assert priority is False
+        assert interactive is False
+        assert intent is AnalysisIntent.METADATA_ONLY
+        assert bulk is False
         active.update(site_ids)
         return AnalysisSchedule(queued=2, already_queued=0, rejected=0)
 
@@ -244,9 +276,15 @@ def test_site_list_prioritizes_at_most_eight_visible_unanalyzed_sites(
         user_id: str,
         site_ids: tuple[str, ...],
         priority: bool = False,
+        interactive: bool = False,
+        intent: AnalysisIntent = AnalysisIntent.METADATA_ONLY,
+        bulk: bool = False,
     ):
         assert user_id == "user-1"
         assert priority is True
+        assert interactive is False
+        assert intent is AnalysisIntent.METADATA_ONLY
+        assert bulk is False
         scheduled.append(site_ids)
         return AnalysisSchedule(queued=len(site_ids), already_queued=0, rejected=0)
 

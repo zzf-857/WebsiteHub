@@ -325,7 +325,8 @@ def test_category_icon_backfill_upgrades_0008_through_52_to_head(tmp_path: Path)
         "cat-tools": "Wrench",
         "cat-unknown": "Folder",
     }
-    assert version_at_head == ("20260727_0009",)
+    assert version_at_head is not None
+    assert {version_at_head[0]} == DATABASE_SCHEMA_HEADS
 
     command.downgrade(alembic_config, "52c3f6173b38")
     with sqlite3.connect(database_path) as connection:

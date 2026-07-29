@@ -1,10 +1,11 @@
 "use client";
 
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 
 import { useAuth } from "@/components/auth/auth-context";
+import { Spinner } from "@/components/react-bits/spinner";
 import { safeNextPath } from "@/lib/auth-contract";
 
 function RouteStatus({
@@ -26,7 +27,7 @@ function RouteStatus({
         </>
       ) : (
         <>
-          <LoaderCircle className="loading-spinner" aria-hidden="true" />
+          <Spinner />
           <p>{message}</p>
         </>
       )}

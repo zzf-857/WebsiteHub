@@ -8,6 +8,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
+from weakref import ReferenceType, ref
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,7 +108,8 @@ _AccountKey = tuple[int, str]
 _ACCOUNTS: dict[_AccountKey, _AccountQueue] = {}
 _AUTO_BACKFILLS: dict[_AccountKey, _AutoBackfill] = {}
 _METADATA_BACKFILLS: dict[_AccountKey, _MetadataBackfill] = {}
-_STOPPED_DATABASES: set[int] = set()
+_STOPPED_DATABASES: dict[int, ReferenceType[object]] = {}
+_STOPPED_STRONG_DATABASES: list[object] = []
 _SITE_ENRICHERS: dict[int, SiteEnricher] = {}
 _GLOBAL_SEMAPHORE: asyncio.Semaphore | None = None
 _GLOBAL_SEMAPHORE_LOOP: asyncio.AbstractEventLoop | None = None
@@ -121,6 +123,41 @@ _LLM_SEMAPHORE_LOOP: asyncio.AbstractEventLoop | None = None
 
 def _account_key(database: Database, user_id: str) -> _AccountKey:
     return id(database), user_id
+
+
+def _database_is_stopped(database: object) -> bool:
+    stopped_database = _STOPPED_DATABASES.get(id(database))
+    if stopped_database is not None and stopped_database() is database:
+        return True
+    return any(candidate is database for candidate in _STOPPED_STRONG_DATABASES)
+
+
+def _mark_database_stopped(database: object) -> None:
+    database_id = id(database)
+
+    def remove(stopped_database: ReferenceType[object]) -> None:
+        if _STOPPED_DATABASES.get(database_id) is stopped_database:
+            _STOPPED_DATABASES.pop(database_id, None)
+
+    try:
+        stopped_database = ref(database, remove)
+    except TypeError:
+        if not any(candidate is database for candidate in _STOPPED_STRONG_DATABASES):
+            _STOPPED_STRONG_DATABASES.append(database)
+    else:
+        _STOPPED_DATABASES[database_id] = stopped_database
+
+
+def _mark_database_started(database: object) -> None:
+    database_id = id(database)
+    stopped_database = _STOPPED_DATABASES.get(database_id)
+    if stopped_database is not None:
+        registered_database = stopped_database()
+        if registered_database is None or registered_database is database:
+            _STOPPED_DATABASES.pop(database_id, None)
+    _STOPPED_STRONG_DATABASES[:] = [
+        candidate for candidate in _STOPPED_STRONG_DATABASES if candidate is not database
+    ]
 
 
 def _global_pending_count() -> int:
@@ -219,7 +256,7 @@ async def _run_account(key: _AccountKey, state: _AccountQueue) -> None:
                 state.completions.pop(site_id, None)
                 if (
                     followup is AnalysisIntent.SITE_ENRICHMENT
-                    and id(state.database) not in _STOPPED_DATABASES
+                    and not _database_is_stopped(state.database)
                 ):
                     state.pending.add(site_id)
                     state.intents[site_id] = followup
@@ -244,9 +281,9 @@ def _start(key: _AccountKey, state: _AccountQueue) -> None:
             error = completed.exception()
             if error is not None:
                 _LOGGER.error("analysis account worker failed", exc_info=error)
-        if state.site_ids and id(state.database) not in _STOPPED_DATABASES:
+        if state.site_ids and not _database_is_stopped(state.database):
             _start(key, state)
-        elif not state.pending or id(state.database) in _STOPPED_DATABASES:
+        elif not state.pending or _database_is_stopped(state.database):
             _ACCOUNTS.pop(key, None)
 
     task.add_done_callback(finished)
@@ -258,10 +295,10 @@ async def _next_auto_site(
     """Lease one discovered row while retaining only a small per-account buffer."""
 
     async with state.discovery_lock:
-        if id(state.database) in _STOPPED_DATABASES:
+        if _database_is_stopped(state.database):
             return None
         stale_before = utc_now() - AUTO_PENDING_STALE_AFTER
-        while id(state.database) not in _STOPPED_DATABASES:
+        while not _database_is_stopped(state.database):
             if not state.candidates:
                 excluded = pending_site_ids(state.database, state.user_id)
                 async with state.database.sessions() as session:
@@ -290,7 +327,7 @@ async def _next_auto_site(
 
 
 async def _consume_auto_backfill(state: _AutoBackfill) -> None:
-    while id(state.database) not in _STOPPED_DATABASES:
+    while not _database_is_stopped(state.database):
         async with _background_semaphore(), _auto_semaphore():
             work = await _next_auto_site(state)
             if work is None:
@@ -324,7 +361,7 @@ async def _consume_auto_backfill(state: _AutoBackfill) -> None:
                 state.completions.pop(site_id, None)
                 if (
                     followup_bulk is not None
-                    and id(state.database) not in _STOPPED_DATABASES
+                    and not _database_is_stopped(state.database)
                 ):
                     scheduled = schedule_analysis(
                         state.database,
@@ -343,7 +380,7 @@ async def _consume_auto_backfill(state: _AutoBackfill) -> None:
 
 
 async def _run_auto_backfill(state: _AutoBackfill) -> None:
-    while id(state.database) not in _STOPPED_DATABASES:
+    while not _database_is_stopped(state.database):
         state.rescan_requested = False
         # A TaskGroup is intentional here. `gather` would let a sibling keep
         # fetching after one discovery task failed and after its state was
@@ -551,7 +588,7 @@ async def _consume_metadata_backfill(
 ) -> None:
     """Advance one run without holding more than one item or origin at a time."""
 
-    while id(state.database) not in _STOPPED_DATABASES:
+    while not _database_is_stopped(state.database):
         item: metadata_backfill.MetadataBackfillItemClaim | None = None
         outcome: FetchOutcome | None = None
         heartbeat: asyncio.Task[None] | None = None
@@ -653,12 +690,12 @@ async def _run_metadata_backfill(state: _MetadataBackfill) -> None:
     """Keep an active persisted run advancing across transient SQLite errors."""
 
     recovery_attempts = 0
-    while id(state.database) not in _STOPPED_DATABASES:
+    while not _database_is_stopped(state.database):
         lease: metadata_backfill.MetadataBackfillRunLease | None = None
         retry_delay: float | None = None
         had_worker_error = False
         try:
-            while id(state.database) not in _STOPPED_DATABASES:
+            while not _database_is_stopped(state.database):
                 async with state.database.sessions() as session:
                     lease = await metadata_backfill.acquire_run_lease(
                         session,
@@ -708,7 +745,7 @@ async def _run_metadata_backfill(state: _MetadataBackfill) -> None:
                 except Exception:  # noqa: BLE001 - expiry remains a safe fallback
                     _LOGGER.exception("could not release metadata backfill run %s", state.run_id)
 
-        if id(state.database) in _STOPPED_DATABASES:
+        if _database_is_stopped(state.database):
             return
         if had_worker_error:
             retry_delay = min(
@@ -731,7 +768,7 @@ def ensure_auto_backfill(
 ) -> bool:
     """Idempotently start a database-driven, bounded sweep for one account."""
 
-    if id(database) in _STOPPED_DATABASES:
+    if _database_is_stopped(database):
         return False
     key = _account_key(database, user_id)
     current = _AUTO_BACKFILLS.get(key)
@@ -773,7 +810,7 @@ def ensure_metadata_backfill(
 ) -> bool:
     """Idempotently wake one persisted batch; its database lease picks an owner."""
 
-    if id(database) in _STOPPED_DATABASES:
+    if _database_is_stopped(database):
         return False
     key = _account_key(database, user_id)
     current = _METADATA_BACKFILLS.get(key)
@@ -796,7 +833,7 @@ def ensure_metadata_backfill(
             if error is not None:
                 _LOGGER.error("metadata backfill coordinator failed", exc_info=error)
         _METADATA_BACKFILLS.pop(key, None)
-        if state.next_run_id is not None and id(state.database) not in _STOPPED_DATABASES:
+        if state.next_run_id is not None and not _database_is_stopped(state.database):
             ensure_metadata_backfill(
                 state.database,
                 user_id=state.user_id,
@@ -810,7 +847,7 @@ def ensure_metadata_backfill(
 async def resume_metadata_backfills(database: Database) -> None:
     """Wake all durable runs after an application process starts again."""
 
-    if id(database) in _STOPPED_DATABASES:
+    if _database_is_stopped(database):
         return
     async with database.sessions() as session:
         active_runs = await metadata_backfill.list_active_runs(session)
@@ -821,7 +858,7 @@ async def resume_metadata_backfills(database: Database) -> None:
 def start(database: Database, *, site_enricher: SiteEnricher | None = None) -> None:
     """Allow a freshly started application to accept analysis work."""
 
-    _STOPPED_DATABASES.discard(id(database))
+    _mark_database_started(database)
     if site_enricher is None:
         _SITE_ENRICHERS.pop(id(database), None)
     else:
@@ -902,7 +939,7 @@ def schedule_analysis(
                 MAX_QUEUED_ANALYSES_GLOBAL + MAX_INTERACTIVE_QUEUE_OVERFLOW_GLOBAL
             )
         )
-        if id(database) in _STOPPED_DATABASES or (
+        if _database_is_stopped(database) or (
             account_full and not can_use_account_overflow
         ) or (global_full and not can_use_global_overflow):
             rejected += 1
@@ -961,7 +998,7 @@ async def analyze_and_wait(
         return analysis_status == "failed"
 
     key = _account_key(database, user_id)
-    while id(database) not in _STOPPED_DATABASES:
+    while not _database_is_stopped(database):
         state = _ACCOUNTS.get(key)
         completion = state.completions.get(site_id) if state is not None else None
         if completion is not None and state is not None:
@@ -1033,7 +1070,7 @@ async def analyze_and_wait(
         wait_deadline = (
             asyncio.get_running_loop().time() + ANALYZE_WAIT_PENDING_TIMEOUT_SECONDS
         )
-        while id(database) not in _STOPPED_DATABASES:
+        while not _database_is_stopped(database):
             async with database.sessions() as session:
                 site = await session.scalar(
                     select(Site).where(Site.user_id == user_id, Site.id == site_id)
@@ -1081,7 +1118,7 @@ async def shutdown(database: Database) -> None:
     """Stop accepting work, cancel active fetches, and drain their claim cleanup."""
 
     database_id = id(database)
-    _STOPPED_DATABASES.add(database_id)
+    _mark_database_stopped(database)
     states = [state for key, state in _ACCOUNTS.items() if key[0] == database_id]
     auto_states = [
         state for key, state in _AUTO_BACKFILLS.items() if key[0] == database_id

@@ -7,7 +7,6 @@ import {
   ArrowUp,
   Blocks,
   ExternalLink,
-  LoaderCircle,
   Pencil,
   Plus,
   RefreshCw,
@@ -29,6 +28,7 @@ import type {
 import {
   SiteFavicon,
 } from "@/components/site-favicon";
+import { Spinner } from "@/components/react-bits/spinner";
 import {
   OpenAllDialog,
 } from "@/components/spaces/open-all-dialog";
@@ -101,7 +101,7 @@ export function SpaceWorkspace({
 
       {detailLoading && !detail ? (
         <section className="space-detail-loading" aria-label="正在加载 Space" aria-busy="true">
-          <LoaderCircle className="loading-spinner" aria-hidden="true" />
+          <Spinner />
           <span>正在加载 Space</span>
         </section>
       ) : detailError && !detail ? (
@@ -191,7 +191,7 @@ export function SpaceWorkspace({
 
             {detail.nextCursor && (
               <button className="space-load-more" type="button" disabled={detailLoadingMore || memberBusyId !== null} onClick={() => void loadMoreMembers()}>
-                {detailLoadingMore && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
+                {detailLoadingMore && <Spinner />}
                 {detailLoadingMore ? "正在加载" : "加载更多成员"}
               </button>
             )}
@@ -295,7 +295,7 @@ export function SpaceWorkspace({
           </div>
           {spacePage.nextCursor && (
             <button className="space-load-more" type="button" disabled={spacePage.loadingMore} onClick={() => void loadMoreSpaces()}>
-              {spacePage.loadingMore && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
+              {spacePage.loadingMore && <Spinner />}
               {spacePage.loadingMore ? "正在加载" : "加载更多 Space"}
             </button>
           )}
@@ -361,7 +361,7 @@ export function SpaceWorkspace({
           <div className="space-delete-confirmation">
             {dialog.previewLoading ? (
               <div className="space-preview-loading" aria-busy="true">
-                <LoaderCircle className="loading-spinner" aria-hidden="true" />
+                <Spinner />
                 <span>正在计算删除影响</span>
               </div>
             ) : dialog.preview ? (
@@ -389,7 +389,7 @@ export function SpaceWorkspace({
                 取消
               </button>
               <button className="space-button danger" type="button" disabled={mutationBusy || dialog.previewLoading || !dialog.preview} onClick={() => void handleDelete()}>
-                {mutationBusy && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
+                {mutationBusy && <Spinner />}
                 {mutationBusy ? "正在删除" : "确认删除"}
               </button>
             </div>
@@ -420,7 +420,7 @@ export function SpaceWorkspace({
                 取消
               </button>
               <button className="space-button danger" type="button" disabled={mutationBusy} onClick={() => void handleRemoveMember()}>
-                {mutationBusy && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
+                {mutationBusy && <Spinner />}
                 {mutationBusy ? "正在移除" : "确认移出"}
               </button>
             </div>

@@ -1,7 +1,9 @@
 "use client";
 
-import { Database, LoaderCircle, RefreshCw } from "lucide-react";
+import { Database, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
+
+import { Spinner } from "@/components/react-bits/spinner";
 
 import {
   loadSemanticIndexStatus,
@@ -100,7 +102,7 @@ export function SemanticIndexPanel() {
 
       {loading && !status && (
         <p className="provider-notice">
-          <LoaderCircle size={14} className="spinner" aria-hidden="true" /> 正在读取索引状态…
+          <Spinner size={14} /> 正在读取索引状态…
         </p>
       )}
 
@@ -137,7 +139,7 @@ export function SemanticIndexPanel() {
 
       {status?.running && (
         <p className="provider-notice">
-          <LoaderCircle size={14} className="spinner" aria-hidden="true" />
+          <Spinner size={14} />
           正在索引中，完成后刷新即可看到最新进度。
         </p>
       )}

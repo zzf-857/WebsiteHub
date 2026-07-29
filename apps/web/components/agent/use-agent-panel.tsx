@@ -36,7 +36,7 @@ import {
   confirmAgentSpaceMembership,
   AgentApiError,
   recordAgentDraftConfirmation,
-  listAgentConversations,
+  listAllAgentConversations,
   loadAgentConversation,
   type AgentDraftConfirmationInput,
 } from "@/lib/agent-client";
@@ -101,11 +101,44 @@ function restoredDraftStates(
   return states;
 }
 
+function completedAgentStage(result: ReturnType<typeof normalizeAgentToolResult>): AgentStage | null {
+  if (!result) return null;
+  const view = describeAgentToolResult(result.name, result.result);
+  const count = view.kind === "links"
+    ? (view.matchedCount ?? view.items.length)
+    : null;
+  return {
+    id: result.toolCallId,
+    tool: result.name,
+    status: "done",
+    count,
+    provider: readWebProvider(result.result),
+  };
+}
+
+function restoredAgentStages(messages: readonly AgentStoredMessage[]): AgentStage[] {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") continue;
+    const stages = new Map<string, AgentStage>();
+    for (const source of message.sources) {
+      if ("type" in source && source.type === "source-url") continue;
+      const stage = completedAgentStage(normalizeAgentToolResult(source));
+      if (stage) stages.set(stage.id, stage);
+    }
+    // The timeline belongs to the latest assistant turn. Falling through to an
+    // older answer would make a tool-free or interrupted turn display stale work.
+    return [...stages.values()];
+  }
+  return [];
+}
+
 type UseAgentPanelOptions = {
   onLibraryChanged?: () => void;
 };
 
 type AgentOnData = NonNullable<ChatInit<AgentUIMessage>["onData"]>;
+type AgentOnError = NonNullable<ChatInit<AgentUIMessage>["onError"]>;
 type AgentOnFinish = NonNullable<ChatInit<AgentUIMessage>["onFinish"]>;
 type PendingDraftConfirmation = {
   conversationId: string;
@@ -179,7 +212,7 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
 
   const refreshHistory = useCallback(async (signal?: AbortSignal) => {
     try {
-      const history = await listAgentConversations({ signal });
+      const history = await listAllAgentConversations({ signal });
       setHistoryGroups(history.groups);
       setHistoryStatus("ready");
     } catch (failure: unknown) {
@@ -200,19 +233,20 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
         if (previous?.name === call.name) return current;
         return current.map((item, itemIndex) => (itemIndex === index ? call : item));
       });
-      // Search steps keep a completed stage. Other tools stay visible through
-      // activeToolCalls until their result card takes over.
-      if (call.name === "search_library" || call.name === "web_search") {
-        const tool = call.name;
-        setStages((current) =>
-          current.some((stage) => stage.id === call.toolCallId)
-            ? current
-            : [
-                ...current,
-                { id: call.toolCallId, tool, status: "active", count: null, provider: null },
-              ],
-        );
-      }
+      setStages((current) =>
+        current.some((stage) => stage.id === call.toolCallId)
+          ? current
+          : [
+              ...current,
+              {
+                id: call.toolCallId,
+                tool: call.name,
+                status: "active",
+                count: null,
+                provider: null,
+              },
+            ],
+      );
       return;
     }
     if (part.type === "data-agent-tool-result") {
@@ -224,23 +258,9 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
       });
       setStages((current) => {
         const index = current.findIndex((stage) => stage.id === result.toolCallId);
-        if (index < 0) return current;
-        const stage = current[index];
-        const view = describeAgentToolResult(result.name, result.result);
-        // The result card owns failed/unparseable output, so remove that stage.
-        if (view.kind !== "links") {
-          return current.filter((_, stageIndex) => stageIndex !== index);
-        }
-        const count =
-          stage.tool === "search_library"
-            ? (view.matchedCount ?? view.items.length)
-            : view.items.length;
-        const completed: AgentStage = {
-          ...stage,
-          status: "done",
-          count,
-          provider: readWebProvider(result.result),
-        };
+        const completed = completedAgentStage(result);
+        if (!completed) return current;
+        if (index < 0) return [...current, completed];
         return current.map((item, stageIndex) => (stageIndex === index ? completed : item));
       });
       return;
@@ -254,26 +274,112 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     }
   }, []);
 
-  const handleStreamFinish = useCallback<AgentOnFinish>(() => {
+  const settleTransientToolState = useCallback(() => {
     setActiveToolCalls((current) => (current.length === 0 ? current : []));
-    setStages((current) => (current.length === 0 ? current : []));
+    setStages((current) => {
+      const completed = current.filter((stage) => stage.status === "done");
+      return completed.length === current.length ? current : completed;
+    });
+  }, []);
+
+  const handleStreamError = useCallback<AgentOnError>(() => {
+    settleTransientToolState();
+  }, [settleTransientToolState]);
+
+  const handleStreamFinish = useCallback<AgentOnFinish>(() => {
+    settleTransientToolState();
     void refreshHistory();
-  }, [refreshHistory]);
+  }, [refreshHistory, settleTransientToolState]);
 
   const {
     messages,
     sendMessage,
     setMessages,
     status,
-    stop,
+    stop: stopChat,
     error,
     clearError,
   } = useChat<AgentUIMessage>({
     transport,
     throttle: 50,
     onData: handleStreamData,
+    onError: handleStreamError,
     onFinish: handleStreamFinish,
   });
+
+  // A raw transport failure may arrive after the stream's start metadata but
+  // before the server can send terminal metadata. Close that local Assistant
+  // snapshot explicitly so the stale `streaming` flag cannot survive into a
+  // later turn or contradict the visible transport error.
+  useEffect(() => {
+    if (!error) return;
+    setMessages((current) => {
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        const message = current[index];
+        if (message?.role === "user") break;
+        if (message?.role !== "assistant") continue;
+        const metadata = normalizeAgentMessageMetadata(message.metadata);
+        if (metadata.messageStatus === "error") return current;
+        return current.map((item, itemIndex) => itemIndex === index
+          ? {
+              ...item,
+              metadata: {
+                ...metadata,
+                messageStatus: "error" as const,
+              },
+            }
+          : item);
+      }
+      return current;
+    });
+  }, [error, setMessages]);
+
+  const stop = useCallback(async () => {
+    await stopChat();
+    settleTransientToolState();
+    // Aborting the browser stream prevents a terminal metadata chunk from
+    // reaching the client. Keep the partial assistant bubble and mark the
+    // local snapshot immediately; a history reload will use the server state.
+    setMessages((current) => {
+      let assistantIndex = -1;
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        if (current[index]?.role === "assistant") {
+          assistantIndex = index;
+          break;
+        }
+        if (current[index]?.role === "user") break;
+      }
+      if (assistantIndex < 0) {
+        const userMessage = current[current.length - 1];
+        if (userMessage?.role !== "user") return current;
+        return [
+          ...current,
+          {
+            id: `assistant-aborted-${userMessage.id}`,
+            role: "assistant" as const,
+            parts: [],
+            metadata: {
+              ...(conversationIdRef.current
+                ? { conversationId: conversationIdRef.current }
+                : {}),
+              turnId: userMessage.id,
+              messageStatus: "aborted" as const,
+              turnPersisted: false,
+            },
+          },
+        ];
+      }
+      return current.map((message, index) => index === assistantIndex
+        ? {
+            ...message,
+            metadata: {
+              ...normalizeAgentMessageMetadata(message.metadata),
+              messageStatus: "aborted" as const,
+            },
+          }
+        : message);
+    });
+  }, [setMessages, settleTransientToolState, stopChat]);
 
   // 首次加载历史：既供「历史」下拉使用，也用来把会话 id 解析成后端派生的标题
   useEffect(() => {
@@ -316,6 +422,7 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
         setConversationTitle(detail.conversation.title);
         setMessages(toAgentUIMessages(detail.messages));
         setDraftStates(restoredDraftStates(detail.messages));
+        setStages(restoredAgentStages(detail.messages));
       })
       .catch((failure: unknown) => {
         if (
@@ -636,6 +743,7 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
           setConversationTitle(detail.conversation.title);
           setMessages(toAgentUIMessages(detail.messages));
           setDraftStates(restoredDraftStates(detail.messages));
+          setStages(restoredAgentStages(detail.messages));
           // replaceState 保持地址可分享，同时避免路由跳转带来的整页重挂
           const url = new URL(window.location.href);
           url.searchParams.set("c", detail.conversation.id);
@@ -744,6 +852,9 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
       }
     }
     const metadata = normalizeAgentMessageMetadata(message.metadata);
+    const collectionDisabled =
+      (metadata.messageStatus !== undefined && metadata.messageStatus !== "complete") ||
+      metadata.turnPersisted === false;
     if (!finalPresentation && (metadata.recommendationManifestVersion ?? 0) >= 1) {
       return null;
     }
@@ -782,7 +893,10 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
       }
     }
     return library.length > 0 || web.length > 0
-      ? { library: { items: library, total: libraryTotal }, web: { items: web, provider } }
+      ? {
+          library: { items: library, total: libraryTotal },
+          web: { items: web, provider, collectionDisabled },
+        }
       : null;
   }, [messages, status]);
 
@@ -810,9 +924,13 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
         ? stage.status === "done"
           ? `已检索网址库 · ${stage.count ?? 0} 条匹配`
           : "正在检索网址库…"
-        : stage.status === "done"
-          ? `已联网搜索${stage.provider ? ` · ${stage.provider}` : ""} · ${stage.count ?? 0} 个来源`
-          : "正在联网搜索…",
+        : stage.tool === "web_search"
+          ? stage.status === "done"
+            ? `已联网搜索${stage.provider ? ` · ${stage.provider}` : ""} · ${stage.count ?? 0} 个来源`
+            : "正在联网搜索…"
+          : stage.status === "done"
+            ? `已完成：${agentToolLabel(stage.tool)}`
+            : `正在${agentToolLabel(stage.tool)}…`,
   }));
   const stagedCallIds = new Set(stageItems.map((item) => item.key));
   for (const call of activeToolCalls) {

@@ -6,7 +6,7 @@ from typing import Literal
 from sqlalchemy import and_, delete, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from webhub.db.models import utc_now
+from webhub.db.models import AgentTurnRun, utc_now
 
 from ..models import (
     Conversation,
@@ -44,6 +44,7 @@ async def create_conversation(
     user_id: str,
     *,
     title: str | None = None,
+    commit: bool = True,
 ) -> ConversationResponse:
     now = utc_now()
     conversation = Conversation(
@@ -57,7 +58,10 @@ async def create_conversation(
         updated_at=now,
     )
     session.add(conversation)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return _conversation_response(conversation)
 
 
@@ -196,6 +200,27 @@ async def delete_conversation(
     conversation = await _owned_conversation(session, user_id, conversation_id)
     if conversation.version != expected_version:
         raise ChatConflictError("会话已被修改，请刷新后重试", code="version_conflict")
+    # Preserve the account-level idempotency tombstone after transcript deletion.
+    # Otherwise a delayed retry of a first turn (which originally had no
+    # conversation id) could call the Provider a second time.
+    await session.execute(
+        update(AgentTurnRun)
+        .where(
+            AgentTurnRun.user_id == user_id,
+            or_(
+                AgentTurnRun.requested_conversation_id == conversation_id,
+                AgentTurnRun.conversation_id == conversation_id,
+            ),
+        )
+        .values(
+            requested_conversation_id=None,
+            conversation_id=None,
+            user_message_id=None,
+            assistant_message_id=None,
+            updated_at=utc_now(),
+        )
+        .execution_options(synchronize_session=False)
+    )
     statement = delete(Conversation).where(
         Conversation.user_id == user_id,
         Conversation.id == conversation_id,

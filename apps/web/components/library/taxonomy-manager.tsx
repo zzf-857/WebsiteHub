@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Edit3, FolderTree, LoaderCircle, Plus, Tags, Trash2, X } from "lucide-react";
+import { Check, Edit3, FolderTree, Plus, Tags, Trash2, X } from "lucide-react";
 import {
   useId,
   useRef,
@@ -8,6 +8,8 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+
+import { Spinner } from "@/components/react-bits/spinner";
 
 import { MAX_LIBRARY_CATEGORY_NAME_LENGTH, MAX_LIBRARY_TAG_NAME_LENGTH } from "@/lib/library-contract";
 import {
@@ -228,9 +230,10 @@ export function TaxonomyManager({ categories, tags, onChanged }: Readonly<Taxono
               type="button"
               onClick={confirmDelete}
               disabled={busy || (deleteCandidate.kind === "category" && !deleteCandidate.preview.replacementCategory && deleteCandidate.preview.affectedSiteCount > 0)}
+              aria-busy={busy || undefined}
             >
-              {busy ? <LoaderCircle className="loading-spinner" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
-              删除
+              {busy ? <Spinner /> : <Trash2 aria-hidden="true" />}
+              {busy ? "正在删除" : "删除"}
             </button>
           </div>
         </section>

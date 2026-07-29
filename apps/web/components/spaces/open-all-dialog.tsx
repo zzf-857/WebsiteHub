@@ -1,7 +1,9 @@
 "use client";
 
-import { FolderOpen, LoaderCircle } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+import { Spinner } from "@/components/react-bits/spinner";
 
 import {
   BrowserSpaceGroupError,
@@ -149,7 +151,9 @@ export function OpenAllDialog({
 
   useEffect(() => {
     let active = true;
-    setBridge({ status: "checking" });
+    const resetFrame = window.requestAnimationFrame(() => {
+      if (active) setBridge({ status: "checking" });
+    });
     void probeBrowserSpaceGroups().then((result) => {
       if (!active) return;
       setBridge(result
@@ -158,13 +162,16 @@ export function OpenAllDialog({
     });
     return () => {
       active = false;
+      window.cancelAnimationFrame(resetFrame);
     };
   }, [space.id]);
 
   useEffect(() => {
     if (!urls || urls.length === 0) return;
     let active = true;
-    setGroupRecovery("checking");
+    const resetFrame = window.requestAnimationFrame(() => {
+      if (active) setGroupRecovery("checking");
+    });
     void hasUnresolvedBrowserSpaceGroupOperation(space.id).then((unresolved) => {
       if (active) setGroupRecovery(unresolved ? "uncertain" : "clear");
     }).catch(() => {
@@ -172,6 +179,7 @@ export function OpenAllDialog({
     });
     return () => {
       active = false;
+      window.cancelAnimationFrame(resetFrame);
     };
   }, [space.id, space.name, urls]);
 
@@ -363,7 +371,7 @@ export function OpenAllDialog({
                 onClick={() => void handleBrowserGroup()}
               >
                 {groupBusy
-                  ? <LoaderCircle className="spin" aria-hidden="true" />
+                  ? <Spinner />
                   : <FolderOpen aria-hidden="true" />}
                 {groupBusy
                   ? "正在创建浏览器分组…"

@@ -22,10 +22,14 @@ class AgentRunRequest:
     """
 
     account_id: str
+    turn_id: str
     conversation_id: str | None
     message: str
     slash_command: SlashCommandInvocation | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    # Canonical raw request fields used only for idempotency. Routes can bind
+    # protocol failures before a parsed SlashCommand exists.
+    idempotency_payload: Mapping[str, Any] | None = None
 
     @property
     def user_id(self) -> str:

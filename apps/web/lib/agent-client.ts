@@ -1,10 +1,12 @@
 import {
+  AgentContractError,
   agentErrorDetails,
   normalizeAgentConversation,
   normalizeAgentConversationDetail,
   normalizeAgentConversationHistory,
   type AgentConversation,
   type AgentConversationDetail,
+  type AgentConversationGroup,
   type AgentConversationHistory,
   type AgentDraftConfirmationKind,
   type AgentSiteDraft,
@@ -89,6 +91,13 @@ export function conversationTimezoneOffsetMinutes(now: Date = new Date()): numbe
   return Math.min(840, Math.max(-840, Math.trunc(offset)));
 }
 
+export function buildAgentConversationLink(currentHref: string, conversationId: string): string {
+  const current = new URL(currentHref);
+  const clean = new URL(current.pathname, current.origin);
+  clean.searchParams.set("c", conversationId);
+  return clean.toString();
+}
+
 export async function listAgentConversations(
   options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
 ): Promise<AgentConversationHistory> {
@@ -101,13 +110,82 @@ export async function listAgentConversations(
   );
 }
 
+/** Load every history page so older conversations remain reachable. */
+export async function listAllAgentConversations(
+  options: { limit?: number; signal?: AbortSignal } = {},
+): Promise<AgentConversationHistory> {
+  const limit = Math.min(100, Math.max(1, options.limit ?? 100));
+  const groups: AgentConversationGroup[] = [];
+  const groupsByKey = new Map<string, AgentConversationGroup>();
+  const seenConversationIds = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let totalCount = 0;
+
+  do {
+    const page = await listAgentConversations({ cursor, limit, signal: options.signal });
+    totalCount = page.totalCount;
+    for (const pageGroup of page.groups) {
+      let group = groupsByKey.get(pageGroup.key);
+      if (!group) {
+        group = { key: pageGroup.key, label: pageGroup.label, items: [] };
+        groupsByKey.set(group.key, group);
+        groups.push(group);
+      }
+      for (const conversation of pageGroup.items) {
+        if (seenConversationIds.has(conversation.id)) continue;
+        seenConversationIds.add(conversation.id);
+        group.items.push(conversation);
+      }
+    }
+
+    const nextCursor = page.nextCursor ?? undefined;
+    if (nextCursor && seenCursors.has(nextCursor)) {
+      throw new AgentContractError("会话分页游标重复，无法继续读取历史");
+    }
+    if (nextCursor) seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  } while (cursor);
+
+  return { groups, nextCursor: null, totalCount };
+}
+
 export async function loadAgentConversation(
   conversationId: string,
   signal?: AbortSignal,
 ): Promise<AgentConversationDetail> {
-  return normalizeAgentConversationDetail(
-    await request(`/${encodeId(conversationId)}?limit=100`, { signal }),
-  );
+  const encodedConversationId = encodeId(conversationId);
+  const messages: AgentConversationDetail["messages"] = [];
+  const seenMessageIds = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let conversation: AgentConversation | null = null;
+
+  do {
+    const params = new URLSearchParams({ limit: "100" });
+    if (cursor) params.set("cursor", cursor);
+    const page = normalizeAgentConversationDetail(
+      await request(`/${encodedConversationId}?${params.toString()}`, { signal }),
+    );
+    conversation = page.conversation;
+    for (const message of page.messages) {
+      if (seenMessageIds.has(message.id)) continue;
+      seenMessageIds.add(message.id);
+      messages.push(message);
+    }
+
+    const nextCursor = page.nextCursor ?? undefined;
+    if (nextCursor && seenCursors.has(nextCursor)) {
+      throw new AgentContractError("消息分页游标重复，无法继续读取完整会话");
+    }
+    if (nextCursor) seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  } while (cursor);
+
+  if (!conversation) {
+    throw new AgentContractError("会话详情为空");
+  }
+  return { conversation, messages, nextCursor: null };
 }
 
 export async function renameAgentConversation(

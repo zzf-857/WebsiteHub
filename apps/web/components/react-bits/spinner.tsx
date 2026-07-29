@@ -2,8 +2,9 @@
 
 import { useReducedMotion } from "motion/react";
 
-// 改编自 React Bits 的加载动效风格（MIT + Commons Clause）：
+// 上游风格参考：React Bits，HEAD 61909958（2026-07-29 核对）：
 // https://reactbits.dev/
+// 本地改动：WebHub CSS 令牌、调用方语义、可变尺寸与 reduced-motion 省略号降级。
 type SpinnerProps = {
   size?: number;
   className?: string;

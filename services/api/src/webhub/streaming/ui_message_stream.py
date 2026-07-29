@@ -117,6 +117,15 @@ def _validate_chunk_shape(chunk: JSONChunk) -> None:
             _require_string(chunk["id"], field_name="id")
         if "transient" in chunk and not isinstance(chunk["transient"], bool):
             raise UIMessageStreamEncodingError("transient must be a boolean")
+    elif chunk_type == "source-url":
+        _require_string(chunk.get("sourceId"), field_name="sourceId")
+        _require_string(chunk.get("url"), field_name="url")
+        if "title" in chunk and chunk["title"] is not None:
+            _require_string(chunk["title"], field_name="title")
+        if "providerMetadata" in chunk and not isinstance(
+            chunk["providerMetadata"], Mapping
+        ):
+            raise UIMessageStreamEncodingError("providerMetadata must be an object")
 
 
 def _json_payload(value: object) -> str:
@@ -225,6 +234,21 @@ def data_chunk(
     if transient:
         fields["transient"] = True
     return _chunk(chunk_type=f"data-{name}", **fields)
+
+
+def source_url_chunk(
+    source_id: str,
+    url: str,
+    *,
+    title: str | None = None,
+    provider_metadata: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    fields: dict[str, object] = {"sourceId": source_id, "url": url}
+    if title is not None:
+        fields["title"] = title
+    if provider_metadata is not None:
+        fields["providerMetadata"] = dict(provider_metadata)
+    return _chunk(chunk_type="source-url", **fields)
 
 
 def finish_chunk(
@@ -452,6 +476,7 @@ __all__ = [
     "reasoning_end_chunk",
     "reasoning_start_chunk",
     "start_chunk",
+    "source_url_chunk",
     "text_delta_chunk",
     "text_end_chunk",
     "text_start_chunk",

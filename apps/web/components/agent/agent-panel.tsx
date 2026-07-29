@@ -2,9 +2,11 @@
 
 import {
   ArrowUp,
+  ChevronDown,
   CircleAlert,
   Globe,
   History,
+  ListChecks,
   Plus,
   Sparkles,
   Square,
@@ -188,6 +190,7 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
           <div className="agent-panel-body">
             <ConversationThread
               messages={messages}
+              conversationId={conversationId}
               status={status}
               activeToolCalls={activeToolCalls}
               draftStates={draftStates}
@@ -196,18 +199,31 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
               errorCode={streamError?.code ?? null}
             />
 
-            {busy && stageItems.length > 0 && (
-              <div className="agent-stages" role="status" aria-live="polite">
-                {stageItems.map((item, index) => (
-                  <Fragment key={item.key}>
-                    {index > 0 && <span className="agent-stage-gap" aria-hidden="true" />}
-                    <span className="agent-stage" data-done={item.done || undefined}>
-                      <PopCheck done={item.done} size={14} />
-                      {item.label}
-                    </span>
-                  </Fragment>
-                ))}
-              </div>
+            {stageItems.length > 0 && (
+              <details
+                className="agent-task-timeline"
+                key={busy ? "agent-task-active" : "agent-task-settled"}
+                open={busy}
+              >
+                <summary>
+                  <ListChecks aria-hidden="true" />
+                  {busy
+                    ? "Agent 正在执行"
+                    : `已完成 ${stageItems.filter((item) => item.done).length} 步`}
+                  <ChevronDown aria-hidden="true" />
+                </summary>
+                <div className="agent-stages" role="status" aria-live="polite">
+                  {stageItems.map((item, index) => (
+                    <Fragment key={item.key}>
+                      {index > 0 && <span className="agent-stage-gap" aria-hidden="true" />}
+                      <span className="agent-stage" data-done={item.done || undefined}>
+                        <PopCheck done={item.done} size={14} />
+                        {item.label}
+                      </span>
+                    </Fragment>
+                  ))}
+                </div>
+              </details>
             )}
 
             {resultGroups && (
@@ -247,6 +263,7 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
                           link={link}
                           providerLabel={resultGroups.web.provider ?? "联网搜索"}
                           state={link.url ? (webSaves[link.url] ?? IDLE_SAVE) : IDLE_SAVE}
+                          collectionDisabled={resultGroups.web.collectionDisabled}
                           onCollect={handleCollect}
                         />
                       ))}

@@ -31,6 +31,41 @@
   }
 }
 
+/* ShinyText：仅用于等待模型首个输出，避免普通正文持续闪动。 */
+.shiny-text {
+  display: inline-block;
+  color: transparent;
+  background: linear-gradient(120deg, var(--text-muted) 40%, var(--text) 50%, var(--text-muted) 60%);
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: shiny-text-sweep 3s linear infinite;
+}
+
+.shiny-text[data-static] {
+  color: var(--text-muted);
+  background: none;
+  animation: none;
+}
+
+@keyframes shiny-text-sweep {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (forced-colors: active) {
+  .shiny-text {
+    color: CanvasText;
+    background: none;
+    animation: none;
+  }
+}
+
 /* StaggerList：位移与透明度由 motion/react 驱动，包装层只需避免在网格/弹性布局里撑破容器 */
 .stagger-item {
   min-width: 0;
@@ -66,10 +101,16 @@
 @media (prefers-reduced-motion: reduce) {
   .spinner,
   .spinner-static,
+  .shiny-text,
   .stagger-item,
   .pop-check,
   .count-up {
     animation: none !important;
     transition: none !important;
+  }
+
+  .shiny-text {
+    color: var(--text-muted);
+    background: none;
   }
 }

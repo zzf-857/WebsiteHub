@@ -2,8 +2,9 @@
 
 import { useReducedMotion } from "motion/react";
 
-// Adapted from React Bits ShinyText (MIT + Commons Clause):
+// Upstream reference: React Bits ShinyText, HEAD 61909958 (checked 2026-07-29).
 // https://reactbits.dev/text-animations/shiny-text
+// Local changes: CSS-token palette, configurable duration and reduced/forced-colors fallbacks.
 type ShinyTextProps = {
   text: string;
   className?: string;

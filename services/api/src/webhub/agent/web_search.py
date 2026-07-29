@@ -19,6 +19,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+
+from webhub.bookmarks.models import FetchPolicy, NormalizationStatus
+from webhub.bookmarks.normalization import normalize_bookmark_url
+from webhub.bookmarks.privacy import sensitive_url_keys
 
 from .provider_binding import ProviderBinding
 
@@ -90,6 +95,29 @@ def _http_url(value: Any) -> str | None:
     if not candidate.lower().startswith(("http://", "https://")):
         return None
     return candidate
+
+
+def trusted_source_url(value: Any) -> str | None:
+    """Return a canonical, display-safe public source URL.
+
+    This is deliberately stricter than the vendor result parser. Search hits
+    remain useful to the model even when a URL is unsuitable for a clickable
+    provenance part, but only public, credential-free and non-sensitive URLs
+    are promoted to AI SDK ``source-url`` parts.
+    """
+
+    candidate = _http_url(value)
+    if candidate is None or sensitive_url_keys(candidate):
+        return None
+    normalized = normalize_bookmark_url(candidate)
+    if (
+        normalized.status is not NormalizationStatus.ACCEPTED
+        or normalized.normalized_url is None
+        or normalized.fetch_policy is not FetchPolicy.PUBLIC_REVALIDATION_REQUIRED
+    ):
+        return None
+    parts = urlsplit(normalized.normalized_url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
 
 
 def _collect(
@@ -345,4 +373,5 @@ __all__ = [
     "WebSearchResult",
     "WebSearchUnavailableError",
     "search_web",
+    "trusted_source_url",
 ]

@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from webhub.db.models.agent_turns import MAX_AGENT_TURN_ID_LENGTH
+
 MAX_AGENT_METADATA_BYTES = 16 * 1024
 MAX_SLASH_COMMAND_METADATA_BYTES = 64 * 1024
 SlashCommandArgument = Annotated[str, Field(max_length=4_096)]
@@ -83,6 +85,12 @@ class AgentChatRequest(StrictRequest):
     the authenticated identity and cannot be supplied by the caller.
     """
 
+    turn_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_AGENT_TURN_ID_LENGTH,
+        validation_alias=AliasChoices("turn_id", "turnId"),
+    )
     conversation_id: str | None = Field(
         default=None,
         min_length=1,
@@ -104,6 +112,16 @@ class AgentChatRequest(StrictRequest):
         normalized = value.strip()
         if not normalized:
             raise ValueError("conversation_id must not be blank")
+        return normalized
+
+    @field_validator("turn_id")
+    @classmethod
+    def normalize_turn_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("turn_id must not be blank")
         return normalized
 
     @field_validator("message")

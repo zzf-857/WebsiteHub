@@ -306,12 +306,14 @@ async def _web_search(context: AgentToolContext, args: WebSearchArgs) -> dict[st
         return {
             "source": SOURCE_WEB,
             "provider": context.search_binding.display_name,
+            "provider_id": context.search_binding.provider,
             "error": WebSearchUnavailableError.safe_message,
             "items": [],
         }
     return {
         "source": SOURCE_WEB,
         "provider": context.search_binding.display_name,
+        "provider_id": context.search_binding.provider,
         "items": [result.as_dict() for result in results],
     }
 
@@ -1007,8 +1009,9 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
         ),
         structured(
             "present_website_recommendations",
-            "把本轮最终推荐的具体网站转换成界面可点击的站内卡片。只要回答里会推荐一个或多个具体网站，"
-            "就必须在最终回答前调用一次，并完整传入最终推荐清单；不要用 Markdown 表格、列表或普通链接替代。"
+        "把本轮最终推荐的具体网站转换成界面可点击的站内卡片。只要回答里会推荐一个或多个具体网站，"
+        "就必须在最终回答前调用一次，并完整传入最终推荐清单；不要用 Markdown 表格、列表或普通链接"
+        "替代。"
             "服务端会自动识别已收藏网址并让卡片优先打开站内详情；未收藏网址保留收录和打开能力。",
             PresentWebsiteRecommendationsArgs,
             _present_website_recommendations,

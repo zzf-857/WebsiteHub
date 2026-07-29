@@ -15,7 +15,6 @@ import {
   ExternalLink,
   FolderOpen,
   GripVertical,
-  LoaderCircle,
   Pencil,
   Trash2,
   Users,
@@ -28,6 +27,7 @@ import {
 import {
   SiteFavicon,
 } from "@/components/site-favicon";
+import { Spinner } from "@/components/react-bits/spinner";
 import {
   SpaceApiError,
 } from "@/lib/space-client";
@@ -152,7 +152,7 @@ export function SpaceNameForm({
           取消
         </button>
         <button className="space-button primary" type="submit" disabled={busy || !name.trim()}>
-          {busy && <LoaderCircle className="loading-spinner" aria-hidden="true" />}
+          {busy && <Spinner />}
           {busy ? "正在保存" : submitLabel}
         </button>
       </div>

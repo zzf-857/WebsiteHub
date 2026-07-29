@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from webhub.config import Settings
 from webhub.db.database import Database
 from webhub.db.migrations import upgrade_database
+from webhub.ingestion.worker import AnalysisSchedule
 from webhub.library import service as library_service
 from webhub.library.schemas import SiteUpdateRequest
 from webhub.main import create_app
@@ -346,7 +347,11 @@ def test_url_change_invalidates_scraped_media_but_keeps_a_new_explicit_favicon(
     _register(client, "url-media-owner")
     monkeypatch.setattr(
         "webhub.library.routes.ingestion_worker.schedule_analysis",
-        lambda *_args, **_kwargs: None,
+        lambda *_args, **_kwargs: AnalysisSchedule(
+            queued=0,
+            already_queued=0,
+            rejected=0,
+        ),
     )
     created_response = client.post(
         "/api/library/sites",

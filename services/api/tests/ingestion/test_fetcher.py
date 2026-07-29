@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from ipaddress import ip_address
+from ipaddress import IPv4Address
 from urllib.parse import urldefrag, urlsplit
 
 import httpx
@@ -19,7 +19,7 @@ from webhub.ingestion.fetcher import (
 from webhub.providers.targets import ResolvedConnectionTarget
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
-_PINNED_ADDRESS = ip_address("93.184.216.34")
+_PINNED_ADDRESS = IPv4Address("93.184.216.34")
 
 PAGE = """<!doctype html><html><head>
 <title>Example Domain</title>
@@ -120,8 +120,8 @@ def test_every_redirect_hop_is_revalidated_not_just_the_first(
     assert checked == [
         "https://short.example/x",
         "http://169.254.169.254/latest/meta-data/",
-        "http://169.254.169.254/cover.png",
         "http://169.254.169.254/favicon.ico",
+        "http://169.254.169.254/cover.png",
     ]
     # Both page hops and the declared icon were independently resolved and pinned.
     assert len(seen) == 3
@@ -157,9 +157,14 @@ def test_a_redirect_into_a_private_address_is_refused_for_real(
 ) -> None:
     """Same scenario with the real validator: the second hop never leaves."""
 
+    def resolve(hostname: str, _port: int) -> set[IPv4Address]:
+        assert hostname == "example.com"
+        return {_PINNED_ADDRESS}
+
     def hop(request: httpx.Request) -> httpx.Response:
         return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/"})
 
+    monkeypatch.setattr("webhub.providers.targets._resolve", resolve)
     seen, outcome, _checked = _run(
         "https://example.com/x",
         hop,
@@ -222,15 +227,25 @@ def test_non_html_is_limited_not_parsed(monkeypatch: pytest.MonkeyPatch) -> None
         assert "不是网页内容" in outcome.reason
 
 
-def test_a_javascript_only_page_reports_limited_honestly(
+def test_a_javascript_only_page_without_media_reports_limited_honestly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No headless browser: an empty shell yields nothing, and says so."""
 
     shell = '<!doctype html><html><head></head><body><div id="root"></div></body></html>'
-    _, outcome, _checked = _run("https://example.com/app", _html(shell), monkeypatch)
+
+    def no_icon(request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/app":
+            return httpx.Response(404)
+        return httpx.Response(
+            200,
+            content=shell,
+            headers={"content-type": "text/html; charset=utf-8"},
+        )
+
+    _, outcome, _checked = _run("https://example.com/app", no_icon, monkeypatch)
     assert outcome.status == "limited"
-    assert "脚本" in outcome.reason
+    assert "没有可写入" in outcome.reason
 
 
 def test_same_origin_favicon_fallback_is_stored_only_after_a_real_image_response(
@@ -308,7 +323,7 @@ def test_root_icon_redirect_to_link_local_is_rejected_before_transport(
         skip_target_check=False,
     )
 
-    assert outcome.status == "complete"
+    assert outcome.status == "limited"
     assert outcome.metadata.icon_url is None
     assert all(request.headers["host"] != "169.254.169.254" for request in seen)
 
@@ -475,7 +490,7 @@ def test_slow_declared_icons_cannot_starve_the_root_fallback_budget(
         assert allow_private is False
         observed.append(url)
         if url == "https://example.com/favicon.ico":
-            assert timeout_seconds == 0.01
+            assert timeout_seconds == 0.02
             return url
         assert timeout_seconds == 0.02
         await asyncio.sleep(1)
@@ -510,7 +525,7 @@ def test_one_slow_root_path_cannot_starve_later_root_candidates(
         timeout_seconds: float,
         allow_private: bool,
     ) -> str | None:
-        assert timeout_seconds == 0.01
+        assert timeout_seconds == 0.02
         assert allow_private is False
         observed.append(url)
         if url.endswith("favicon.png"):
@@ -607,7 +622,7 @@ def test_different_origins_can_discover_icons_concurrently(
         allow_private: bool,
     ) -> str | None:
         nonlocal active, maximum_active
-        assert timeout_seconds == 0.25
+        assert timeout_seconds == 1
         assert allow_private is False
         active += 1
         maximum_active = max(maximum_active, active)
@@ -745,7 +760,7 @@ def test_favicon_state_never_reuses_locks_or_cache_across_event_loops(
     assert calls == 2
 
 
-def test_current_page_declarations_still_precede_an_origin_cached_root_icon(
+def test_verified_origin_root_icon_precedes_later_page_declarations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observed: list[str] = []
@@ -772,12 +787,9 @@ def test_current_page_declarations_still_precede_an_origin_cached_root_icon(
 
     assert asyncio.run(scenario()) == (
         "https://priority.example/favicon.ico",
-        "https://priority.example/special.png",
-    )
-    assert observed == [
         "https://priority.example/favicon.ico",
-        "https://priority.example/special.png",
-    ]
+    )
+    assert observed == ["https://priority.example/favicon.ico"]
 
 
 def test_total_wall_timeout_stops_a_slow_redirect_chain(
@@ -987,9 +999,20 @@ def test_generic_or_missing_icon_mime_still_requires_a_real_signature(
 def test_an_oversized_body_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
     giant = "<html><head>" + ("<!-- padding -->" * 400_000) + "</head></html>"
     assert len(giant.encode()) > MAX_BODY_BYTES
-    _, outcome, _checked = _run("https://example.com/big", _html(giant), monkeypatch)
+
+    def no_icon(request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/big":
+            return httpx.Response(404)
+        return httpx.Response(
+            200,
+            content=giant,
+            headers={"content-type": "text/html; charset=utf-8"},
+        )
+
+    _, outcome, _checked = _run("https://example.com/big", no_icon, monkeypatch)
     # Truncated before the title could appear: reported, not crashed.
     assert outcome.status == "limited"
+    assert "内容过大" in outcome.reason
 
 
 @pytest.mark.parametrize("status", [401, 403, 404, 500, 503])
@@ -1108,5 +1131,5 @@ def test_gb18030_pages_decode_without_mojibake(monkeypatch: pytest.MonkeyPatch) 
         ),
         monkeypatch,
     )
-    assert outcome.status == "complete"
+    assert outcome.status == "limited"
     assert outcome.metadata.title == "中文标题"

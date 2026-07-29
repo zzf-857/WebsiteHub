@@ -234,7 +234,17 @@ function withBrowserSpaceGroupOperationLock<T>(
       "当前浏览器不支持安全的 Space 分组任务锁。",
     ));
   }
-  return navigator.locks.request(operationLockName(spaceId), { mode: "exclusive" }, task);
+  // lib.dom models the callback as synchronously returning T even though the
+  // Web Locks specification keeps the lock until an adopted Promise settles.
+  // Bridge that typing gap explicitly so callers receive Promise<T>, not the
+  // misleading Promise<Promise<T>> inferred from passing an async callback.
+  return new Promise<T>((resolve, reject) => {
+    void navigator.locks.request(
+      operationLockName(spaceId),
+      { mode: "exclusive" },
+      () => task().then(resolve, reject),
+    ).catch(reject);
+  });
 }
 
 export async function reserveBrowserSpaceGroupOperation(
@@ -346,11 +356,12 @@ function bridgeRequest<T>(
     const onMessage = (event: MessageEvent<unknown>) => {
       if (event.source !== window || event.origin !== window.location.origin) return;
       if (!isBridgeResponse<T>(event.data, id)) return;
-      if (event.data.ok && event.data.result !== undefined) {
-        finish(() => resolve(event.data.result as T));
+      const response = event.data;
+      if (response.ok && response.result !== undefined) {
+        finish(() => resolve(response.result as T));
         return;
       }
-      const error = event.data.error;
+      const error = response.error;
       const code = error?.code ?? "EXTENSION_ERROR";
       finish(() => reject(new BrowserSpaceGroupError(code, browserGroupErrorMessage(code))));
     };

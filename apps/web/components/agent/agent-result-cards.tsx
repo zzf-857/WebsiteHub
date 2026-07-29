@@ -29,7 +29,7 @@ export type SearchScope = "collection" | "online";
 // 阶段进度条的每一步都由真实工具事件驱动：call 事件入场，result 事件定稿
 export type AgentStage = {
   id: string;
-  tool: "search_library" | "web_search";
+  tool: string;
   status: "active" | "done";
   count: number | null;
   provider: string | null;
@@ -44,7 +44,7 @@ export const IDLE_SAVE: WebSaveState = { status: "idle" };
 
 export type ResultGroups = {
   library: { items: AgentToolLink[]; total: number };
-  web: { items: AgentToolLink[]; provider: string | null };
+  web: { items: AgentToolLink[]; provider: string | null; collectionDisabled: boolean };
 };
 
 export function hostOf(url: string): string {
@@ -125,11 +125,13 @@ export function WebResultCard({
   link,
   providerLabel,
   state,
+  collectionDisabled,
   onCollect,
 }: Readonly<{
   link: AgentToolLink;
   providerLabel: string;
   state: WebSaveState;
+  collectionDisabled: boolean;
   onCollect: (link: AgentToolLink) => void;
 }>) {
   const saved = state.status === "saved";
@@ -161,7 +163,8 @@ export function WebResultCard({
             type="button"
             className="agent-collect-button"
             data-done={saved || undefined}
-            disabled={saved || state.status === "saving"}
+            disabled={collectionDisabled || saved || state.status === "saving"}
+            title={collectionDisabled ? "本轮回答未完整保存，不能收录" : undefined}
             onClick={() => onCollect(link)}
           >
             {saved ? (

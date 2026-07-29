@@ -22,6 +22,7 @@ from webhub.streaming.ui_message_stream import (
     reasoning_delta_chunk,
     reasoning_end_chunk,
     reasoning_start_chunk,
+    source_url_chunk,
     start_chunk,
     text_delta_chunk,
     text_end_chunk,
@@ -241,10 +242,27 @@ def test_reasoning_parts_require_a_complete_lifecycle_before_finish() -> None:
     assert encoder.finalize() == b"data: [DONE]\n\n"
 
 
+def test_source_url_preserves_stable_identity_title_and_provider_metadata() -> None:
+    chunk = source_url_chunk(
+        "web:0123456789abcdef01234567",
+        "https://example.com/docs",
+        title="Example Docs",
+        provider_metadata={"webhub": {"searchProvider": "tavily"}},
+    )
+
+    assert json.loads(encode_ui_message_chunk(chunk).decode().removeprefix("data: ")) == {
+        "type": "source-url",
+        "sourceId": "web:0123456789abcdef01234567",
+        "url": "https://example.com/docs",
+        "title": "Example Docs",
+        "providerMetadata": {"webhub": {"searchProvider": "tavily"}},
+    }
+
+
 def test_headers_include_v1_and_no_store_and_reject_crlf() -> None:
     headers = ui_message_stream_headers({"x-request-id": "fixture-1"})
     assert headers["x-vercel-ai-ui-message-stream"] == "v1"
-    assert headers["cache-control"] == "no-cache, no-store"
+    assert headers["cache-control"] == "no-cache, no-store, no-transform"
     assert headers["x-request-id"] == "fixture-1"
 
     with pytest.raises(ValueError, match="CR/LF"):
@@ -265,7 +283,7 @@ def test_fastapi_response_uses_stream_contract_headers_and_body() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream"
-    assert response.headers["cache-control"] == "no-cache, no-store"
+    assert response.headers["cache-control"] == "no-cache, no-store, no-transform"
     assert response.headers["x-vercel-ai-ui-message-stream"] == "v1"
     assert response.headers["x-request-id"] == "fixture-1"
     assert _events(_collect(response.body_iterator))[-1] == "data: [DONE]"

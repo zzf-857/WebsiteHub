@@ -45,6 +45,7 @@ from .runner import (
     UnconfiguredAgentRunner,
 )
 from .schemas import AgentChatRequest
+from .turns import claim_turn, mark_turn_terminal
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]
@@ -132,13 +133,25 @@ def _stream_error(
     code: str,
     message: str,
     conversation_id: str | None,
+    turn_id: str | None = None,
+    turn_persisted: bool = False,
+    retry_after_seconds: int | None = None,
 ) -> StreamingResponse:
     """Return a protocol-level error that AI SDK clients can render safely."""
 
     async def chunks() -> AsyncIterator[Mapping[str, Any]]:
-        metadata: dict[str, Any] = {"errorCode": code}
+        metadata: dict[str, Any] = {
+            "errorCode": code,
+            "messageStatus": "error",
+            "turnState": "error",
+            "turnPersisted": turn_persisted,
+        }
         if conversation_id is not None:
             metadata["conversationId"] = conversation_id
+        if turn_id is not None:
+            metadata["turnId"] = turn_id
+        if retry_after_seconds is not None:
+            metadata["retryAfterSeconds"] = retry_after_seconds
         yield start_chunk(message_id=f"assistant-{uuid4()}", message_metadata=metadata)
         yield data_chunk(
             "agent-error",
@@ -151,6 +164,92 @@ def _stream_error(
         chunks(),
         headers={AGENT_PROTOCOL_HEADER: AGENT_PROTOCOL_VERSION},
     )
+
+
+def _raw_idempotency_payload(payload: AgentChatRequest) -> dict[str, Any]:
+    return {
+        "message": payload.message,
+        "conversationId": payload.conversation_id,
+        "slashCommand": (
+            payload.slash_command.model_dump(mode="json")
+            if payload.slash_command is not None
+            else None
+        ),
+        "metadata": dict(payload.metadata),
+    }
+
+
+async def _durable_protocol_error(
+    request: Request,
+    run_request: AgentRunRequest,
+    *,
+    code: str,
+    message: str,
+) -> StreamingResponse:
+    """Persist a parsed protocol failure when the production database is available."""
+
+    database = getattr(request.app.state, "database", None)
+    if database is None:
+        return _stream_error(
+            code=code,
+            message=message,
+            conversation_id=run_request.conversation_id,
+            turn_id=run_request.turn_id,
+        )
+    try:
+        claim = await claim_turn(database, run_request)
+        if claim.action == "execute" and claim.lease is not None:
+            await mark_turn_terminal(
+                database,
+                claim.lease,
+                state="error",
+                error_code=code,
+            )
+            return _stream_error(
+                code=code,
+                message=message,
+                conversation_id=run_request.conversation_id,
+                turn_id=run_request.turn_id,
+                turn_persisted=True,
+            )
+        if claim.action == "conflict":
+            return _stream_error(
+                code="turn_conflict",
+                message="这个 turn id 已用于另一份请求，请重新发送。",
+                conversation_id=run_request.conversation_id,
+                turn_id=run_request.turn_id,
+                turn_persisted=True,
+            )
+        if claim.action == "in_progress":
+            return _stream_error(
+                code="turn_in_progress",
+                message="同一请求仍在处理中，请稍后查看本次对话。",
+                conversation_id=claim.conversation_id,
+                turn_id=run_request.turn_id,
+                turn_persisted=claim.assistant_message_id is not None,
+                retry_after_seconds=claim.retry_after_seconds,
+            )
+        # Protocol receipts never own Assistant rows. Replaying the same safe
+        # message is therefore sufficient and cannot invoke a Provider.
+        return _stream_error(
+            code=claim.error_code or code,
+            message=message,
+            conversation_id=claim.conversation_id,
+            turn_id=run_request.turn_id,
+            turn_persisted=True,
+        )
+    except Exception as error:
+        _log_runner_failure(
+            error,
+            fallback_stage="protocol_receipt",
+            correlation_id=str(uuid4()),
+        )
+        return _stream_error(
+            code=code,
+            message=message,
+            conversation_id=run_request.conversation_id,
+            turn_id=run_request.turn_id,
+        )
 
 
 async def _await_runner_result(result: object) -> AgentChunkSource:
@@ -225,6 +324,7 @@ async def _guard_runner_source(
 @router.post("/chat", response_class=StreamingResponse)
 async def chat(
     payload: AgentChatRequest,
+    request: Request,
     identity: CurrentIdentityDependency,
     runner: AgentRunnerDependency,
     conversation_access: AgentConversationAccessDependency,
@@ -234,28 +334,12 @@ async def chat(
     """Start one account-scoped Agent turn as an AI SDK UI Message stream."""
 
     correlation_id = str(uuid4())
-    try:
-        slash_command = parse_slash_command(payload.message, registry=command_registry)
-    except (TypeError, ValueError):
-        return _stream_error(
-            code="invalid_slash_command",
-            message=COMMAND_METADATA_MESSAGE,
-            conversation_id=payload.conversation_id,
-        )
-    if slash_command.is_command and not slash_command.known:
-        return _stream_error(
-            code="unknown_slash_command",
-            message=UNKNOWN_COMMAND_MESSAGE,
-            conversation_id=payload.conversation_id,
-        )
-    if not _command_metadata_matches(slash_command, payload):
-        return _stream_error(
-            code="invalid_slash_command",
-            message=COMMAND_METADATA_MESSAGE,
-            conversation_id=payload.conversation_id,
-        )
-
     account_id = str(identity.user.id)
+    turn_id = payload.turn_id or str(uuid4())
+    idempotency_payload = _raw_idempotency_payload(payload)
+
+    # Authorization remains outside the turn ledger: an opaque id that cannot
+    # be proven to belong to this account must never become a receipt FK.
     if payload.conversation_id is not None:
         try:
             await conversation_access.assert_owned(
@@ -267,20 +351,70 @@ async def chat(
                 code=AgentConversationUnavailableError.code,
                 message=AgentConversationUnavailableError.safe_message,
                 conversation_id=payload.conversation_id,
+                turn_id=turn_id,
             )
         except Exception:
             return _stream_error(
                 code="conversation_access_unavailable",
                 message=CONVERSATION_ACCESS_FAILURE_MESSAGE,
                 conversation_id=payload.conversation_id,
+                turn_id=turn_id,
             )
+
+    try:
+        slash_command = parse_slash_command(payload.message, registry=command_registry)
+    except (TypeError, ValueError):
+        return await _durable_protocol_error(
+            request,
+            AgentRunRequest(
+                account_id=account_id,
+                turn_id=turn_id,
+                conversation_id=payload.conversation_id,
+                message=payload.message,
+                metadata=dict(payload.metadata),
+                idempotency_payload=idempotency_payload,
+            ),
+            code="invalid_slash_command",
+            message=COMMAND_METADATA_MESSAGE,
+        )
+    if slash_command.is_command and not slash_command.known:
+        return await _durable_protocol_error(
+            request,
+            AgentRunRequest(
+                account_id=account_id,
+                turn_id=turn_id,
+                conversation_id=payload.conversation_id,
+                message=payload.message,
+                metadata=dict(payload.metadata),
+                idempotency_payload=idempotency_payload,
+            ),
+            code="unknown_slash_command",
+            message=UNKNOWN_COMMAND_MESSAGE,
+        )
+    if not _command_metadata_matches(slash_command, payload):
+        return await _durable_protocol_error(
+            request,
+            AgentRunRequest(
+                account_id=account_id,
+                turn_id=turn_id,
+                conversation_id=payload.conversation_id,
+                message=payload.message,
+                slash_command=slash_command if slash_command.is_command else None,
+                metadata=dict(payload.metadata),
+                idempotency_payload=idempotency_payload,
+            ),
+            code="invalid_slash_command",
+            message=COMMAND_METADATA_MESSAGE,
+        )
 
     run_request = AgentRunRequest(
         account_id=account_id,
+        turn_id=turn_id,
         conversation_id=payload.conversation_id,
         message=payload.message,
         slash_command=slash_command if slash_command.is_command else None,
         metadata=dict(payload.metadata),
+        idempotency_payload=idempotency_payload,
     )
     try:
         source = await _await_runner_result(runner.run(run_request))
@@ -289,12 +423,14 @@ async def chat(
             code=AgentProviderNotConfiguredError.code,
             message=AgentProviderNotConfiguredError.safe_message,
             conversation_id=payload.conversation_id,
+            turn_id=turn_id,
         )
     except AgentConversationUnavailableError:
         return _stream_error(
             code=AgentConversationUnavailableError.code,
             message=AgentConversationUnavailableError.safe_message,
             conversation_id=payload.conversation_id,
+            turn_id=turn_id,
         )
     except Exception as error:
         # Runner construction errors are handled before the stream starts; keep
@@ -308,6 +444,7 @@ async def chat(
             code="runner_unavailable",
             message=RUNNER_FAILURE_MESSAGE,
             conversation_id=payload.conversation_id,
+            turn_id=turn_id,
         )
 
     return ui_message_stream_response(

@@ -235,6 +235,8 @@ def test_history_replay_now_carries_system_notes(tmp_path: Path) -> None:
             self.role = role
             self.content = content
             self.status = status
+            self.metadata: dict[str, object] = {}
+            self.artifacts: list[object] = []
 
     replayed = _history_messages(
         [
@@ -246,5 +248,5 @@ def test_history_replay_now_carries_system_notes(tmp_path: Path) -> None:
         ]
     )
     kinds = [type(message).__name__ for message in replayed]
-    assert kinds == ["HumanMessage", "AIMessage", "SystemMessage"]
+    assert kinds == ["HumanMessage", "AIMessage", "AIMessage"]
     assert "site_id=abc" in replayed[2].content

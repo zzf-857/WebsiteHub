@@ -9,7 +9,6 @@ import {
   LayoutGrid,
   List,
   ListChecks,
-  LoaderCircle,
   Maximize2,
   Minimize2,
   Pin,
@@ -35,6 +34,7 @@ import {
 import {
   SiteFavicon,
 } from "@/components/site-favicon";
+import { Spinner } from "@/components/react-bits/spinner";
 import {
   SiteCollection,
   siteHost,
@@ -113,14 +113,18 @@ export function LibraryWorkspace() {
 
   useEffect(() => {
     let readyFrame = 0;
+    let storedMode: LibraryLayoutMode | null = null;
     try {
       const stored = window.localStorage.getItem(LIBRARY_LAYOUT_STORAGE_KEY);
-      if (stored === "centered" || stored === "full") setLayoutMode(stored);
+      if (stored === "centered" || stored === "full") storedMode = stored;
     } catch {
       // 隐私模式或浏览器策略禁用存储时，保留默认的居中阅读布局。
     }
     // 先无动画应用持久化宽度，下一帧再允许后续的用户触发动画。
-    readyFrame = window.requestAnimationFrame(() => setLayoutReady(true));
+    readyFrame = window.requestAnimationFrame(() => {
+      if (storedMode !== null) setLayoutMode(storedMode);
+      setLayoutReady(true);
+    });
     return () => window.cancelAnimationFrame(readyFrame);
   }, []);
 
@@ -178,7 +182,7 @@ export function LibraryWorkspace() {
             title="开始或加入全库网站信息补全任务，详细进度在首页显示"
           >
             {analysisBackfillBusy ? (
-              <LoaderCircle className="loading-spinner" aria-hidden="true" />
+              <Spinner />
             ) : (
               <WandSparkles aria-hidden="true" />
             )}
@@ -233,7 +237,11 @@ export function LibraryWorkspace() {
           <section className="library-sidebar-section">
             <div className="library-sidebar-heading">
               <h2>分类</h2>
-              {taxonomyLoading && <LoaderCircle className="loading-spinner" aria-label="正在加载分类" />}
+              {taxonomyLoading && (
+                <span role="status" aria-label="正在加载分类">
+                  <Spinner />
+                </span>
+              )}
             </div>
             <div className="library-category-list">
               {categories.map((category) => (
@@ -377,7 +385,7 @@ export function LibraryWorkspace() {
                     onChange={() => void toggleAllMatchingSites()}
                   />
                   {allMatchingSelectionBusy && (
-                    <LoaderCircle className="loading-spinner" aria-hidden="true" />
+                    <Spinner size={14} />
                   )}
                   <span>
                     {allMatchingSelectionBusy ? "正在全选" : "全选"}
@@ -577,7 +585,7 @@ export function LibraryWorkspace() {
             <footer className="library-form-actions">
               <button className="library-button secondary" type="button" onClick={closeDialog} disabled={mutationBusy}>取消</button>
               <button className="library-button danger" type="button" onClick={() => void handleDelete()} disabled={mutationBusy}>
-                {mutationBusy ? <LoaderCircle className="loading-spinner" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+                {mutationBusy ? <Spinner /> : <Trash2 aria-hidden="true" />}
                 {mutationBusy ? "正在删除" : "确认删除"}
               </button>
             </footer>
@@ -645,7 +653,7 @@ export function LibraryWorkspace() {
                 取消
               </button>
               <button className="library-button danger" type="button" onClick={() => void handleBulkDelete()} disabled={mutationBusy}>
-                {mutationBusy ? <LoaderCircle className="loading-spinner" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+                {mutationBusy ? <Spinner /> : <Trash2 aria-hidden="true" />}
                 {mutationBusy
                   ? `正在删除 ${bulkDeleteCompleted} / ${dialog.sites.length}`
                   : `确认删除 ${dialog.sites.length} 个网站`}

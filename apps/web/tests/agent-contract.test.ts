@@ -18,42 +18,73 @@ import {
   prepareAgentChatRequest,
   toAgentUIMessages,
 } from "../lib/agent-contract.ts";
+import { resolveAgentTurnId } from "../lib/agent-transport.ts";
 
 test("builds snake-case chat request bodies without leaking optional keys", () => {
   assert.deepEqual(
-    prepareAgentChatRequest({ message: "  帮我找前端文档  ", conversationId: "conv-1" }),
-    { message: "帮我找前端文档", conversation_id: "conv-1" },
+    prepareAgentChatRequest({
+      message: "  帮我找前端文档  ",
+      turnId: "turn-1",
+      conversationId: "conv-1",
+    }),
+    { message: "帮我找前端文档", turn_id: "turn-1", conversation_id: "conv-1" },
   );
 
-  const withoutConversation = prepareAgentChatRequest({ message: "你好" });
-  assert.deepEqual(withoutConversation, { message: "你好" });
+  const withoutConversation = prepareAgentChatRequest({ message: "你好", turnId: "turn-2" });
+  assert.deepEqual(withoutConversation, { message: "你好", turn_id: "turn-2" });
   assert.equal("conversation_id" in withoutConversation, false);
-  assert.equal("conversation_id" in prepareAgentChatRequest({ message: "你好", conversationId: null }), false);
-  assert.equal("conversation_id" in prepareAgentChatRequest({ message: "你好", conversationId: "   " }), false);
+  assert.equal("conversation_id" in prepareAgentChatRequest({ message: "你好", turnId: "turn-3", conversationId: null }), false);
+  assert.equal("conversation_id" in prepareAgentChatRequest({ message: "你好", turnId: "turn-4", conversationId: "   " }), false);
 
-  assert.equal("metadata" in prepareAgentChatRequest({ message: "你好", metadata: {} }), false);
+  assert.equal("metadata" in prepareAgentChatRequest({ message: "你好", turnId: "turn-5", metadata: {} }), false);
   assert.deepEqual(
-    prepareAgentChatRequest({ message: "你好", metadata: { web_search: true } }),
-    { message: "你好", metadata: { web_search: true } },
+    prepareAgentChatRequest({ message: "你好", turnId: "turn-6", metadata: { web_search: true } }),
+    { message: "你好", turn_id: "turn-6", metadata: { web_search: true } },
   );
 });
 
 test("rejects blank messages and enforces the length limit in code points", () => {
   assert.throws(
-    () => prepareAgentChatRequest({ message: "   " }),
+    () => prepareAgentChatRequest({ message: "   ", turnId: "turn-1" }),
     (error: unknown) => error instanceof AgentContractError && /不能为空/.test(error.message),
   );
 
   const atLimit = "😀".repeat(MAX_AGENT_MESSAGE_LENGTH);
   assert.ok(atLimit.length > MAX_AGENT_MESSAGE_LENGTH);
-  assert.equal(prepareAgentChatRequest({ message: atLimit }).message, atLimit);
+  assert.equal(prepareAgentChatRequest({ message: atLimit, turnId: "turn-1" }).message, atLimit);
 
   assert.throws(
-    () => prepareAgentChatRequest({ message: "😀".repeat(MAX_AGENT_MESSAGE_LENGTH + 1) }),
+    () => prepareAgentChatRequest({
+      message: "😀".repeat(MAX_AGENT_MESSAGE_LENGTH + 1),
+      turnId: "turn-1",
+    }),
     (error: unknown) =>
       error instanceof AgentContractError &&
       new RegExp(String(MAX_AGENT_MESSAGE_LENGTH)).test(error.message),
   );
+});
+
+test("requires a bounded stable turn id", () => {
+  assert.throws(
+    () => prepareAgentChatRequest({ message: "你好", turnId: "   " }),
+    (error: unknown) => error instanceof AgentContractError && /回合标识/.test(error.message),
+  );
+  assert.throws(
+    () => prepareAgentChatRequest({ message: "你好", turnId: "x".repeat(129) }),
+    (error: unknown) => error instanceof AgentContractError && /回合标识/.test(error.message),
+  );
+});
+
+test("reuses the submitted user message id as the stable turn id", () => {
+  const messages = [
+    { id: "user-old", role: "user" },
+    { id: "assistant-old", role: "assistant" },
+    { id: "user-current", role: "user" },
+  ] as const;
+  assert.equal(resolveAgentTurnId(messages, "user-current"), "user-current");
+  assert.equal(resolveAgentTurnId(messages, undefined), "user-current");
+  assert.equal(resolveAgentTurnId(messages, "assistant-old"), "user-current");
+  assert.throws(() => resolveAgentTurnId([], undefined), /稳定标识/u);
 });
 
 test("extracts the latest user text from text parts only", () => {
@@ -117,6 +148,7 @@ test("projects tool results into links, facets, drafts, errors, and safe compati
           url: "https://developer.mozilla.org/",
           faviconUrl: "https://developer.mozilla.org/favicon.ico",
           description: "Web 文档",
+          summary: null,
           category: "开发",
           tags: ["文档", "前端"],
           pinned: true,
@@ -127,6 +159,7 @@ test("projects tool results into links, facets, drafts, errors, and safe compati
           url: "https://example.com/",
           faviconUrl: null,
           description: "来自搜索摘要",
+          summary: null,
           category: null,
           tags: [],
           pinned: false,
@@ -177,6 +210,7 @@ test("projects tool results into links, facets, drafts, errors, and safe compati
         url: "https://example.com/docs",
         faviconUrl: null,
         description: null,
+        summary: null,
         category: null,
         tags: [],
         pinned: true,
@@ -259,6 +293,7 @@ test("drops non-http urls to null while keeping named entries", () => {
           url: null,
           faviconUrl: null,
           description: null,
+          summary: null,
           category: null,
           tags: [],
           pinned: false,
@@ -269,6 +304,7 @@ test("drops non-http urls to null while keeping named entries", () => {
           url: "https://example.com/safe",
           faviconUrl: null,
           description: null,
+          summary: null,
           category: null,
           tags: [],
           pinned: false,
@@ -335,6 +371,9 @@ test("keeps only the known metadata keys and requires webSearch to be boolean", 
   assert.deepEqual(
     normalizeAgentMessageMetadata({
       conversationId: "  conv-1  ",
+      turnId: " turn-7 ",
+      assistantMessageId: " assistant-7 ",
+      messageStatus: "aborted",
       provider: "account-provider",
       model: "chat-model",
       webSearch: false,
@@ -353,6 +392,9 @@ test("keeps only the known metadata keys and requires webSearch to be boolean", 
     }),
     {
       conversationId: "conv-1",
+      turnId: "turn-7",
+      assistantMessageId: "assistant-7",
+      messageStatus: "aborted",
       provider: "account-provider",
       model: "chat-model",
       webSearch: false,
@@ -464,7 +506,27 @@ test("restores archived reasoning, provenance, metadata, and answer text in live
         status: "complete",
       },
       {
-        id: "m-5", role: "assistant", content: "", parts: [], sources: [], metadata: {}, status: "aborted",
+        id: "m-5",
+        role: "assistant",
+        content: "",
+        parts: [
+          {
+            type: "source-url",
+            sourceId: "source-duplicate",
+            url: "https://EXAMPLE.com/docs#section",
+            title: "Duplicate docs",
+          },
+        ],
+        sources: [
+          {
+            type: "source-url",
+            sourceId: "source-1",
+            url: "https://example.com/docs",
+            title: "Example docs",
+          },
+        ],
+        metadata: { turnId: "turn-2" },
+        status: "aborted",
       },
     ]),
     [
@@ -472,7 +534,12 @@ test("restores archived reasoning, provenance, metadata, and answer text in live
       {
         id: "m-4",
         role: "assistant",
-        metadata: { elapsedMs: 900, usage: { totalTokens: 24 } },
+        metadata: {
+          elapsedMs: 900,
+          usage: { totalTokens: 24 },
+          messageStatus: "complete",
+          assistantMessageId: "m-4",
+        },
         parts: [
           { type: "reasoning", text: "先查网址库。" },
           {
@@ -482,7 +549,46 @@ test("restores archived reasoning, provenance, metadata, and answer text in live
           { type: "text", text: "给你两个链接" },
         ],
       },
+      {
+        id: "m-5",
+        role: "assistant",
+        metadata: {
+          turnId: "turn-2",
+          messageStatus: "aborted",
+          assistantMessageId: "m-5",
+        },
+        parts: [
+          {
+            type: "source-url",
+            sourceId: "source-1",
+            url: "https://example.com/docs",
+            title: "Example docs",
+          },
+        ],
+      },
     ],
+  );
+});
+
+test("restores all four persisted assistant states without dropping partial text", () => {
+  const states = ["streaming", "complete", "error", "aborted"] as const;
+  const restored = toAgentUIMessages(states.map((status, index) => ({
+    id: `assistant-${status}`,
+    role: "assistant" as const,
+    content: `partial-${index}`,
+    parts: [],
+    sources: [],
+    metadata: { turnId: `turn-${index}` },
+    status,
+  })));
+
+  assert.deepEqual(
+    restored.map((message) => normalizeAgentMessageMetadata(message.metadata).messageStatus),
+    states,
+  );
+  assert.deepEqual(
+    restored.map((message) => message.parts[0]),
+    states.map((_, index) => ({ type: "text", text: `partial-${index}` })),
   );
 });
 

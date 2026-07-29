@@ -213,11 +213,13 @@ def test_web_search_tool_is_absent_without_a_search_provider(tmp_path: Path) -> 
         "list_categories",
         "list_spaces",
         "list_tags",
+        "present_website_recommendations",
         "propose_bookmark_import",
         "propose_reclassify",
         "propose_site",
         "propose_site_update",
         "propose_sites",
+        "propose_space_batch",
         "propose_space_membership",
         "search_library",
     ]
@@ -423,7 +425,7 @@ def test_propose_site_update_normalizes_and_dedupes_tags(tmp_path: Path) -> None
     assert result["draft"]["changes"]["tags"] == ["设计", "UI", "原型"]
 
 
-def test_propose_space_membership_resolves_a_space_by_name_without_writing(
+def test_propose_space_batch_resolves_a_space_by_name_without_writing(
     tmp_path: Path,
 ) -> None:
     with _account_with_space(tmp_path) as settings:
@@ -432,20 +434,22 @@ def test_propose_space_membership_resolves_a_space_by_name_without_writing(
         result = _invoke(
             settings,
             "alice",
-            "propose_space_membership",
-            site_id=site_id,
-            space="设计",
-            action="add",
+            "propose_space_batch",
+            site_ids=[site_id],
+            space_name="设计",
         )
         after = _member_count(settings)
 
     assert result["status"] == "awaiting_confirmation"
     draft = result["draft"]
-    assert draft["kind"] == "space_membership"
-    assert draft["action"] == "add"
-    assert draft["space_name"] == "设计"
-    assert draft["site_name"] == "Figma"
-    assert draft["expected_version"] >= 1
+    assert draft["kind"] == "space_batch"
+    assert draft["target"]["mode"] == "existing"
+    assert draft["target"]["space_name"] == "设计"
+    assert draft["target"]["expected_version"] >= 1
+    assert draft["sites"] == [
+        {"site_id": site_id, "name": "Figma", "url": "https://figma.com"}
+    ]
+    assert draft["already_member_count"] == 0
     assert after == before == 0
 
 
@@ -458,7 +462,7 @@ def test_propose_space_membership_will_not_invent_a_space(tmp_path: Path) -> Non
             "propose_space_membership",
             site_id=site_id,
             space="不存在的空间",
-            action="add",
+            action="remove",
         )
 
     # Creating a Space is itself a write; the tool refuses and lists what exists.
@@ -492,7 +496,7 @@ def test_propose_space_membership_refuses_across_accounts(tmp_path: Path) -> Non
             "propose_space_membership",
             site_id=site_id,
             space="设计",
-            action="add",
+            action="remove",
         )
 
     assert stolen_site["status"] == "rejected"

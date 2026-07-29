@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowDown,
   ArrowRight,
   Brain,
   Bookmark,
@@ -9,11 +10,12 @@ import {
   ChevronRight,
   CircleAlert,
   Clock,
+  Copy,
   ExternalLink,
   FolderInput,
   FolderPlus,
   Hash,
-  Loader,
+  Link2,
   PencilLine,
   RotateCcw,
   Sparkles,
@@ -25,15 +27,20 @@ import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown, type Components } from "streamdown";
+import type { SourceUrlUIPart } from "ai";
 
 import { ShinyText } from "@/components/react-bits/shiny-text";
+import { Spinner } from "@/components/react-bits/spinner";
 import { SiteFavicon } from "@/components/site-favicon";
+import { buildAgentConversationLink } from "@/lib/agent-client";
 import {
+  AGENT_SOURCE_MODEL,
   agentSourceLabels,
   agentToolLabel,
   describeAgentToolResult,
   normalizeAgentMarkdownLink,
   normalizeAgentMessageMetadata,
+  normalizeAgentSourceUrlKey,
   normalizeAgentToolResult,
   type AgentDraftAction,
   type AgentSiteDraft,
@@ -62,6 +69,7 @@ const SPACE_BATCH_ATTEMPTED_PREFIX = "webhub:agent-space-batch-attempted:";
 
 type ConversationThreadProps = {
   messages: readonly AgentUIMessage[];
+  conversationId: string | null;
   status: "submitted" | "streaming" | "ready" | "error";
   activeToolCalls: readonly AgentToolCall[];
   draftStates: Readonly<Record<string, AgentDraftState>>;
@@ -183,8 +191,18 @@ function ReasoningDisclosure({
   durationMs?: number;
   reducedMotion: boolean;
 }>) {
+  const [liveDurationMs, setLiveDurationMs] = useState(0);
   const initializeDetails = useCallback((element: HTMLDetailsElement | null) => {
     if (element && streaming) element.open = true;
+  }, [streaming]);
+
+  useEffect(() => {
+    if (!streaming) return;
+    const startedAt = performance.now();
+    const update = () => setLiveDurationMs(Math.max(0, performance.now() - startedAt));
+    update();
+    const timer = window.setInterval(update, 250);
+    return () => window.clearInterval(timer);
   }, [streaming]);
 
   return (
@@ -195,8 +213,10 @@ function ReasoningDisclosure({
       <summary>
         <Brain aria-hidden="true" />
         <span>{streaming ? "思考中" : "思考过程"}</span>
-        {!streaming && durationMs !== undefined && (
-          <span className="chat-reasoning-duration">{formatDuration(durationMs)}</span>
+        {(streaming || durationMs !== undefined || liveDurationMs > 0) && (
+          <span className="chat-reasoning-duration">
+            {formatDuration(streaming ? liveDurationMs : (durationMs ?? liveDurationMs))}
+          </span>
         )}
         <ChevronDown className="chat-reasoning-chevron" aria-hidden="true" />
       </summary>
@@ -216,15 +236,6 @@ function ResponseMetrics({ metadata }: Readonly<{ metadata: AgentMessageMetadata
   if (metadata.elapsedMs === undefined && metadata.timeToFirstTokenMs === undefined && !hasUsage) {
     return null;
   }
-  const usageTitle = usage
-    ? [
-        usage.inputTokens !== undefined ? `输入 ${usage.inputTokens.toLocaleString("zh-CN")}` : null,
-        usage.outputTokens !== undefined ? `输出 ${usage.outputTokens.toLocaleString("zh-CN")}` : null,
-        usage.reasoningTokens !== undefined
-          ? `思考 ${usage.reasoningTokens.toLocaleString("zh-CN")}`
-          : null,
-      ].filter(Boolean).join(" · ")
-    : "";
   return (
     <div className="chat-response-metrics" aria-label="本次回答统计">
       {metadata.elapsedMs !== undefined && (
@@ -238,18 +249,163 @@ function ResponseMetrics({ metadata }: Readonly<{ metadata: AgentMessageMetadata
           首字 {formatDuration(metadata.timeToFirstTokenMs)}
         </span>
       )}
-      {usage && usage.totalTokens !== undefined && (
-        <span title={usageTitle || undefined}>
+      {usage?.inputTokens !== undefined && (
+        <span>
           <Hash aria-hidden="true" />
-          {usage.totalTokens.toLocaleString("zh-CN")} Token
+          输入 {usage.inputTokens.toLocaleString("zh-CN")}
         </span>
       )}
-      {usage && usage.totalTokens === undefined && usageTitle && (
-        <span title="Provider 未返回总量，仅展示其实际返回的分项">
-          <Hash aria-hidden="true" />
-          {usageTitle}
-        </span>
+      {usage?.outputTokens !== undefined && (
+        <span>输出 {usage.outputTokens.toLocaleString("zh-CN")}</span>
       )}
+      {usage?.reasoningTokens !== undefined && (
+        <span>思考 {usage.reasoningTokens.toLocaleString("zh-CN")}</span>
+      )}
+      {usage?.totalTokens !== undefined && (
+        <span>总计 {usage.totalTokens.toLocaleString("zh-CN")} Token</span>
+      )}
+    </div>
+  );
+}
+
+function SourceList({ sources }: Readonly<{ sources: readonly SourceUrlUIPart[] }>) {
+  const unique = useMemo(() => {
+    const seen = new Set<string>();
+    return sources.filter((source) => {
+      const key = normalizeAgentSourceUrlKey(source.url);
+      if (key === null || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [sources]);
+  if (unique.length === 0) return null;
+  return (
+    <details className="chat-source-list">
+      <summary>
+        <Link2 aria-hidden="true" />
+        使用 {unique.length} 个来源
+        <ChevronDown aria-hidden="true" />
+      </summary>
+      <ul>
+        {unique.map((source) => {
+          const host = hostOf(source.url);
+          const title = source.title?.trim() || host;
+          return (
+            <li key={`${source.sourceId}:${normalizeAgentSourceUrlKey(source.url) ?? source.url}`}>
+              <a href={source.url} target="_blank" rel="noreferrer noopener">
+                <SiteFavicon url={null} name={title} size={18} />
+                <span>
+                  <strong>{title}</strong>
+                  <small>{host}</small>
+                </span>
+                <ExternalLink aria-hidden="true" />
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
+  );
+}
+
+function AssistantStatus({ status }: Readonly<{
+  status: AgentMessageMetadata["messageStatus"];
+}>) {
+  if (status === undefined || status === "complete") return null;
+  const label = status === "aborted"
+    ? "已停止，部分回答已保存"
+    : status === "error"
+      ? "生成失败，已保存现有内容"
+      : "该回答仍在生成";
+  return (
+    <p className="chat-message-status" data-status={status} role="status">
+      <CircleAlert aria-hidden="true" />
+      {label}
+    </p>
+  );
+}
+
+function MessageActions({ text, conversationId }: Readonly<{
+  text: string;
+  conversationId?: string;
+}>) {
+  const [copyFeedback, setCopyFeedback] = useState<{
+    kind: "answer" | "link";
+    status: "copied" | "error";
+  } | null>(null);
+  const feedbackTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current !== null) {
+      window.clearTimeout(feedbackTimerRef.current);
+    }
+  }, []);
+
+  const copy = useCallback(async (value: string, kind: "answer" | "link") => {
+    if (feedbackTimerRef.current !== null) {
+      window.clearTimeout(feedbackTimerRef.current);
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyFeedback({ kind, status: "copied" });
+    } catch {
+      setCopyFeedback({ kind, status: "error" });
+    }
+    feedbackTimerRef.current = window.setTimeout(() => {
+      setCopyFeedback(null);
+      feedbackTimerRef.current = null;
+    }, 1_500);
+  }, []);
+  const copyConversationLink = useCallback(() => {
+    if (!conversationId) return;
+    void copy(buildAgentConversationLink(window.location.href, conversationId), "link");
+  }, [conversationId, copy]);
+  const answerFeedback = copyFeedback?.kind === "answer" ? copyFeedback.status : null;
+  const linkFeedback = copyFeedback?.kind === "link" ? copyFeedback.status : null;
+  const feedbackText = copyFeedback === null
+    ? ""
+    : copyFeedback.status === "copied"
+      ? copyFeedback.kind === "answer" ? "回答已复制" : "对话链接已复制"
+      : copyFeedback.kind === "answer" ? "复制回答失败，请重试" : "复制对话链接失败，请重试";
+  return (
+    <div className="chat-message-actions" aria-label="回答操作">
+      <button
+        type="button"
+        title={answerFeedback === "copied"
+          ? "回答已复制"
+          : answerFeedback === "error" ? "复制回答失败，请重试" : "复制回答"}
+        aria-label={answerFeedback === "copied"
+          ? "回答已复制"
+          : answerFeedback === "error" ? "复制回答失败，请重试" : "复制回答"}
+        onClick={() => void copy(text, "answer")}
+      >
+        {answerFeedback === "copied"
+          ? <Check aria-hidden="true" />
+          : answerFeedback === "error"
+            ? <CircleAlert aria-hidden="true" />
+            : <Copy aria-hidden="true" />}
+      </button>
+      {conversationId && (
+        <button
+          type="button"
+          title={linkFeedback === "copied"
+            ? "对话链接已复制"
+            : linkFeedback === "error" ? "复制对话链接失败，请重试" : "复制对话链接"}
+          aria-label={linkFeedback === "copied"
+            ? "对话链接已复制"
+            : linkFeedback === "error" ? "复制对话链接失败，请重试" : "复制对话链接"}
+          onClick={copyConversationLink}
+        >
+          {linkFeedback === "copied"
+            ? <Check aria-hidden="true" />
+            : linkFeedback === "error"
+              ? <CircleAlert aria-hidden="true" />
+              : <Link2 aria-hidden="true" />}
+        </button>
+      )}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {feedbackText}
+      </span>
     </div>
   );
 }
@@ -345,7 +501,7 @@ function DraftActions({
             disabled={state.status === "saving" || disabled}
             onClick={onConfirm}
           >
-            {state.status === "saving" ? <Loader className="spin" aria-hidden="true" /> : icon}
+            {state.status === "saving" ? <Spinner /> : icon}
             {state.status === "saving"
               ? busyLabel
               : disabled && disabledLabel
@@ -362,11 +518,18 @@ function DraftActions({
   );
 }
 
+type DraftGuardProps = {
+  draftDisabled: boolean;
+  draftDisabledLabel: string;
+};
+
 function DraftCard({
   toolCallId,
   draft,
   duplicate,
   state,
+  draftDisabled,
+  draftDisabledLabel,
   onConfirm,
 }: Readonly<{
   toolCallId: string;
@@ -374,7 +537,7 @@ function DraftCard({
   duplicate: AgentToolLink | null;
   state: AgentDraftState;
   onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
-}>) {
+} & DraftGuardProps>) {
   return (
     <div className="draft-card">
       <div className="draft-card-main">
@@ -398,6 +561,9 @@ function DraftCard({
         idleLabel="确认保存"
         busyLabel="保存中…"
         doneLabel="已保存到网址库"
+        disabled={draftDisabled}
+        disabledLabel={draftDisabledLabel}
+        hint={draftDisabled ? "未完整落库的方案不会执行。" : undefined}
         onConfirm={() => onConfirm(toolCallId, { kind: "site", draft })}
       />
     </div>
@@ -427,13 +593,15 @@ function SiteUpdateCard({
   toolCallId,
   draft,
   state,
+  draftDisabled,
+  draftDisabledLabel,
   onConfirm,
 }: Readonly<{
   toolCallId: string;
   draft: AgentSiteUpdateDraft;
   state: AgentDraftState;
   onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
-}>) {
+} & DraftGuardProps>) {
   // 只列出草稿真的要改的字段：把没变的字段也排进 diff 只会淹没重点。
   const fields = (Object.keys(UPDATE_FIELD_LABELS) as (keyof typeof UPDATE_FIELD_LABELS)[]).filter(
     (field) => draft.changes[field] !== undefined,
@@ -473,6 +641,9 @@ function SiteUpdateCard({
         idleLabel="确认修改"
         busyLabel="修改中…"
         doneLabel="修改已生效"
+        disabled={draftDisabled}
+        disabledLabel={draftDisabledLabel}
+        hint={draftDisabled ? "未完整落库的方案不会执行。" : undefined}
         onConfirm={() => onConfirm(toolCallId, { kind: "site_update", draft })}
       />
     </div>
@@ -489,13 +660,15 @@ function SiteBatchCard({
   toolCallId,
   draft,
   state,
+  draftDisabled,
+  draftDisabledLabel,
   onConfirm,
 }: Readonly<{
   toolCallId: string;
   draft: AgentSiteBatchDraft;
   state: AgentDraftState;
   onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
-}>) {
+} & DraftGuardProps>) {
   return (
     <div className="draft-card" data-variant="batch">
       <p className="draft-card-description">
@@ -518,6 +691,9 @@ function SiteBatchCard({
         idleLabel={`确认收录 ${draft.ready} 个`}
         busyLabel="收录中…"
         doneLabel="已批量收录"
+        disabled={draftDisabled}
+        disabledLabel={draftDisabledLabel}
+        hint={draftDisabled ? "未完整落库的方案不会执行。" : undefined}
         onConfirm={() => onConfirm(toolCallId, { kind: "site_batch", draft })}
       />
     </div>
@@ -528,13 +704,15 @@ function SpaceMembershipCard({
   toolCallId,
   draft,
   state,
+  draftDisabled,
+  draftDisabledLabel,
   onConfirm,
 }: Readonly<{
   toolCallId: string;
   draft: AgentSpaceMembershipDraft;
   state: AgentDraftState;
   onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
-}>) {
+} & DraftGuardProps>) {
   const adding = draft.action === "add";
   return (
     <div className="draft-card" data-variant="membership">
@@ -559,9 +737,13 @@ function SpaceMembershipCard({
         idleLabel="确认移出"
         busyLabel="处理中…"
         doneLabel={adding ? "已加入 Space" : "已移出 Space"}
-        disabled={adding}
-        disabledLabel="旧版加入草稿已失效"
-        hint={adding && state.status !== "saved" ? "重新发起后只需确认一次。" : undefined}
+        disabled={adding || draftDisabled}
+        disabledLabel={draftDisabled ? draftDisabledLabel : "旧版加入草稿已失效"}
+        hint={draftDisabled
+          ? "未完整落库的方案不会执行。"
+          : adding && state.status !== "saved"
+            ? "重新发起后只需确认一次。"
+            : undefined}
         onConfirm={() => onConfirm(toolCallId, { kind: "space_membership", draft })}
       />
     </div>
@@ -574,7 +756,8 @@ function SpaceBatchCard({
   draft,
   state,
   superseded,
-  messagePersisted,
+  draftDisabled,
+  draftDisabledLabel,
   agentWaiting,
   onConfirm,
 }: Readonly<{
@@ -583,10 +766,9 @@ function SpaceBatchCard({
   draft: AgentSpaceBatchDraft;
   state: AgentDraftState;
   superseded: boolean;
-  messagePersisted: boolean;
   agentWaiting: boolean;
   onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
-}>) {
+} & DraftGuardProps>) {
   const storageKey = `${storageScope}:${toolCallId}`;
   const [excludedSiteIds, setExcludedSiteIds] = useState<ReadonlySet<string>>(
     new Set<string>(),
@@ -620,7 +802,7 @@ function SpaceBatchCard({
     [draft.sites, excludedSiteIds],
   );
   const replaced = superseded && state.status !== "saving" && state.status !== "saved";
-  const editable = storageReady && messagePersisted && !agentWaiting && !attempted && !replaced &&
+  const editable = storageReady && !draftDisabled && !agentWaiting && !attempted && !replaced &&
     (state.status === "idle" || state.status === "error");
   const existingTargetIsEmpty = draft.target.mode === "existing" && selectedSites.length === 0;
   const creatingEmptySpace = draft.target.mode === "create" && selectedSites.length === 0;
@@ -734,7 +916,7 @@ function SpaceBatchCard({
         busyLabel="正在执行整批任务…"
         doneLabel="Space 任务已完成"
         disabled={
-          !storageReady || replaced || existingTargetIsEmpty || !messagePersisted || agentWaiting
+          !storageReady || replaced || existingTargetIsEmpty || draftDisabled || agentWaiting
         }
         disabledLabel={!storageReady
           ? "正在恢复任务状态"
@@ -742,8 +924,8 @@ function SpaceBatchCard({
           ? "已被后续方案替代"
           : agentWaiting
             ? "等待回答完成"
-            : !messagePersisted
-              ? "本轮未完整保存"
+            : draftDisabled
+              ? draftDisabledLabel
             : "至少保留 1 个网站"}
         hint={state.confirmationPending
           ? "网站与 Space 已处理；重试只会同步对话状态。"
@@ -753,7 +935,7 @@ function SpaceBatchCard({
           ? "旧方案不会再执行。"
           : agentWaiting
             ? "回答完成后即可一次确认。"
-            : !messagePersisted
+            : draftDisabled
               ? "本轮任务没有完整保存，请让 Agent 重新生成。"
             : "等待确认后整体执行。"}
         onConfirm={() => {
@@ -791,13 +973,15 @@ function ReclassifyCard({
   toolCallId,
   draft,
   state,
+  draftDisabled,
+  draftDisabledLabel,
   onConfirm,
 }: Readonly<{
   toolCallId: string;
   draft: AgentReclassifyDraft;
   state: AgentDraftState;
   onConfirm: (toolCallId: string, action: AgentDraftAction) => void;
-}>) {
+} & DraftGuardProps>) {
   return (
     <div className="draft-card" data-variant="reclassify">
       <div className="draft-card-main">
@@ -827,6 +1011,9 @@ function ReclassifyCard({
         idleLabel="确认开始重分类"
         busyLabel="重分类中…"
         doneLabel="已完成重分类"
+        disabled={draftDisabled}
+        disabledLabel={draftDisabledLabel}
+        hint={draftDisabled ? "未完整落库的方案不会执行。" : undefined}
         onConfirm={() => onConfirm(toolCallId, { kind: "reclassify", draft })}
       />
     </div>
@@ -838,7 +1025,8 @@ function ToolCard({
   result,
   draftState,
   spaceBatchSuperseded,
-  messagePersisted,
+  draftDisabled,
+  draftDisabledLabel,
   agentWaiting,
   onConfirmDraft,
 }: Readonly<{
@@ -846,10 +1034,9 @@ function ToolCard({
   result: AgentToolResult;
   draftState: AgentDraftState;
   spaceBatchSuperseded: boolean;
-  messagePersisted: boolean;
   agentWaiting: boolean;
   onConfirmDraft: (toolCallId: string, action: AgentDraftAction) => void;
-}>) {
+} & DraftGuardProps>) {
   const view = describeAgentToolResult(result.name, result.result);
   const source = "source" in view ? view.source : null;
 
@@ -892,6 +1079,8 @@ function ToolCard({
           draft={view.draft}
           duplicate={view.duplicate}
           state={draftState}
+          draftDisabled={draftDisabled}
+          draftDisabledLabel={draftDisabledLabel}
           onConfirm={onConfirmDraft}
         />
       )}
@@ -900,6 +1089,8 @@ function ToolCard({
           toolCallId={result.toolCallId}
           draft={view.draft}
           state={draftState}
+          draftDisabled={draftDisabled}
+          draftDisabledLabel={draftDisabledLabel}
           onConfirm={onConfirmDraft}
         />
       )}
@@ -908,6 +1099,8 @@ function ToolCard({
           toolCallId={result.toolCallId}
           draft={view.draft}
           state={draftState}
+          draftDisabled={draftDisabled}
+          draftDisabledLabel={draftDisabledLabel}
           onConfirm={onConfirmDraft}
         />
       )}
@@ -916,6 +1109,8 @@ function ToolCard({
           toolCallId={result.toolCallId}
           draft={view.draft}
           state={draftState}
+          draftDisabled={draftDisabled}
+          draftDisabledLabel={draftDisabledLabel}
           onConfirm={onConfirmDraft}
         />
       )}
@@ -926,7 +1121,8 @@ function ToolCard({
           draft={view.draft}
           state={draftState}
           superseded={spaceBatchSuperseded}
-          messagePersisted={messagePersisted}
+          draftDisabled={draftDisabled}
+          draftDisabledLabel={draftDisabledLabel}
           agentWaiting={agentWaiting}
           onConfirm={onConfirmDraft}
         />
@@ -936,6 +1132,8 @@ function ToolCard({
           toolCallId={result.toolCallId}
           draft={view.draft}
           state={draftState}
+          draftDisabled={draftDisabled}
+          draftDisabledLabel={draftDisabledLabel}
           onConfirm={onConfirmDraft}
         />
       )}
@@ -969,6 +1167,7 @@ function collectToolResults(message: AgentUIMessage): AgentToolResult[] {
 
 export function ConversationThread({
   messages,
+  conversationId,
   status,
   activeToolCalls,
   draftStates,
@@ -976,20 +1175,49 @@ export function ConversationThread({
   errorText,
   errorCode,
 }: Readonly<ConversationThreadProps>) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  const followOutputRef = useRef(true);
+  const lastSubmittedUserIdRef = useRef<string | null>(null);
+  const [showReturnToBottom, setShowReturnToBottom] = useState(false);
   const reducedMotion = useReducedMotion();
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
+    const thread = threadRef.current;
+    if (!thread) return;
+    thread.scrollTo({ top: thread.scrollHeight, behavior });
+  }, []);
+
+  const handleThreadScroll = useCallback(() => {
+    const thread = threadRef.current;
+    if (!thread) return;
+    const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight <= 28;
+    followOutputRef.current = atBottom;
+    setShowReturnToBottom(!atBottom);
+  }, []);
+
+  const latestUserMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "user") return messages[index]?.id ?? null;
+    }
+    return null;
+  }, [messages]);
+
   useEffect(() => {
+    if (latestUserMessageId && latestUserMessageId !== lastSubmittedUserIdRef.current) {
+      lastSubmittedUserIdRef.current = latestUserMessageId;
+      followOutputRef.current = true;
+      setShowReturnToBottom(false);
+    }
+    if (!followOutputRef.current) return;
     // Message snapshots can update many times per second. Coalesce scroll work
-    // to one paint and avoid restarting a smooth-scroll animation for every token.
+    // to one paint. A new user message and each streamed snapshot therefore
+    // schedule one bottom adjustment instead of competing scroll effects.
     const frame = window.requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({
-        block: "end",
-        behavior: reducedMotion || status === "streaming" ? "auto" : "smooth",
-      });
+      if (!followOutputRef.current) return;
+      scrollToBottom("auto");
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, status, reducedMotion]);
+  }, [latestUserMessageId, messages, scrollToBottom]);
 
   const waiting = status === "submitted" || status === "streaming";
   const lastMessage = messages[messages.length - 1];
@@ -1015,7 +1243,15 @@ export function ConversationThread({
   }, [messages]);
 
   return (
-    <div className="chat-thread" role="log" aria-live="polite" aria-busy={waiting}>
+    <div className="chat-conversation">
+      <div
+        ref={threadRef}
+        className="chat-thread"
+        role="log"
+        aria-live="polite"
+        aria-busy={waiting}
+        onScroll={handleThreadScroll}
+      >
       {messages.map((message) => {
         if (message.role !== "user" && message.role !== "assistant") return null;
         const toolResults = message.role === "assistant" ? collectToolResults(message) : [];
@@ -1023,6 +1259,18 @@ export function ConversationThread({
         const metadata = normalizeAgentMessageMetadata(message.metadata);
         const messageStreaming =
           waiting && message.role === "assistant" && message.id === lastMessage?.id;
+        const messageStatus = messageStreaming
+          ? "streaming"
+          : message.role === "assistant" && message.id === lastMessage?.id && status === "error"
+            ? "error"
+            : (metadata.messageStatus ?? "complete");
+        const answerText = message.parts
+          .map((part) => part.type === "text" ? part.text : "")
+          .join("")
+          .trim();
+        const sourceParts = message.parts.filter(
+          (part): part is SourceUrlUIPart => part.type === "source-url",
+        );
         const reasoningParts = message.parts.filter((part) => part.type === "reasoning");
         const reasoningText = reasoningParts.map((part) => part.text).join("");
         const firstReasoningIndex = message.parts.findIndex((part) => part.type === "reasoning");
@@ -1033,6 +1281,13 @@ export function ConversationThread({
         const reasoningStreaming = messageStreaming && (hasExplicitReasoningState
           ? reasoningParts.some((part) => part.state === "streaming")
           : !hasText);
+        const provenanceLabels = agentSourceLabels(toolResults).filter(
+          (label) => label !== AGENT_SOURCE_MODEL,
+        );
+        const draftDisabled = messageStatus !== "complete" || metadata.turnPersisted === false;
+        const draftDisabledLabel = messageStatus !== "complete"
+          ? "本轮未完成，不能执行"
+          : "本轮尚未完整落库";
 
         return (
           <motion.article
@@ -1066,7 +1321,7 @@ export function ConversationThread({
                   if (index !== firstReasoningIndex) return null;
                   return (
                     <ReasoningDisclosure
-                      key={`reasoning-${index}-${reasoningStreaming ? "streaming" : "settled"}`}
+                      key={`reasoning-${index}`}
                       text={reasoningText}
                       streaming={reasoningStreaming}
                       durationMs={metadata.reasoningMs}
@@ -1092,7 +1347,8 @@ export function ConversationThread({
                         result.name === "propose_space_batch" &&
                         result.toolCallId !== latestSpaceBatchToolCallId
                       }
-                      messagePersisted={metadata.turnPersisted === true}
+                      draftDisabled={draftDisabled}
+                      draftDisabledLabel={draftDisabledLabel}
                       agentWaiting={waiting}
                       onConfirmDraft={onConfirmDraft}
                     />
@@ -1100,17 +1356,29 @@ export function ConversationThread({
                 }
                 return null;
               })}
-              {message.role === "assistant" && hasText && (
+              {message.role === "assistant" && hasText && provenanceLabels.length > 0 && (
                 <div className="chat-sources">
-                  {agentSourceLabels(toolResults).map((label) => (
+                  {provenanceLabels.map((label) => (
                     <span className="source-badge" key={label}>
                       来源：{label}
                     </span>
                   ))}
                 </div>
               )}
+              {message.role === "assistant" && sourceParts.length > 0 && (
+                <SourceList sources={sourceParts} />
+              )}
+              {message.role === "assistant" && !messageStreaming && (
+                <AssistantStatus status={messageStatus} />
+              )}
               {message.role === "assistant" && !messageStreaming && (
                 <ResponseMetrics metadata={metadata} />
+              )}
+              {message.role === "assistant" && !messageStreaming && answerText && (
+                <MessageActions
+                  text={answerText}
+                  conversationId={metadata.conversationId ?? conversationId ?? undefined}
+                />
               )}
             </div>
           </motion.article>
@@ -1143,7 +1411,22 @@ export function ConversationThread({
           )}
         </p>
       )}
-      <div ref={bottomRef} />
+      </div>
+      {showReturnToBottom && (
+        <button
+          type="button"
+          className="chat-return-bottom"
+          aria-label="返回对话底部"
+          title="返回底部"
+          onClick={() => {
+            followOutputRef.current = true;
+            setShowReturnToBottom(false);
+            scrollToBottom(reducedMotion ? "auto" : "smooth");
+          }}
+        >
+          <ArrowDown aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }

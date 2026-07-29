@@ -5,8 +5,9 @@ import { motion, useReducedMotion } from "motion/react";
 
 import { Spinner } from "./spinner";
 
-// 改编自 React Bits 的弹入动效风格（MIT + Commons Clause）：
+// 上游风格参考：React Bits，HEAD 61909958（2026-07-29 核对）：
 // https://reactbits.dev/
+// 本地改动：WebHub 自有 Spinner/Check 状态组合、固定弹入曲线与 reduced-motion。
 type PopCheckProps = {
   done: boolean;
   size?: number;

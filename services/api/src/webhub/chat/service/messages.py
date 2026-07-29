@@ -228,6 +228,7 @@ async def append_message(
     status: MessageStatus = "complete",
     idempotency_key: str | None = None,
     expected_version: int | None = None,
+    commit: bool = True,
 ) -> MessageAppendResult:
     content, parts_json, sources_json, artifacts_json, metadata_json = _message_payload(
         role=role,
@@ -322,7 +323,10 @@ async def append_message(
         )
         session.add(message)
         try:
-            await session.commit()
+            if commit:
+                await session.commit()
+            else:
+                await session.flush()
         except IntegrityError as error:
             await session.rollback()
             existing = await _existing_idempotent_message(
@@ -372,10 +376,14 @@ async def update_message(
     artifacts: list[Any] | None = None,
     metadata: dict[str, Any] | None = None,
     status: MessageStatus | None = None,
+    expected_status: MessageStatus | None = None,
+    commit: bool = True,
 ) -> ConversationMessageResponse:
     message = await _owned_message(session, user_id, conversation_id, message_id)
     if message.version != expected_version:
         raise ChatConflictError("消息已被修改，请刷新后重试", code="version_conflict")
+    if expected_status is not None and message.status != expected_status:
+        raise ChatConflictError("消息状态已终止，请刷新后重试", code="status_conflict")
     next_content = message.content if content is None else content
     next_parts = (
         _json_value(message.parts_json, field="parts", expected=list) if parts is None else parts
@@ -418,6 +426,11 @@ async def update_message(
             ConversationMessage.conversation_id == conversation_id,
             ConversationMessage.id == message_id,
             ConversationMessage.version == expected_version,
+            *(
+                (ConversationMessage.status == expected_status,)
+                if expected_status is not None
+                else ()
+            ),
         )
         .values(
             content=next_content,
@@ -442,7 +455,10 @@ async def update_message(
         )
         .values(last_message_at=now, updated_at=now)
     )
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     await session.refresh(message)
     return _message_response(message)
 

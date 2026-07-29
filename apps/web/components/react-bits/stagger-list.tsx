@@ -3,8 +3,9 @@
 import { motion, useReducedMotion } from "motion/react";
 import { Children, type ReactNode } from "react";
 
-// 改编自 React Bits AnimatedList（MIT + Commons Clause）：
+// 上游参考：React Bits AnimatedList，HEAD 61909958（2026-07-29 核对）：
 // https://reactbits.dev/components/animated-list
+// 本地改动：只保留一次性进入动效，并在 reduced-motion 下直接静态渲染。
 type StaggerListProps = {
   delay?: number;
   className?: string;

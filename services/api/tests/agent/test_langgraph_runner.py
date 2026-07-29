@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -138,6 +140,7 @@ def _run(
     request_message: str,
     conversation_id: str | None = None,
     metadata: Mapping[str, Any] | None = None,
+    turn_id: str | None = None,
 ):
     async def scenario():
         database = Database(settings.database_url)
@@ -148,6 +151,7 @@ def _run(
             runner = LangGraphAgentRunner(database=database, settings=settings)
             request = AgentRunRequest(
                 account_id=user_id,
+                turn_id=turn_id or f"test-turn:{request_message}",
                 conversation_id=conversation_id,
                 message=request_message,
                 metadata=dict(metadata) if metadata is not None else {},
@@ -169,6 +173,22 @@ def _run(
 
 def _types(chunks: Sequence[dict[str, Any]]) -> list[str]:
     return [str(chunk["type"]) for chunk in chunks]
+
+
+def _chunk_of_type(
+    chunks: Sequence[dict[str, Any]],
+    chunk_type: str,
+) -> dict[str, Any]:
+    return next(chunk for chunk in chunks if chunk["type"] == chunk_type)
+
+
+def _provider_metadata(chunks: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    return next(
+        chunk["messageMetadata"]
+        for chunk in chunks
+        if chunk["type"] == "message-metadata"
+        and "provider" in chunk["messageMetadata"]
+    )
 
 
 def test_streams_text_tool_calls_and_persists_the_turn(
@@ -208,21 +228,25 @@ def test_streams_text_tool_calls_and_persists_the_turn(
 
     assert _types(chunks) == [
         "start",
+        "message-metadata",
         "data-agent-tool-call",
         "data-agent-tool-result",
         "text-start",
         "text-delta",
         "text-delta",
         "text-end",
+        "message-metadata",
         "finish",
     ]
-    call_chunk = chunks[1]
+    call_chunk = _chunk_of_type(chunks, "data-agent-tool-call")
+    tool_call_id = f"{chunks[0]['messageId']}:tool:1:call-1"
     assert call_chunk["data"] == {
-        "toolCallId": "call-1",
+        "toolCallId": tool_call_id,
         "name": "search_library",
         "arguments": {"query": "向量数据库"},
     }
-    result_chunk = chunks[2]
+    result_chunk = _chunk_of_type(chunks, "data-agent-tool-result")
+    assert result_chunk["data"]["toolCallId"] == tool_call_id
     assert result_chunk["data"]["result"]["source"] == "站内存储数据"
 
     # The turn is archived in WebHub's own tables, not only in the stream.
@@ -231,6 +255,7 @@ def test_streams_text_tool_calls_and_persists_the_turn(
         ("assistant", "网址库里没有找到相关网站。"),
     ]
     assert messages[1].sources[0]["name"] == "search_library"
+    assert messages[1].sources[0]["toolCallId"] == tool_call_id
 
 
 def test_new_conversation_id_is_announced_in_stream_metadata(
@@ -244,10 +269,13 @@ def test_new_conversation_id_is_announced_in_stream_metadata(
     start = chunks[0]
     conversation_id = start["messageMetadata"]["conversationId"]
     assert conversation_id
-    assert start["messageMetadata"]["provider"] == "ollama"
-    assert start["messageMetadata"]["model"] == "qwen3"
+    assert start["messageMetadata"]["turnState"] == "running"
+    assert start["messageMetadata"]["turnPersisted"] is False
+    provider_metadata = _provider_metadata(chunks)
+    assert provider_metadata["provider"] == "ollama"
+    assert provider_metadata["model"] == "qwen3"
     # Without a search Provider the model must be told it cannot browse.
-    assert start["messageMetadata"]["webSearch"] is False
+    assert provider_metadata["webSearch"] is False
     finish_metadata = chunks[-1]["messageMetadata"]
     assert finish_metadata["conversationId"] == conversation_id
     assert "usage" not in finish_metadata
@@ -340,6 +368,7 @@ def test_reasoning_usage_and_server_timings_stream_and_persist(
 
     assert _types(chunks) == [
         "start",
+        "message-metadata",
         "reasoning-start",
         "reasoning-delta",
         "reasoning-end",
@@ -351,11 +380,18 @@ def test_reasoning_usage_and_server_timings_stream_and_persist(
         "text-start",
         "text-delta",
         "text-end",
+        "message-metadata",
         "finish",
     ]
     metadata = chunks[-1]["messageMetadata"]
     assert metadata == {
+        "turnId": "test-turn:帮我找 RAG 网站",
+        "turnState": "complete",
+        "messageStatus": "complete",
+        "turnPersisted": True,
         "conversationId": chunks[0]["messageMetadata"]["conversationId"],
+        "assistantMessageId": chunks[0]["messageMetadata"]["assistantMessageId"],
+        "recommendationManifestVersion": 1,
         "provider": "ollama",
         "model": "qwen3",
         "webSearch": False,
@@ -428,29 +464,31 @@ def test_stream_is_valid_for_the_ui_message_encoder(
     assert b'"errorText"' not in encoded
 
 
-def test_account_without_a_model_provider_cannot_start_a_turn(tmp_path: Path) -> None:
+def test_account_without_a_model_provider_persists_a_terminal_error(tmp_path: Path) -> None:
     with _account(tmp_path, with_provider=False) as settings:
-        pass
+        chunks, messages = _run(settings, "你好", turn_id="provider-missing-turn")
 
-    async def scenario() -> None:
-        database = Database(settings.database_url)
-        try:
-            async with database.sessions() as session:
-                user_id = await session.scalar(select(User.id))
-            assert user_id is not None
-            runner = LangGraphAgentRunner(database=database, settings=settings)
-            request = AgentRunRequest(
-                account_id=user_id,
-                conversation_id=None,
-                message="你好",
-            )
-            async for _ in runner.run(request):
-                pass
-        finally:
-            await database.dispose()
-
-    with pytest.raises(AgentProviderNotConfiguredError):
-        asyncio.run(scenario())
+    assert _types(chunks) == [
+        "start",
+        "message-metadata",
+        "data-agent-error",
+        "error",
+    ]
+    error_metadata = chunks[1]["messageMetadata"]
+    assert error_metadata["turnId"] == "provider-missing-turn"
+    assert error_metadata["turnState"] == "error"
+    assert error_metadata["messageStatus"] == "error"
+    assert error_metadata["turnPersisted"] is True
+    assert error_metadata["errorCode"] == AgentProviderNotConfiguredError.code
+    assert chunks[2]["data"] == {
+        "code": AgentProviderNotConfiguredError.code,
+        "message": AgentProviderNotConfiguredError.safe_message,
+    }
+    assert [(message.role, message.status) for message in messages] == [
+        ("user", "complete"),
+        ("assistant", "error"),
+    ]
+    assert messages[-1].metadata == error_metadata
 
 
 def test_client_can_switch_off_a_configured_search_provider_for_one_turn(
@@ -464,7 +502,7 @@ def test_client_can_switch_off_a_configured_search_provider_for_one_turn(
 
     # The stream advertises the effective capability, and the graph never even
     # receives the web_search tool for this turn.
-    assert chunks[0]["messageMetadata"]["webSearch"] is False
+    assert _provider_metadata(chunks)["webSearch"] is False
     tool_names = [tool.name for tool in graph.captured["tools"]]  # type: ignore[attr-defined]
     assert "web_search" not in tool_names
 
@@ -479,7 +517,7 @@ def test_client_cannot_enable_web_search_the_account_never_configured(
 
     # metadata can only narrow: without an account-level search Provider the
     # hint grants nothing.
-    assert chunks[0]["messageMetadata"]["webSearch"] is False
+    assert _provider_metadata(chunks)["webSearch"] is False
     tool_names = [tool.name for tool in graph.captured["tools"]]  # type: ignore[attr-defined]
     assert "web_search" not in tool_names
 
@@ -494,9 +532,163 @@ def test_non_boolean_web_search_hint_is_treated_as_no_preference(
         chunks, _ = _run(settings, "查一下", metadata={"webSearch": "false"})
 
     # The string "false" is not a strict boolean, so the account default wins.
-    assert chunks[0]["messageMetadata"]["webSearch"] is True
+    assert _provider_metadata(chunks)["webSearch"] is True
     tool_names = [tool.name for tool in graph.captured["tools"]]  # type: ignore[attr-defined]
     assert "web_search" in tool_names
+
+
+def test_web_search_sources_are_trusted_normalized_deduplicated_and_attributed() -> None:
+    tool_result = {
+        "toolCallId": "call-search",
+        "name": "web_search",
+        "result": {
+            "source": "联网搜索",
+            "provider_id": "tavily",
+            "items": [
+                {
+                    "title": "  Example   Docs  ",
+                    "url": "https://Example.com/docs#first",
+                },
+                {
+                    "title": "duplicate",
+                    "url": "https://example.com:443/docs#second",
+                },
+                {
+                    "title": "secret",
+                    "url": "https://example.com/docs?token=secret",
+                },
+                {"title": "private", "url": "http://127.0.0.1/internal"},
+            ],
+        },
+    }
+    seen_urls: set[str] = set()
+
+    chunks = runner_module._source_url_chunks(tool_result, seen_urls)
+
+    canonical_url = "https://example.com/docs"
+    assert chunks == [
+        {
+            "type": "source-url",
+            "sourceId": f"web:{hashlib.sha256(canonical_url.encode()).hexdigest()[:24]}",
+            "url": canonical_url,
+            "title": "Example Docs",
+            "providerMetadata": {"webhub": {"searchProvider": "tavily"}},
+        }
+    ]
+    assert seen_urls == {canonical_url}
+    assert runner_module._source_url_chunks(tool_result, seen_urls) == []
+
+    for untrusted in (
+        {**tool_result, "name": "search_library"},
+        {
+            **tool_result,
+            "result": {**tool_result["result"], "source": "模型知识"},
+        },
+        {
+            **tool_result,
+            "result": {**tool_result["result"], "provider_id": "unknown"},
+        },
+    ):
+        assert runner_module._source_url_chunks(untrusted, set()) == []
+
+
+def test_in_progress_notification_does_not_reuse_the_durable_assistant_id() -> None:
+    async def collect() -> list[Mapping[str, Any]]:
+        request = AgentRunRequest(
+            account_id="account-alice",
+            turn_id="turn-live",
+            conversation_id="conversation-1",
+            message="同一问题",
+        )
+        claim = SimpleNamespace(
+            action="in_progress",
+            state="running",
+            assistant_message_id="assistant-durable",
+            conversation_id="conversation-1",
+            retry_after_seconds=12,
+        )
+        return [chunk async for chunk in runner_module._turn_status_stream(request, claim)]
+
+    chunks = asyncio.run(collect())
+    assert chunks[0]["messageId"] != "assistant-durable"
+    assert chunks[0]["messageMetadata"]["assistantMessageId"] == "assistant-durable"
+    assert chunks[0]["messageMetadata"]["retryAfterSeconds"] == 12
+
+
+def test_incomplete_assistant_turn_is_removed_from_next_model_history() -> None:
+    items = [
+        SimpleNamespace(
+            role="user",
+            status="complete",
+            content="这个问题后来被停止",
+            metadata={"turnId": "turn-aborted"},
+            artifacts=[],
+        ),
+        SimpleNamespace(
+            role="assistant",
+            status="aborted",
+            content="只回答了一半",
+            metadata={"turnId": "turn-aborted"},
+            artifacts=[],
+        ),
+        SimpleNamespace(
+            role="user",
+            status="complete",
+            content="完整问题",
+            metadata={"turnId": "turn-complete"},
+            artifacts=[],
+        ),
+        SimpleNamespace(
+            role="assistant",
+            status="complete",
+            content="完整回答",
+            metadata={"turnId": "turn-complete"},
+            artifacts=[],
+        ),
+    ]
+
+    history = runner_module._history_messages(items)
+
+    assert [message.content for message in history] == ["完整问题", "完整回答"]
+
+
+def test_same_turn_retry_replays_without_reinvoking_graph_or_duplicate_messages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost client response must be recoverable by the same stable turn id."""
+
+    with _account(tmp_path) as settings:
+        graph = _install_fake_graph(monkeypatch, _text_events(["只生成一次。\n"]))
+        first_chunks, first_messages = _run(
+            settings,
+            "幂等回合",
+            turn_id="stable-turn-1",
+        )
+        replay_chunks, replay_messages = _run(
+            settings,
+            "幂等回合",
+            turn_id="stable-turn-1",
+        )
+
+    assert _types(first_chunks)[-1] == "finish"
+    assert _types(replay_chunks) == [
+        "start",
+        "text-start",
+        "text-delta",
+        "text-end",
+        "finish",
+    ]
+    assert replay_chunks[0]["messageMetadata"]["turnReplayed"] is True
+    assert len(graph.calls) == 1
+    assert [(item.role, item.content) for item in first_messages] == [
+        ("user", "幂等回合"),
+        ("assistant", "只生成一次。\n"),
+    ]
+    assert [(item.role, item.content) for item in replay_messages] == [
+        ("user", "幂等回合"),
+        ("assistant", "只生成一次。\n"),
+    ]
 
 
 def test_history_replay_keeps_the_newest_turns_not_the_oldest(

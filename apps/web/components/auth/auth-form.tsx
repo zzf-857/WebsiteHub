@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowRight, Eye, EyeOff, LoaderCircle } from "lucide-react";
+import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { useAuth } from "@/components/auth/auth-context";
+import { Spinner } from "@/components/react-bits/spinner";
 import { submitCredentials } from "@/lib/auth-client";
 import {
   safeNextPath,
@@ -169,7 +170,7 @@ export function AuthForm({
 
           <button className="auth-submit" type="submit" disabled={submitting}>
             {submitting ? (
-              <LoaderCircle className="loading-spinner" aria-hidden="true" />
+              <Spinner />
             ) : (
               <ArrowRight aria-hidden="true" />
             )}

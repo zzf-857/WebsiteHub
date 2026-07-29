@@ -3,10 +3,50 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
+from weakref import ref
 
 import pytest
 
 from webhub.ingestion import worker
+from webhub.ingestion.fetcher import FetchOutcome
+
+
+class _PreferenceSession:
+    async def get(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def rollback(self) -> None:
+        return None
+
+
+class _PreferenceDatabase:
+    @asynccontextmanager
+    async def sessions(self):
+        yield _PreferenceSession()
+
+
+def test_stopped_database_registry_requires_object_identity() -> None:
+    class EqualDatabase:
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, EqualDatabase)
+
+        def __hash__(self) -> int:
+            return 1
+
+    stopped = EqualDatabase()
+    running = EqualDatabase()
+    worker._mark_database_stopped(stopped)  # noqa: SLF001 - registry regression
+    try:
+        assert worker._database_is_stopped(stopped) is True  # noqa: SLF001
+        assert worker._database_is_stopped(running) is False  # noqa: SLF001
+
+        # Deterministically model a stale id-keyed entry without relying on the
+        # interpreter to reuse a recently collected object's address.
+        worker._STOPPED_DATABASES[id(running)] = ref(stopped)  # noqa: SLF001
+        assert worker._database_is_stopped(running) is False  # noqa: SLF001
+    finally:
+        worker._STOPPED_DATABASES.pop(id(running), None)  # noqa: SLF001
+        worker._mark_database_started(stopped)  # noqa: SLF001
 
 
 def test_analysis_queue_deduplicates_and_caps_execution_concurrency(
@@ -62,21 +102,23 @@ def test_waiting_analysis_joins_existing_site_job(monkeypatch: pytest.MonkeyPatc
 
     async def scenario() -> None:
         nonlocal calls
-        database = object()
+        database = _PreferenceDatabase()
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def fake_analyze(*_args: object, **_kwargs: object) -> None:
+        async def fake_analyze(*_args: object, **_kwargs: object) -> FetchOutcome:
             nonlocal calls
             calls += 1
             started.set()
             await release.wait()
+            return FetchOutcome(status="complete", reason="test")
 
         monkeypatch.setattr(worker, "analyze_in_background", fake_analyze)
         worker.schedule_analysis(
             database,  # type: ignore[arg-type]
             user_id="join-user",
             site_ids=("site-1",),
+            intent=worker.AnalysisIntent.SITE_ENRICHMENT,
         )
         waiter = asyncio.create_task(
             worker.analyze_and_wait(
@@ -99,11 +141,17 @@ def test_waiting_analysis_moves_a_new_job_ahead_of_background_backlog(
     order: list[str] = []
 
     async def scenario() -> None:
-        database = object()
+        database = _PreferenceDatabase()
 
-        async def fake_analyze(_database: object, _user_id: str, site_id: str) -> None:
+        async def fake_analyze(
+            _database: object,
+            _user_id: str,
+            site_id: str,
+            **_kwargs: object,
+        ) -> FetchOutcome:
             order.append(site_id)
             await asyncio.sleep(0)
+            return FetchOutcome(status="complete", reason="test")
 
         monkeypatch.setattr(worker, "MAX_CONCURRENT_ANALYSES", 1)
         monkeypatch.setattr(worker, "analyze_in_background", fake_analyze)

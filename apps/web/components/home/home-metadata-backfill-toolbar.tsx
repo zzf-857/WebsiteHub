@@ -3,13 +3,14 @@
 import {
   Check,
   CircleAlert,
-  LoaderCircle,
   RefreshCw,
   WandSparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { errorText, isAbortError } from "@/components/home/home-shared";
+import { CountUp } from "@/components/react-bits/count-up";
+import { Spinner } from "@/components/react-bits/spinner";
 import {
   getActiveMetadataBackfill,
   getMetadataBackfillProgress,
@@ -299,7 +300,7 @@ export function HomeMetadataBackfillToolbar({
           title={actionLabel}
         >
           {state.kind === "starting" || state.kind === "running" ? (
-            <LoaderCircle className="loading-spinner" aria-hidden="true" />
+            <Spinner />
           ) : state.kind === "completed" ? (
             <Check aria-hidden="true" />
           ) : state.kind === "warning" || state.kind === "failed" || state.kind === "error" ? (
@@ -322,7 +323,7 @@ export function HomeMetadataBackfillToolbar({
         >
           <div className="home-metadata-backfill-progress-head">
             <span>{progressSummary(progress)}</span>
-            <strong>{progressPercent(progress)}%</strong>
+            <strong><CountUp value={progressPercent(progress)} />%</strong>
           </div>
           {progress.totalCount > 0 && (
             <div

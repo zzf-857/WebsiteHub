@@ -414,8 +414,13 @@ function CategorySection({
 
   useEffect(() => {
     if (!hasSites || !hasLoaded) return;
-    void loadSites(true);
+    let active = true;
+    const frame = window.requestAnimationFrame(() => {
+      if (active) void loadSites(true);
+    });
     return () => {
+      active = false;
+      window.cancelAnimationFrame(frame);
       loadGenerationRef.current += 1;
       loadControllerRef.current?.abort();
       loadControllerRef.current = null;

@@ -1,7 +1,9 @@
 "use client";
 
-import { LoaderCircle, Plus, Save } from "lucide-react";
+import { Plus, Save } from "lucide-react";
 import { useId, useMemo, useState, type FormEvent } from "react";
+
+import { Spinner } from "@/components/react-bits/spinner";
 
 import {
   libraryTagNameKey,
@@ -255,7 +257,7 @@ function SiteFormContent({
             onClick={() => void handleCreateTag()}
           >
             {tagCreating ? (
-              <LoaderCircle className="loading-spinner" aria-hidden="true" />
+              <Spinner />
             ) : (
               <Plus aria-hidden="true" />
             )}
@@ -304,7 +306,7 @@ function SiteFormContent({
       <footer className="library-form-actions">
         <button className="library-button secondary" type="button" onClick={onCancel} disabled={busy}>取消</button>
         <button className="library-button primary" type="submit" disabled={busy || tagCreating || !values.name.trim() || !values.url.trim()}>
-          {busy ? <LoaderCircle className="loading-spinner" aria-hidden="true" /> : <Save aria-hidden="true" />}
+          {busy ? <Spinner /> : <Save aria-hidden="true" />}
           <span>{busy ? "正在保存" : isEdit ? "保存修改" : "新增网站"}</span>
         </button>
       </footer>

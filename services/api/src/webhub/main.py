@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from webhub.agent.access import DatabaseConversationAccess
 from webhub.agent.langgraph_runner import build_agent_runner
 from webhub.agent.site_enrichment import AgentSiteEnricher
+from webhub.agent.turns import close_expired_turns
 from webhub.auth.rate_limit import LoginRateLimiter
 from webhub.bookmarks.admission import BookmarkUploadAdmissionManager
 from webhub.config import Settings, get_settings
@@ -25,6 +26,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await selected_database.assert_schema_current()
+        # Recovery is bounded so stale history cannot delay service startup
+        # indefinitely. Account-scoped request entry continues cleanup later.
+        await close_expired_turns(selected_database, limit=500)
         ingestion_worker.start(
             selected_database,
             site_enricher=AgentSiteEnricher(selected_database, selected_settings),

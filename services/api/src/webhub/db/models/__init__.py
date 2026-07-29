@@ -21,6 +21,7 @@ from webhub.db.models.accounts import (
     User,
     UserPreference,
 )
+from webhub.db.models.agent_turns import AgentTurnRun
 from webhub.db.models.bookmark_jobs import (
     BookmarkImportCheckpoint,
     BookmarkImportCurrentRun,
@@ -60,6 +61,7 @@ from webhub.db.models.spaces import (
 )
 
 __all__ = [
+    "AgentTurnRun",
     "Base",
     "BookmarkImportCheckpoint",
     "BookmarkImportCurrentRun",

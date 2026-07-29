@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from webhub.agent import routes as route_module
 from webhub.agent.routes import router
 from webhub.agent.runner import (
     AgentConversationUnavailableError,
@@ -71,12 +72,15 @@ def _client(
     account_id: str = "account-alice",
     runner: object | None = None,
     access: object | None = None,
+    database: object | None = None,
 ) -> Iterator[TestClient]:
     app = FastAPI()
     if runner is not None:
         app.state.agent_runner = runner
     if access is not None:
         app.state.agent_conversation_access = access
+    if database is not None:
+        app.state.database = database
 
     async def identity_override():
         return SimpleNamespace(user=SimpleNamespace(id=account_id))
@@ -95,6 +99,7 @@ def test_route_scopes_runner_and_conversation_to_authenticated_account() -> None
         response = client.post(
             "/api/agent/chat",
             json={
+                "turnId": "turn-client-1",
                 "conversationId": "conversation-1",
                 "message": "/搜索 Unity API",
                 "slashCommand": {
@@ -109,7 +114,7 @@ def test_route_scopes_runner_and_conversation_to_authenticated_account() -> None
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    assert response.headers["cache-control"] == "no-cache, no-store"
+    assert response.headers["cache-control"] == "no-cache, no-store, no-transform"
     assert response.headers["x-vercel-ai-ui-message-stream"] == "v1"
     assert response.headers["x-webhub-agent-protocol"] == "v1"
     assert access.calls == [("account-alice", "conversation-1")]
@@ -117,6 +122,7 @@ def test_route_scopes_runner_and_conversation_to_authenticated_account() -> None
     request = runner.requests[0]
     assert request.account_id == "account-alice"
     assert request.user_id == "account-alice"
+    assert request.turn_id == "turn-client-1"
     assert request.conversation_id == "conversation-1"
     assert request.message == "/搜索 Unity API"
     assert request.metadata == {"searchScope": "collection"}
@@ -133,6 +139,73 @@ def test_route_scopes_runner_and_conversation_to_authenticated_account() -> None
         "finish",
     ]
     assert _chunks(response)[-1] == "[DONE]"
+
+
+def test_legacy_client_without_turn_id_gets_a_server_generated_id() -> None:
+    runner = RecordingRunner()
+    with _client(runner=runner) as client:
+        response = client.post(
+            "/api/agent/chat",
+            json={"message": "旧客户端请求"},
+        )
+
+    assert response.status_code == 200
+    assert len(runner.requests) == 1
+    generated = runner.requests[0].turn_id
+    assert generated
+    assert len(generated) == 36
+    assert generated.count("-") == 4
+
+
+def test_unknown_slash_command_is_terminalized_in_the_turn_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claimed: list[AgentRunRequest] = []
+    terminal: list[tuple[str, str]] = []
+
+    async def fake_claim_turn(database: object, request: AgentRunRequest):
+        assert database is fake_database
+        claimed.append(request)
+        return SimpleNamespace(action="execute", lease=SimpleNamespace(run_id="run-1"))
+
+    async def fake_mark_turn_terminal(
+        database: object,
+        lease: object,
+        *,
+        state: str,
+        error_code: str,
+    ) -> None:
+        assert database is fake_database
+        assert lease.run_id == "run-1"  # type: ignore[attr-defined]
+        terminal.append((state, error_code))
+
+    fake_database = object()
+    monkeypatch.setattr(route_module, "claim_turn", fake_claim_turn)
+    monkeypatch.setattr(route_module, "mark_turn_terminal", fake_mark_turn_terminal)
+    runner = RecordingRunner()
+    with _client(runner=runner, database=fake_database) as client:
+        response = client.post(
+            "/api/agent/chat",
+            json={
+                "turnId": "turn-invalid-command",
+                "message": "/不存在 参数",
+                "slashCommand": {
+                    "name": "/不存在",
+                    "argumentText": "参数",
+                    "arguments": ["参数"],
+                    "known": False,
+                },
+            },
+        )
+
+    assert runner.requests == []
+    assert terminal == [("error", "unknown_slash_command")]
+    assert len(claimed) == 1
+    assert claimed[0].turn_id == "turn-invalid-command"
+    assert claimed[0].idempotency_payload is not None
+    chunks = _chunks(response)
+    assert chunks[0]["messageMetadata"]["turnId"] == "turn-invalid-command"
+    assert chunks[0]["messageMetadata"]["turnPersisted"] is True
 
 
 def test_account_scope_cannot_be_overridden_by_request_body() -> None:
@@ -227,7 +300,12 @@ def test_default_runner_returns_safe_provider_error_without_external_call() -> N
     chunks = _chunks(response)
     assert response.status_code == 200
     assert chunks[0]["type"] == "start"
-    assert chunks[0]["messageMetadata"] == {"errorCode": "provider_not_configured"}
+    metadata = chunks[0]["messageMetadata"]
+    assert metadata["errorCode"] == "provider_not_configured"
+    assert metadata["messageStatus"] == "error"
+    assert metadata["turnState"] == "error"
+    assert metadata["turnPersisted"] is False
+    assert len(metadata["turnId"]) == 36
     assert chunks[1]["data"] == {
         "code": "provider_not_configured",
         "message": AgentProviderNotConfiguredError.safe_message,

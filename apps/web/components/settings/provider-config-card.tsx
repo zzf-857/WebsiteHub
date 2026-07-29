@@ -91,10 +91,11 @@ export function ProviderConfigCard({
             className="provider-btn provider-btn-secondary provider-btn-sm"
             type="button"
             disabled={busy}
+            aria-busy={busy}
             onClick={onEnable}
           >
             {busy ? <Spinner size={13} /> : <Power aria-hidden="true" />}
-            启用
+            {busy ? "正在启用" : "启用"}
           </button>
         )}
         <button
