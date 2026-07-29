@@ -1,8 +1,8 @@
 # WebHub 产品需求文档（PRD）
 
 > 文档版本：v0.9 Draft
-> 更新日期：2026-07-28
-> 当前状态：核心范围已确认；Q1-Q15 代码项已完成，Q14-Q15 页面能力待真实浏览器验收
+> 更新日期：2026-07-29
+> 当前状态：核心范围已确认；已登记的 Q1-Q26 代码项与全仓自动门禁已完成，Q14-Q26 页面能力待真实浏览器验收；来源台账、十万条完整门禁与数据导出/恢复仍是 P0 缺口
 > 需求依据：`00_Todolist/WebHub_Todolist/todolist.md`、账号与浏览器书签导入确认结论；不继承既有实施计划
 
 ## 1. 产品概述
@@ -33,7 +33,8 @@ WebHub 是一个运行在现代浏览器中的 **Agent First 个人网站知识�
 - 内置 Tavily、Jina、Exa 三种真实联网搜索 Provider，由用户自行配置 API Key。
 - 支持局域网内的简单注册、登录和账号级数据隔离，配置随账号加载。
 - 支持 Chrome、Edge、Firefox、Safari 等常见浏览器导出的 Netscape Bookmark HTML，在大数据量下完成可恢复解析、分类预览和确认入库。
-- 在不明显增加无效复杂度的前提下，让 Vercel AI SDK、LangChain/LangGraph、LlamaIndex 分别承担真实职责。
+- 在不明显增加无效复杂度的前提下，让 Vercel AI SDK 与 LangChain/LangGraph 承担真实职责；
+  检索/RAG 以账号隔离、可重建和可降级为硬标准，不为框架名额引入无收益依赖。
 
 ### 2.2 第一版非目标
 
@@ -267,7 +268,7 @@ MVP 至少维护以下信息：
 | FR-CF-004 | 每个搜索 Provider 提供 API Key 申请入口、Key 输入、连接测试和能力说明。 |
 | FR-CF-005 | API Key 按账号由服务端加密保存，前端保存后只显示掩码，不回传完整值。 |
 | FR-CF-006 | MVP 不做自动 Provider 故障转移，避免用户不知情的额外 API 消耗。 |
-| FR-CF-007 | MVP 由用户手动填写模型名；自动拉取模型列表和模型能力检测进入增强版本。 |
+| FR-CF-007 | 模型名可手动填写；用户显式测试连接后可读取模型列表并选择，读取失败时仍可回退手填。自动能力检测与推荐进入增强版本。 |
 | FR-CF-008 | 每个模型和搜索 Provider 都显示可辨识的品牌图标、名称、连接状态和启用状态；自定义 Provider 使用统一通用图标。 |
 | FR-CF-009 | Ollama 支持配置局域网或本机 Base URL，API Key 可留空；其他预设按各厂商要求校验必要字段。 |
 | FR-CF-010 | Provider 配置支持独立测试连接；测试失败不得覆盖上一次可用配置或自动切换当前 Provider。 |
@@ -458,9 +459,10 @@ MVP 至少维护以下信息：
 - 对话记录按账号保存在服务端，支持多会话、跨设备同步和按最后活跃日期分组。
 - Slash Command 作为辅助快捷入口，MVP 提供 `/搜索` 与 `/存入`，并保留可注册的扩展接口。
 - 站内结果不足时默认自动联网，用户可切换为“仅收藏库”。
-- MVP 手填模型名，自动拉取模型列表与能力检测进入增强版本。
+- 模型名可手填，也可在用户显式测试连接后从真实 Provider 列表选择；读取失败回退手填，自动能力检测仍进入增强版本。
 - 模型 Provider 首批内置 OpenAI、DeepSeek、通义千问、Kimi、Ollama 和自定义 OpenAI-compatible；模型与搜索厂商均配套品牌图标。
-- Space 批量打开提供“新标签页 / 新窗口”选择，但最终形态受浏览器策略约束。
+- Space 在 Chrome/Edge 助手已连接时创建以 Space 命名的原生标签组；未连接时降级为普通标签打开，
+  并如实反馈弹窗拦截、部分失败和数量上限。
 - WebHub 是完整的网站系统：使用全站 Header、独立 URL 与正常网页文档流，不采用原生桌面客户端式全高侧栏和固定窗口 Shell。
 - Chrome、Edge、Firefox、Safari 的 Netscape Bookmark HTML 大规模导入属于 P0，不与“最多 50 个 URL”的普通抓取队列混用。
 - 浏览器源目录树和每次 occurrence 是需要长期保留的来源事实；WebHub 分类是用户可编辑的业务组织，两者不能互相覆盖。
@@ -473,7 +475,8 @@ MVP 至少维护以下信息：
 
 - **Next.js + React + Vercel AI SDK**：Web 界面、流式聊天、生成式 UI 和人工确认组件。
 - **LangChain / LangGraph**：Agent 工具编排、有状态流程、写操作预览与 Human-in-the-Loop 中断。
-- **LlamaIndex**：网站资料的索引、混合召回与 RAG 上下文构建。
+- **账号隔离检索模块**：当前使用 SQLite FTS5、中文 LIKE 兜底、账号级向量和 RRF 融合完成
+  可重建的混合召回；未配置 embedding Provider 时自动降级，不引入无收益的额外索引事实源。
 - **ReactBits**：少量高价值交互动效，不承担基础组件体系。
 
 实施时使用届时的稳定版本，不沿用过时教程中的固定主版本。当前官方资料显示 Vercel AI SDK 最新文档为 v7，其流式 UI、工具审批和生成式 UI 能力与本项目吻合。
@@ -482,7 +485,6 @@ MVP 至少维护以下信息：
 
 - [Vercel AI SDK 文档](https://ai-sdk.dev/docs/introduction)
 - [LangGraph 概览](https://docs.langchain.com/oss/python/langgraph/overview)
-- [LlamaIndex Framework](https://developers.llamaindex.ai/python/framework/)
 
 ## 14. 版本优先级
 

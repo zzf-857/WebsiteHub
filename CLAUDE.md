@@ -7,12 +7,13 @@ Agent 主导的个人网址导航站。任何新会话（换账号、换机器�
 
 1. 读 `ITERATION_QUEUE.md` —— **唯一调度依据**。从上往下找第一个「状态: 待做」的条目，只做那一个。
 2. 读 `PROGRESS.md` —— **当前状态快照**（能跑什么、不能跑什么、刻意没做什么）。
-   这份必须每轮更新；架构决策看 `IMPLEMENTATION_PLAN.md`，那份不随迭代变化。
+   这份必须每轮更新；`IMPLEMENTATION_PLAN.md` 只是 2026-07-26 冻结的历史架构基线，不能用于当前调度。
 3. `git log --oneline -15` —— 每个 commit 都有详细中文说明，是最可靠的历史。
 
-**动手前先读 `LOCAL_DEV.md`**（本机专用，已 gitignore，不进仓库）：本地唯一账号是
-`admin` / `admin123`，**不要另外新建测试账号**；里面还有库位置、重新播种的命令、
-测试素材位置，以及「内嵌 Browser 面板与用户真实 Chrome 是两套 cookie」这个坑。
+**动手前先读 `LOCAL_DEV.md`**（本机专用，已 gitignore，不进仓库）：它只保留无敏感值的入口，
+并指向 `F:\AI\AgentMake\temp\WebHub` 下的敏感隔离说明；本机账号、凭据、是否允许新建测试账号、
+库位置、重新播种命令和测试素材都只在隔离说明中维护。另需注意「内嵌 Browser 面板与用户真实
+Chrome 是两套 cookie」这个坑。
 
 需求原文在 `F:\AI\AgentMake\AgentProjects\00_Todolist\WebHub_Todolist\todolist.md`；
 最新设计稿（唯一视觉真源）在 `Arts/handoff/untitled/project/WebHub 效果图.dc.html`（6 块画板 1a–1f，
@@ -24,8 +25,8 @@ Agent 主导的个人网址导航站。任何新会话（换账号、换机器�
 pnpm dev          # web 3100 + api 8100（concurrently）
 ```
 
-全量门禁（每次提交前必须全绿；基线只能涨不能降，当前前端 135 / 后端 417
-——以 `ITERATION_QUEUE.md` 文首的基线行为准，那里每轮都更新，这里容易忘）：
+全量门禁（每次提交前必须全绿；测试基线只能涨不能降，当前数值只以
+`ITERATION_QUEUE.md` 的「全量门禁」为准，避免多处维护后漂移）：
 
 ```bash
 cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
