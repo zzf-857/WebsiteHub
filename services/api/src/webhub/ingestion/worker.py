@@ -309,6 +309,8 @@ async def _next_auto_site(
                         excluded_site_ids=excluded,
                         stale_before=stale_before,
                     )
+                if _database_is_stopped(state.database):
+                    return None
                 if not site_ids:
                     return None
                 state.candidates.extend(site_ids)
@@ -329,7 +331,15 @@ async def _next_auto_site(
 async def _consume_auto_backfill(state: _AutoBackfill) -> None:
     while not _database_is_stopped(state.database):
         async with _background_semaphore(), _auto_semaphore():
-            work = await _next_auto_site(state)
+            discovery_task = asyncio.create_task(_next_auto_site(state))
+            try:
+                work = await asyncio.shield(discovery_task)
+            except asyncio.CancelledError:
+                # A cancelled SQLAlchemy checkout can strand the underlying
+                # aiosqlite connection before it reaches the pool. Drain the
+                # session context before allowing shutdown to dispose it.
+                await asyncio.gather(discovery_task, return_exceptions=True)
+                raise
             if work is None:
                 return
             site_id, completion, stale_before = work

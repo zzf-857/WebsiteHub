@@ -1193,8 +1193,11 @@ TypeScript、前后端全量测试和 Next.js 生产构建。浏览器自动化�
   forced-colors 和动态计数读屏语义；组件源码旁记录上游地址、提交和本地适配。
 - 完整门禁发现 ingestion worker 永久保存裸数据库对象 ID 会在 Python 复用 ID 后误判新实例已停止，
   并可能让 TestClient 关闭阶段挂起；当前改为弱引用与严格对象身份围栏，并补确定性回归测试。
-- 根级 `pnpm check` 已通过：前端 175 项、后端 560 项、两端 lint、TypeScript 与 Next.js 生产构建
-  全绿。
+- 严格全量门禁继续定位到自动回填关停时可能取消尚未入池的 aiosqlite 连接初始化；consumer 现在以
+  shield + drain 排空 discovery/session 清理后再传播取消，并在查询返回后重查停止状态，避免连接在
+  事件循环关闭后才由 GC 回收。新增确定性取消回归测试。
+- 根级 `pnpm check` 已通过：前端 175 项、后端 561 项、两端 lint、TypeScript 与 Next.js 生产构建
+  全绿；后端全量同时在未处理线程异常视为错误的严格模式下通过。
   `20260729_0014` 已升级到 head，API/前端已重新启动并确认监听 `8100/3100`；浏览器与真实
   Provider/搜索请求仍由用户验收。
 
@@ -1220,7 +1223,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 175 测试 / 后端 560 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 175 测试 / 后端 561 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 

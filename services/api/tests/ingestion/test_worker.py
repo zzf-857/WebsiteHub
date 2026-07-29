@@ -349,3 +349,48 @@ def test_auto_backfill_keeps_a_small_candidate_buffer_for_ten_thousand_rows(
         assert (id(database), user_id) not in worker._AUTO_BACKFILLS  # noqa: SLF001
 
     asyncio.run(scenario())
+
+
+def test_auto_backfill_cancel_drains_discovery_before_consumer_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    discovery_cancelled = False
+    discovery_drained = False
+
+    async def scenario() -> None:
+        nonlocal discovery_cancelled, discovery_drained
+        database = object()
+        state = worker._AutoBackfill(  # noqa: SLF001 - cancellation regression
+            database=database,  # type: ignore[arg-type]
+            user_id="drain-discovery-user",
+        )
+        discovery_started = asyncio.Event()
+        release_discovery = asyncio.Event()
+
+        async def controlled_discovery(
+            _state: worker._AutoBackfill,  # noqa: SLF001
+        ) -> None:
+            nonlocal discovery_cancelled, discovery_drained
+            discovery_started.set()
+            try:
+                await release_discovery.wait()
+            except asyncio.CancelledError:
+                discovery_cancelled = True
+                raise
+            finally:
+                discovery_drained = True
+            return None
+
+        monkeypatch.setattr(worker, "_next_auto_site", controlled_discovery)
+        consumer = asyncio.create_task(
+            worker._consume_auto_backfill(state)  # noqa: SLF001
+        )
+        await asyncio.wait_for(discovery_started.wait(), timeout=5)
+        consumer.cancel()
+        release_discovery.set()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+
+    asyncio.run(scenario())
+    assert discovery_drained is True
+    assert discovery_cancelled is False
