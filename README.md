@@ -1,177 +1,322 @@
+<div align="center">
+
+<img src="./apps/web/app/icon.svg" alt="WebHub" width="76" />
+
 # WebHub
 
-WebHub 是一个 Agent First 的个人网站知识中枢。它以浏览器网站的形式运行，用户可以通过自然语言收录、检索和管理网站，并使用分类、标签与 Space 组织自己的网址库。
+**Agent First 的个人网址知识中枢**
 
-## 当前状态
+把散落各处的网址收进账号隔离的资料库，再用自然语言、分类、标签、搜索与 Space 完成整理和复用。
 
-Q1-Q26 的代码项已完成，当前已建成九条主链路：Provider 配置、Agent 增改查、书签导入、
-网页抓取、批量入库、自定义排序、Space 一键全开、混合检索和 LLM 全库重分类。
-真实 Provider、Agent Runner、分类执行与最终入库均已接通；后续迭代补齐了站内详情、
-真实 favicon/preview、批量管理、持久化全库回填，以及受控 LLM 分类、标签、简介和详细介绍分析。
-当目标网页没有足够公开正文时，单站分析还可使用账号主动启用的搜索 Provider 补充
-目标域名证据；Tavily、Jina、Exa 支持显式真实连接测试，另有无需 API Key 的受限
-“Exa MCP 免费额度”供低频 Agent 对话和单站分析使用。Q22 又统一了“网址库”命名，加入
-默认居中/可选铺满布局、居中弹窗动效，并把 Agent 行动流和网站推荐收敛到稳定的结构化卡片链路。
-Q23 补齐了编辑表单内新建并立即选中共享标签、YouTube 子页面的官方站点图标与视频封面回退
-（官方图标不可达时使用站内平台图标）、
-网址库布局选择的绿色高亮、SSE 经过 Next 代理时的逐块传输，以及新网站分析完成后的有界自动刷新。
-Q24 让 Agent 可以创建空 Space，或把一组已收藏网站作为单张任务草稿一次确认后原子加入；
-候选可在卡片内剔除和恢复，后续方案会冻结旧草稿；新建和已有 Space 两种批量任务都以命名空间化
-工具 ID 绑定不可变操作回执，响应丢失后可重放原载荷且不会重复写入。会话确认只接受真实落库的
-Agent 回合，并由服务端交叉校验最新草稿、操作回执和实际写入结果。Space 的创建、重命名、删除和移出弹窗
-统一复用网址编辑弹窗的视口居中、进退动画与写入期间关闭锁。
-Q25 增加同一份兼容 Chrome 与 Edge 的 MV3 浏览器分组助手。助手连接后，“全部打开”会通过浏览器原生
-`tabs` / `tabGroups` API 在当前窗口创建标签，并以 Space 名称建立绿色分组，不再受网页弹窗配额限制；
-未安装时仍保留明确标注的普通标签页降级。单次最多打开 100 个标签，超过时直接拒绝而不静默截断。
-同一 Space 的请求由跨标签页锁串行，未确认任务保留 7 天的原始名称和 URL 集合；扩展回执绑定浏览器
-启动轮次，并在重放成功前核对同名绿色组及标签数量。因此响应丢失可安全重试，扩展重载不会遗留旧任务，
-浏览器重启后也不会拿旧标签 ID 清理当前普通页面。
-Q26 将 Agent 回合升级为账号级持久执行：稳定 `turn_id`、Provider 前消息占位、租约与心跳、
-流中检查点、四态历史恢复和幂等重放已经贯通；Tavily、Jina、Exa 的真实搜索结果以可信
-`source-url` 保存和展示。前端同时补齐上滚脱离自动跟随、停止后的部分回答恢复、工具时间线、
-真实 Token、复制操作、共享 Spinner 及 reduced-motion / forced-colors 边界。删除会话时会保留
-最小回合 tombstone，首轮延迟重试不会再次调用 Provider；复制会话链接只保留受控会话参数，
-不会携带页面原有 query 或 hash。
+[![Next.js](https://img.shields.io/badge/Next.js-16.2-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19.2-61DAFB?logo=react&logoColor=white)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.139-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-local--first-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C)](https://langchain-ai.github.io/langgraph/)
+[![status](https://img.shields.io/badge/status-MVP%20%C2%B7%20local%20only-orange)](./PROGRESS.md)
 
-已登记的 Q1-Q26 代码项不等于整个 PRD 已完成。仍缺书签长期来源台账、100,000 occurrence / Site
-完整性能门禁、数据导出与自有备份导入、分类图标前端选择器、Agent 聊天内确认书签导入，以及少数
-必须在真实浏览器中人工验证的 Observer 交互。近义标签当前由 Agent 优先复用，尚未在缺少真实样本
-校准时引入固定 embedding 阈值；新站分析队列彻底满或 API 进程崩溃时，本次即时 LLM 意图也尚未持久化。
-Q21 的 `0012`、Q24 的 `0013` 与 Q26 的 `0014` 迁移已在本机应用。当前根级 `pnpm check`
-已通过：前端 175 项、后端 560 项、两端 lint、TypeScript 与 Next.js 生产构建均全绿；
-Q14-Q26 的页面能力仍需真实浏览器验收；Q20-Q26 另需可用模型/搜索 Provider、Exa MCP
-和 Chrome/Edge 扩展人工验收。
-准确的已完成/未完成清单、实测证据和测试基线
-以 [当前进度快照](./PROGRESS.md) 为准；下一项开发只从
-[迭代队列](./ITERATION_QUEUE.md) 领取。
+[界面预览](#界面预览) · [核心特性](#核心特性) · [快速开始](#快速开始) · [配置](#配置) · [项目状态](#项目状态与限制) · [文档](#项目文档)
 
-## 文档
+</div>
 
-- [产品需求文档](./PRD.md)
-- [当前进度快照](./PROGRESS.md)
-- [迭代队列](./ITERATION_QUEUE.md)
-- [Agent 执行规范](./AGENTS.md)
-- [历史架构基线](./IMPLEMENTATION_PLAN.md)
-- [浏览器书签导入 Skill](./skills/import-browser-bookmarks/SKILL.md)
-- [书签分类执行 Skill](./skills/bookmark-classification-operator/SKILL.md)
+> [!IMPORTANT]
+> WebHub 当前定位是 **Windows 主机上的本地 / 可信家庭局域网 MVP**：网站可供局域网设备访问，FastAPI 只监听本机回环地址。
+> 它不是能直接暴露到公网的 SaaS 或生产部署方案，也没有做公网安全加固。
 
-## 环境要求
+---
 
-- Node.js `24.x`
-- pnpm `11.1.3`
-- uv `0.11+`
-- Python `3.13.x`（uv 使用 `services/api/.python-version`）
+## 目录
 
-## 本地启动
+- [界面预览](#界面预览)
+- [核心特性](#核心特性)
+- [Agent 写操作如何生效](#agent-写操作如何生效)
+- [架构](#架构)
+- [快速开始](#快速开始)
+- [配置](#配置)
+- [Provider 与联网边界](#provider-与联网边界)
+- [Chrome / Edge Space 分组助手](#chrome--edge-space-分组助手)
+- [本地数据与隐私](#本地数据与隐私)
+- [开发与验证](#开发与验证)
+- [项目状态与限制](#项目状态与限制)
+- [项目文档](#项目文档)
+- [开发约定](#开发约定)
+- [许可证](#许可证)
 
-首次安装：
+## 界面预览
 
-```powershell
-pnpm install
-uv sync --project services/api
+### 首页 · 分类总览与 Agent 入口
+
+一屏之内看清网址总数、分类分布与置顶站点；顶部 Agent 输入框可以直接提问、收录网址或触发全库补全任务。
+
+<img src="./docs/screenshots/home.png" alt="WebHub 首页：分类总览、置顶网站与 Agent 输入框" width="100%" />
+
+### 网址库 · 分类、标签与批量管理
+
+网格 / 列表双视图，支持分类与标签筛选、相关度排序、拖拽自定义顺序、批量选择删除，以及静默自动分页。
+
+<img src="./docs/screenshots/library.png" alt="WebHub 网址库：筛选、排序与批量管理" width="100%" />
+
+### Agent 对话 · 自然语言查找与整理
+
+流式 Markdown 回答，附带真实来源、工具时间线、可折叠推理与真实 Token 用量；写操作先出草稿，确认后才落库。
+
+<img src="./docs/screenshots/agent-chat.png" alt="WebHub Agent 对话：流式回答、来源与推荐网站卡片" width="100%" />
+
+### 第三方能力接入 · 模型 / 搜索 / 向量服务商
+
+模型、搜索、Embedding 三类 Provider 各自独立配置；密钥加密入库、只回掩码，连接测试与模型列表都走用户自己的账号配置。
+
+<img src="./docs/screenshots/providers.png" alt="WebHub 服务商设置：模型、搜索与向量服务配置" width="100%" />
+
+### 批量导入浏览器书签
+
+上传 Chrome / Edge / Firefox / Safari 导出的书签 HTML，先看解析、去重与分类预览，确认后再写入。
+
+<img src="./docs/screenshots/bookmark-import.png" alt="WebHub 书签导入：解析预览与确认写入" width="100%" />
+
+### Space · 一键打开为浏览器标签组
+
+把一组网站收进 Space；配合可选的 Chrome / Edge 助手，一次生成同名的浏览器原生标签组。
+
+<img src="./docs/screenshots/space-tab-groups.png" alt="WebHub Space：一键打开为浏览器原生标签组" width="100%" />
+
+## 核心特性
+
+| 你要完成的事 | WebHub 提供的流程 |
+| --- | --- |
+| **建立网址库** | 手动或批量收录 URL，自动抓取站点元数据，按分类、共享标签、置顶状态与自定义顺序管理；站点卡片优先进入站内详情页。 |
+| **导入浏览器书签** | 上传 Chrome、Edge、Firefox、Safari 等浏览器导出的 Netscape Bookmark HTML，先查看解析、去重与分类预览，再确认写入。 |
+| **用 Agent 查找和整理** | Agent 默认使用当前账号的网址库；回答支持流式 Markdown、真实来源、工具时间线、推理折叠、停止与历史恢复。写操作先生成草稿，只有用户确认后才落库。 |
+| **检索和补全资料** | 网址库相关度排序融合关键词与可选向量召回；可按需执行站点分析、语义索引补全和 LLM 全库重分类。没有可用 Provider 时保留关键词检索与手动管理。 |
+| **用 Space 组织任务** | 创建、重命名和排序 Space，批量加入或移出网站；可选 Chrome / Edge 助手能把一个 Space 打开为浏览器原生标签组。 |
+
+## Agent 写操作如何生效
+
+WebHub 的 Agent 不直接写数据库。所有写入都要经过一次显式确认：
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant A as Agent（LangGraph）
+    participant S as 服务端
+    participant D as SQLite
+    U->>A: 自然语言：收录 / 修改 / 批量 URL / Space / 重分类
+    A->>S: 读取当前账号数据，生成结构化草稿
+    S-->>U: 展示将要发生的变化（批量候选可逐项剔除）
+    U->>S: 确认
+    S->>S: 复验账号归属、版本与操作回执
+    S->>D: 幂等提交
+    D-->>U: 结果写回会话历史
 ```
 
-同时启动网站和 API：
+1. 用户用自然语言提出收录、修改、批量 URL、Space 或重分类任务。
+2. 服务端读取当前账号的数据并生成结构化草稿，不直接执行写入。
+3. 前端展示将要发生的变化；批量候选可在确认前调整。
+4. 用户确认后，服务端再次校验账号归属、版本与操作回执，再以幂等方式提交。
+5. 结果写回会话历史；未完成或已过期的草稿不能从历史记录再次执行。
+
+## 架构
+
+```mermaid
+flowchart LR
+    Browser["浏览器 · :3100"] --> Web["Next.js Web + 同源代理"]
+    Web --> API["FastAPI · 127.0.0.1:8100"]
+    API --> Data["SQLite / FTS / Embedding · .data"]
+    API --> Sites["目标网站 · 元数据抓取"]
+    API -. "用户配置并启用" .-> Providers["Model / Search / Embedding Providers"]
+    Browser <-->|"仅 localhost 的消息桥"| Extension["Chrome / Edge MV3 助手"]
+```
+
+| 层 | 技术栈 |
+| --- | --- |
+| **Web** | Next.js 16、React 19、TypeScript、Vercel AI SDK、Tailwind CSS 4、Motion、Streamdown |
+| **API** | Python 3.13、FastAPI、LangGraph、SQLAlchemy、Alembic；认证、Agent、书签、网址库、Provider、搜索、Space 同属一个业务服务 |
+| **数据** | 本地 SQLite + 全文检索 + 可重建站点向量；业务数据始终按账号隔离 |
+| **浏览器助手** | 原生 JavaScript MV3 扩展，只负责本机 WebHub 与浏览器标签组之间的受限桥接 |
+
+```text
+apps/
+├── web/                    Next.js 界面、同源 API 代理与流式上传入口
+└── browser-extension/      可选的 Chrome / Edge Space 分组助手
+services/api/
+├── src/webhub/             FastAPI 业务模块（auth / library / bookmarks / chat / agent / providers / spaces / search）
+├── alembic/                SQLite schema 迁移
+└── tests/                  后端合同与行为测试
+packages/contracts/         跨栈流式协议夹具
+skills/                     书签导入与分类操作说明
+docs/screenshots/           README 界面截图
+```
+
+## 快速开始
+
+### 环境要求
+
+| 依赖 | 版本 |
+| --- | --- |
+| 操作系统 | Windows（当前开发与支持目标） |
+| Node.js | `24.x`（`.node-version` 固定 24.18.0） |
+| pnpm | `11.1.3` |
+| Python | `3.13.x`（`services/api/.python-version` 固定） |
+| uv | 最新版 |
+
+### 安装
+
+```powershell
+pnpm install --frozen-lockfile
+uv sync --project services/api --frozen
+```
+
+### 启动
 
 ```powershell
 pnpm dev
 ```
 
-生产模式先构建，再从同一个根入口启动网站和单 worker API：
+`pnpm dev` 会先执行数据库迁移，再并行启动 Next.js 与 FastAPI。启动后访问：
+
+| 入口 | 地址 |
+| --- | --- |
+| 本机网站 | `http://localhost:3100` |
+| 局域网设备 | `http://<Windows 主机局域网 IP>:3100` |
+| API 文档 | `http://127.0.0.1:8100/api/docs` |
+| 健康检查 | `http://localhost:3100/api/health` |
+
+首次使用时在网站中注册本地账号。网址库、分类、标签、Space 和关键词搜索不要求模型 Provider；需要 Agent、LLM 分析或语义索引时，再到「服务商」设置页添加对应配置。
+
+> [!WARNING]
+> Windows 首次运行 Node.js 时如弹出防火墙提示，只允许受信任的专用网络。不要把 `8100` 端口暴露到局域网，也不要绕过网站的同源代理直接访问业务 API。
+
+## 配置
+
+开发环境使用默认值即可启动，不要求创建 `.env`。需要覆盖配置时，以 [根环境变量样例](./.env.example) 和 [Web 环境变量样例](./apps/web/.env.example) 为准。
+
+| 变量 | 默认值 / 用途 |
+| --- | --- |
+| `WEBHUB_DATA_DIR` | `.data`；数据库、Provider 主密钥和书签源文件的根目录。 |
+| `WEBHUB_DATABASE_URL` | 未设置时使用 `<WEBHUB_DATA_DIR>/main.sqlite3`。 |
+| `WEBHUB_API_INTERNAL_URL` | `http://127.0.0.1:8100`；Next.js 访问 FastAPI 的内部地址。 |
+| `WEBHUB_ALLOWED_HOSTS` | 为网站入口增加明确允许的主机名或别名。 |
+| `WEBHUB_SESSION_COOKIE_SECURE` | 可信局域网 HTTP 默认 `false`；只有网站实际通过 HTTPS 提供时才设为 `true`。 |
+| `WEBHUB_PROVIDER_MASTER_KEY` | 生产环境必填的 32 字节 Base64 主密钥；开发环境未设置时会在数据目录生成并持久化。 |
+
+修改 `WEBHUB_API_INTERNAL_URL` 后，必须在相同配置下重新执行 `pnpm build`，再启动已构建网站。
+
+## Provider 与联网边界
+
+WebHub 不内置任何供应商密钥，模型访问一律走 per-account 的 Provider 配置。
+
+| 类型 | 用途 | 内置注册表 |
+| --- | --- | --- |
+| **模型** | Agent 回答、工具选择、LLM 站点分析 | OpenAI、DeepSeek、通义千问、Kimi、Ollama、OpenAI-compatible |
+| **搜索** | 原网页证据不足时的补证；仅在账号启用且当轮选择「允许联网」时调用 | Tavily、Jina、Exa、Exa MCP 免费额度 |
+| **Embedding** | 网址库语义索引与相关度排序 | OpenAI、通义千问、Ollama、OpenAI-compatible |
+
+- 搜索查询会发送给所选服务商；连接测试也可能执行一次真实查询并消耗额度，因此必须由用户显式点击。
+- **Exa MCP 免费额度** 是无需 API Key 的低频选择，不承诺可用性，也不参与全库批量回填；稳定或批量使用应配置自己的搜索 Provider。
+- 未配置、索引为空或调用失败时，检索会降级为关键词结果，而不是报错阻塞。
+
+> [!NOTE]
+> Provider API Key 以 AES-256-GCM 密文保存在数据库中，接口只回掩码 `********`。开发环境生成的主密钥与数据库同在数据目录，因此能读取整套数据目录的人仍可解密这些密钥；这不是远程密钥托管或硬件级隔离。
+
+## Chrome / Edge Space 分组助手
+
+普通网页不能可靠创建浏览器原生标签组。若需要把 Space 一键打开为命名的绿色标签组，可在当前浏览器配置文件中侧载助手：
+
+1. Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`。
+2. 开启「开发者模式」，选择「加载已解压的扩展程序」。
+3. 从仓库根目录选择 `apps/browser-extension`。
+4. 刷新 `http://localhost:3100` 或 `http://127.0.0.1:3100` 中的 WebHub 页面。
+
+Chrome 和 Edge 需要分别安装。助手只接受本机 `localhost:3100` / `127.0.0.1:3100` 页面，使用局域网 IP 打开的客户端页面不能连接它；未连接时 WebHub 会明确降级为普通标签页打开。单次最多处理 100 个 HTTP(S) 地址。
+
+扩展清单只申请 `storage` 与 `tabGroups` 权限，不读取标签页正文、浏览历史、Cookie 或账号密钥。为了在响应丢失后安全恢复，网页与扩展会在本机保存 Space 名称、URL 集合和操作回执，最长保留 7 天。
+
+## 本地数据与隐私
+
+| 数据 | 默认位置 | 注意事项 |
+| --- | --- | --- |
+| 账号、网址库、会话和设置 | `.data/main.sqlite3` | 密码使用 Argon2id；数据库只保存登录 Session 的 SHA-256 摘要，不保存原始 Cookie。 |
+| Provider 主密钥 | `.data/provider-master.key` | 开发环境自动生成。丢失后，数据库中已有的 Provider API Key 将无法解密。 |
+| 浏览器书签源文件 | `.data/bookmark-imports/.../source.html` | 原始导出可能包含私有地址和敏感查询参数；当前没有面向用户的快照清理入口。 |
+| 本机环境变量 | `.env` | 可包含主密钥和部署配置，已被 Git 忽略，不得提交。 |
+
+使用外部模型或搜索 Provider 时，完成请求所需的消息、上下文或查询会发送给对应服务商。站点分析会访问用户提交的目标网站；远程 favicon 和 preview 当前由浏览器直接加载，图片源会看到客户端请求。
+
+默认 SQLite 环境需要做主机级备份时，先停止 WebHub，再把整个 `.data` 目录作为一组保存，包括数据库的 WAL/SHM 文件、Provider 主密钥和书签源文件。该备份包含敏感数据，应按凭据备份保护；它不等同于尚未实现的产品级导出 / 恢复功能。
+
+## 开发与验证
+
+完整本地质量门禁：
+
+```powershell
+pnpm check
+```
+
+该命令依次执行前后端 lint、前端类型检查、前后端测试和 Next.js 构建。也可以分别执行：
+
+| 命令 | 作用 |
+| --- | --- |
+| `pnpm lint` | 前端 ESLint + 后端 Ruff |
+| `pnpm typecheck` | 前端 `tsc --noEmit` |
+| `pnpm test` | 前端 `node --test` + 后端 `pytest` |
+| `pnpm build` | Next.js 生产构建 |
+
+测试基线：**前端 175 项 / 后端 561 项**，新增功能必须带测试，基线只能涨不能降。
+
+验证构建后在本机运行：
 
 ```powershell
 pnpm build
 pnpm start
 ```
 
-访问地址：
+`pnpm start` 仍遵守单 API worker、FastAPI loopback 和可信局域网边界；它不是公网部署流程。
 
-- 当前电脑：`http://localhost:3100`
-- 局域网设备：`http://<Windows 主机局域网 IP>:3100`
-- FastAPI：仅监听 `127.0.0.1:8100`，由 Next.js 同源代理访问
+## 项目状态与限制
 
-Windows 首次启动 Node.js 时如果出现防火墙提示，只允许受信任的专用网络。不要将当前 MVP 直接暴露到公网。
+核心代码已覆盖 Provider 配置、Agent 读写草稿、书签导入、网页抓取、批量入库、自定义排序、Space 管理、混合检索和 LLM 重分类，全仓自动门禁（lint / 类型 / 测试 / 构建）当前全绿。部分近期交互仍需要在真实 Chrome / Edge、可用模型与搜索 Provider、Exa MCP 和浏览器扩展环境中完成人工验收。
 
-## 自动检查
+**当前明确未完成的范围：**
 
-```powershell
-pnpm check
-```
+- 数据导出与 WebHub 自有备份导入；
+- 书签 occurrence 到最终 Site 的长期来源台账；
+- Agent 对话内直接确认书签导入（当前需转到「导入书签」页面）；
+- 分类图标选择器和确定性的近义标签合并；
+- 100,000 条书签与 Site 的完整性能门禁；
+- 多 API worker、Docker / NAS / Linux 常驻部署和公网安全加固；
+- 受控的远程 favicon / preview 代理缓存。
 
-该命令依次执行前后端 lint、前端类型检查、前后端测试和 Next.js 生产构建。
+网址库的「相关度」排序会使用可选 embedding，但 Agent 的站内检索当前仍使用关键词路径。新站写库本身是持久的；当分析队列完全占满或 API 在执行前退出时，本次即时 LLM 分析意图尚不能保证恢复。
 
-## Chrome / Edge 分组助手
+准确的已完成项、自动化证据、人工验收项和下一步以 [当前进度快照](./PROGRESS.md) 为准。
 
-普通网页没有创建浏览器原生标签组的权限。首次使用需要在当前浏览器配置文件中侧载一次 WebHub 助手：
+## 项目文档
 
-1. Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`。
-2. 开启“开发者模式”，选择“加载已解压的扩展程序”。
-3. 选择 `F:\AI\AgentMake\AgentProjects\WebHub\apps\browser-extension`，然后刷新 WebHub 页面。
+| 文档 | 内容 |
+| --- | --- |
+| [PRD.md](./PRD.md) | 产品范围、用户流程与非目标 |
+| [PROGRESS.md](./PROGRESS.md) | 已验证能力、已知问题与验收基线（每轮更新） |
+| [ITERATION_QUEUE.md](./ITERATION_QUEUE.md) | 下一项开发的唯一调度入口 |
+| [AGENTS.md](./AGENTS.md) | 项目目录、状态文档和敏感数据规则 |
+| [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) | 冻结的早期架构基线，仅作背景参考 |
+| [skills/import-browser-bookmarks](./skills/import-browser-bookmarks/SKILL.md) | 书签导入合同与离线预览流程 |
+| [skills/bookmark-classification-operator](./skills/bookmark-classification-operator/SKILL.md) | 书签分类操作边界 |
 
-Chrome 与 Edge 需要分别安装；网页不能从一个浏览器跨进程控制另一个浏览器。扩展只接受
-`localhost:3100` / `127.0.0.1:3100` 的 WebHub 页面，仅允许打开最多 100 个 `http` / `https` 地址并按 Space
-名称分组的固定命令，不读取标签页正文、历史记录、Cookie 或账号密钥。
+## 开发约定
 
-## 联网搜索 Provider
+开始修改前先阅读 [AGENTS.md](./AGENTS.md)，从 [ITERATION_QUEUE.md](./ITERATION_QUEUE.md) 领取工作，并在提交前运行 `pnpm check`。功能状态变化必须同步到 [PROGRESS.md](./PROGRESS.md)；根 README 只保留稳定的项目入口信息。
 
-搜索服务必须由用户在 Provider 设置页主动添加并启用，Agent 还需在当前对话开启“允许联网”。
-Tavily、Jina 和 Exa 使用用户自己的 API Key；它们的“测试搜索（可能消耗额度）”会执行一次
-最小真实查询，不是免费的只读健康检查。
+不可动摇的约束（完整清单见 `ITERATION_QUEUE.md` 文末）：
 
-“Exa MCP 免费额度”无需 API Key，连接 Exa 官方 MCP 端点。它只用于低频 Agent 对话和单站
-手动分析，不参与全库批量回填；实现限制为单 API 进程并发 1、结果缓存 5 分钟、失败冷却 60 秒。
-免费共享额度不承诺可用性，达到限额或用于公共部署、批量处理时应改用自己的搜索 Provider。
-批量来源绝不会调用该免费 Provider；若某个批量网站的原页证据不足，只把当前网站记为受限并继续
-处理整批中的其他网站。搜索词会发送给所选服务商。
+- 绝不硬编码任何 LLM 供应商或 API Key，模型访问一律走 per-account 的 providers 模块；
+- 完整密钥只回掩码，厂商异常原文绝不透出到客户端；
+- Agent 工具强制服务端账号作用域，不直接写库，一律 propose → 人工确认；
+- 非 Ollama 的 base URL 必须 HTTPS 并通过 SSRF 校验；
+- 前端只用设计令牌，圆角全站 ≤8px，图标只用 lucide-react。
 
-网站分析只在原网页超时、受限或正文不足时搜索，单次最多取 3 条，并只接受目标域名或其子域结果。
-专业 HTTP 搜索保持 8 秒截止；免费 Exa MCP 因包含会话初始化，使用 16 秒内部总预算。
-搜索摘录作为低权限证据交给分类、标签、简介和详细介绍工具，不能用来伪造 favicon 或预览图。
-WebHub 不会直接下载并执行任意 GitHub Skill：Skill 是工作流说明，不等同于稳定搜索数据源；
-外部能力只能通过审计后、白名单内的类型化 Provider 适配器接入。
+## 许可证
 
-## 浏览器书签 Dry Run
+本仓库当前没有 `LICENSE` 文件，包清单也标记为 `private`。除非维护者补充明确许可证，否则不要假定代码已获得复制、分发或商业使用授权。
 
-Chrome、Edge、Firefox、Safari 等浏览器导出的 Netscape Bookmark HTML 可以先生成只读预览：
-
-```powershell
-uv run --project services/api python skills/import-browser-bookmarks/scripts/preview_bookmarks.py `
-  <bookmarks.html> --output-dir <F:\AI\AgentMake\temp\WebHub\bookmark-import\new-preview>
-```
-
-输出目录必须是尚不存在的临时目录。该命令只解析、规范化、去重并生成分类簇，不联网、不调用模型，也不写入 WebHub 业务数据。真实书签导出可能包含私有地址和敏感查询参数，`MockData/` 已被 Git 忽略，不得提交到公开仓库。
-
-## 书签导入 HTTP 合同
-
-FastAPI 的公开路径固定为 `POST /api/bookmark-imports`，网站通过同源 rewrite 调用 `/api/backend/bookmark-imports`。请求体是浏览器导出的原始 HTML 字节，不使用 JSON、Base64 或 `multipart/form-data`；允许 `text/html`（可带 charset 参数）和 `application/octet-stream`。登录 Cookie、可信 `Origin` 与 16–512 字符的 `Idempotency-Key` 是必需条件。
-
-以下示例通过网站同源代理调用已经完成的上传 API：
-
-```powershell
-curl.exe -i -X POST http://localhost:3100/api/backend/bookmark-imports `
-  -H "Origin: http://localhost:3100" `
-  -H "Content-Type: text/html" `
-  -H "Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000" `
-  -H "Cookie: webhub_session=<session-token>" `
-  --data-binary "@C:\path\to\bookmarks.html"
-```
-
-新任务返回 `201`，相同账号、幂等键和文件内容的重放返回 `200`；相同幂等键绑定不同内容返回 `409`。相同内容使用新幂等键仍创建任务，并通过 `same_source_warning` 提示，不静默复用。成功响应只公开 `job_id`、状态、版本、重放标志和同源提示，不返回 snapshot ID、SHA-256、临时路径或 `storage_key`。
-
-状态读取合同为 `GET /api/bookmark-imports/{job_id}`；网站对应 `/api/backend/bookmark-imports/{job_id}`。它只返回账号自己的公开状态、`{completed,total}` 进度、公开 failure code 和时间戳，并使用 `Cache-Control: no-store`。未知任务与跨账号任务统一返回 `404`。只读预览端点已经提供：
-
-- `GET /api/bookmark-imports/{job_id}/preview`
-- `GET /api/bookmark-imports/{job_id}/preview/folders`
-- `GET /api/bookmark-imports/{job_id}/preview/candidates`
-- `GET /api/bookmark-imports/{job_id}/preview/occurrences`
-
-FastAPI 上传 admission 会在读取请求体前和流式接收期间执行门禁。默认全局最多 4 个上传、同一账号最多 1 个并发上传、同一账号每 60 秒最多 6 次 admission 尝试；每账号已发布源文件与 incoming 暂存文件合计最多 2 GiB。后端始终保留至少 512 MiB 磁盘余量，并在流式接收期间每 8 MiB 复查一次。并发、频率与追踪窗口是单 API worker 的进程内状态；当前启动合同只支持单 worker，多 worker 部署前必须改为共享门禁。
-
-网站 custom server 只对 `POST /api/backend/bookmark-imports` 使用专用流式代理，绕过 Next 的 10 MiB request clone。真实 Chrome/Edge mock 的精确字节与哈希、请求/响应头保留、12 MiB 流式上传、声明长度超限和 chunked 超限测试均已通过；其他 `/api/backend/*` 路径仍使用 Next rewrite。网站代理独立设置 512 MiB 单请求上限，FastAPI 的 512 MiB 则是必须保留的磁盘余量，两者不是同一个限制；当前没有完成 512 MiB 文件容量门禁实测。FastAPI 继续只监听 loopback，不要通过向局域网暴露后端端口绕过网站代理。
-
-## 环境变量
-
-- 网站服务端变量样例：`apps/web/.env.example`
-- 全局部署变量参考：`.env.example`
-
-默认配置不需要创建环境文件即可启动。需要修改内部 API 地址时，在 `apps/web/.env.local` 中设置 `WEBHUB_API_INTERNAL_URL`，并使用同一配置重新执行 `pnpm build` 后再启动生产网站。网站入口默认允许当前机器名、loopback 和启动时检测到的局域网 IP；自定义域名或别名通过 `WEBHUB_ALLOWED_HOSTS` 显式增加。
