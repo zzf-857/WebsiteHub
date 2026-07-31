@@ -21,6 +21,7 @@ from webhub.agent.runner import (
     AgentProviderNotConfiguredError,
     AgentRunRequest,
 )
+from webhub.agent.tools import RECOMMENDATION_MANIFEST_VERSION
 from webhub.chat import service as chat_service
 from webhub.config import Settings
 from webhub.db.database import Database
@@ -395,7 +396,7 @@ def test_reasoning_usage_and_server_timings_stream_and_persist(
         "turnPersisted": True,
         "conversationId": chunks[0]["messageMetadata"]["conversationId"],
         "assistantMessageId": chunks[0]["messageMetadata"]["assistantMessageId"],
-        "recommendationManifestVersion": 1,
+        "recommendationManifestVersion": 2,
         "provider": "ollama",
         "model": "qwen3",
         "webSearch": False,
@@ -444,6 +445,125 @@ def test_tool_only_answer_still_produces_a_visible_reply(
 
     assert "text-start" in _types(chunks)
     assert messages[1].content.strip()
+
+
+def test_recommendation_artifact_streams_persists_and_replays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    tool_call = {
+        "id": "present-all",
+        "name": "present_website_recommendations",
+        "args": {"result_set_id": "result-set-1"},
+    }
+    items = [
+        {
+            "site_id": f"site-{index:03d}",
+            "name": f"AI 工具 {index:03d}",
+            "url": f"https://example.com/ai-{index:03d}",
+            "favicon_url": None,
+        }
+        for index in range(87)
+    ]
+    manifest = {
+        "manifest_version": RECOMMENDATION_MANIFEST_VERSION,
+        "complete": True,
+        "result_set_id": "result-set-1",
+        "source": "站内存储数据",
+        "provider": None,
+        "matched_count": len(items),
+        "items": items,
+        "rejected_count": 0,
+    }
+    events = [
+        (
+            "updates",
+            {"agent": {"messages": [AIMessage(content="", tool_calls=[tool_call])] }},
+        ),
+        (
+            "updates",
+            {
+                "tools": {
+                    "messages": [
+                        ToolMessage(
+                            content='{"source":"站内存储数据","presented_count":87}',
+                            artifact=manifest,
+                            tool_call_id="present-all",
+                            name="present_website_recommendations",
+                        )
+                    ]
+                }
+            },
+        ),
+        *_text_events(["已整理全部结果。"]),
+    ]
+
+    with _account(tmp_path) as settings:
+        graph = _install_fake_graph(monkeypatch, events)
+        chunks, messages = _run(settings, "把全部 AI 网站发给我", turn_id="all-ai-sites")
+        replayed, replay_messages = _run(
+            settings,
+            "把全部 AI 网站发给我",
+            turn_id="all-ai-sites",
+        )
+
+    streamed = _chunk_of_type(chunks, "data-agent-tool-result")["data"]["result"]
+    replayed_result = _chunk_of_type(replayed, "data-agent-tool-result")["data"]["result"]
+    assert streamed == manifest
+    assert replayed_result == manifest
+    assert messages[-1].sources[-1]["result"] == manifest
+    assert replay_messages[-1].sources[-1]["result"] == manifest
+    assert len(graph.calls) == 1
+
+
+def test_tool_error_discards_raw_kwargs_before_stream_and_persistence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    tool_call = {
+        "id": "present-invalid",
+        "name": "present_website_recommendations",
+        "args": {"items": []},
+    }
+    unsafe_error = "Error invoking tool with kwargs including private-site.example and secret-token"
+    events = [
+        (
+            "updates",
+            {"agent": {"messages": [AIMessage(content="", tool_calls=[tool_call])] }},
+        ),
+        (
+            "updates",
+            {
+                "tools": {
+                    "messages": [
+                        ToolMessage(
+                            content=unsafe_error,
+                            tool_call_id="present-invalid",
+                            name="present_website_recommendations",
+                            status="error",
+                        )
+                    ]
+                }
+            },
+        ),
+        *_text_events(["请重试。"]),
+    ]
+
+    with _account(tmp_path) as settings:
+        _install_fake_graph(monkeypatch, events)
+        chunks, messages = _run(settings, "展示这些网站", turn_id="invalid-presentation")
+
+    result = _chunk_of_type(chunks, "data-agent-tool-result")["data"]["result"]
+    assert result == {
+        "code": "tool_execution_error",
+        "error": "工具执行失败，请调整请求后重试。",
+    }
+    assert unsafe_error not in str(chunks)
+    assert unsafe_error not in str(messages[-1].sources)
 
 
 def test_stream_is_valid_for_the_ui_message_encoder(

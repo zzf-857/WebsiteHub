@@ -630,6 +630,75 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.agent-paginated-results {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-result-pagination {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.agent-result-pagination button {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-result-pagination button:hover:not(:disabled) {
+  background: var(--surface-subtle);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.agent-result-pagination button[data-active] {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--surface);
+}
+
+.agent-result-pagination button:disabled {
+  color: var(--text-subtle);
+  cursor: default;
+  opacity: 0.45;
+}
+
+.agent-result-pagination button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.agent-result-pagination span {
+  display: inline-flex;
+  width: 22px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
 /* 1280 以下两列放不下完整的"标题 + 描述 + 操作"，降为单列 */
 @media (max-width: 1279px) {
   .agent-result-grid {

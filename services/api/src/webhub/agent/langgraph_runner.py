@@ -61,6 +61,7 @@ from .runner import (
     agent_provider_error_message,
 )
 from .tools import (
+    RECOMMENDATION_MANIFEST_VERSION,
     AgentToolContext,
     build_tools,
     deterministic_collection_text,
@@ -85,6 +86,11 @@ from .web_search import trusted_source_url
 
 _EMPTY_REPLY = "（本轮没有生成任何内容，请换一种说法再试一次。）"
 _TRUSTED_SEARCH_PROVIDERS = frozenset({"tavily", "jina", "exa", "exa_mcp_free"})
+_RECOMMENDATION_TOOL = "present_website_recommendations"
+_TOOL_EXECUTION_ERROR = {
+    "code": "tool_execution_error",
+    "error": "工具执行失败，请调整请求后重试。",
+}
 
 
 def _message_text(message: Any) -> str:
@@ -205,6 +211,59 @@ def _tool_payload(content: Any) -> Any:
         except (TypeError, ValueError):
             return content[:2_000]
     return _json_safe(content)
+
+
+def _recommendation_artifact(value: Any) -> dict[str, Any] | None:
+    """Accept only the server-owned v2 card manifest carried outside model content."""
+
+    if not isinstance(value, Mapping):
+        return None
+    safe = _json_safe(value)
+    if not isinstance(safe, dict):
+        return None
+    error = safe.get("error")
+    if isinstance(error, str) and error.strip():
+        code = safe.get("code")
+        return {
+            "manifest_version": RECOMMENDATION_MANIFEST_VERSION,
+            "source": safe.get("source"),
+            "code": code if isinstance(code, str) and code else "recommendation_unavailable",
+            "error": error.strip(),
+        }
+    if (
+        safe.get("manifest_version") != RECOMMENDATION_MANIFEST_VERSION
+        or safe.get("complete") is not True
+    ):
+        return None
+    matched_count = safe.get("matched_count")
+    items = safe.get("items")
+    if (
+        not isinstance(matched_count, int)
+        or isinstance(matched_count, bool)
+        or matched_count < 0
+        or not isinstance(items, list)
+        or matched_count != len(items)
+        or any(not isinstance(item, dict) for item in items)
+    ):
+        return None
+    return safe
+
+
+def _tool_result_payload(message: Any) -> Any:
+    """Keep ToolNode exception strings and model kwargs out of stream/history."""
+
+    if getattr(message, "status", None) == "error":
+        return dict(_TOOL_EXECUTION_ERROR)
+    name = getattr(message, "name", "") or ""
+    if name == _RECOMMENDATION_TOOL:
+        artifact = _recommendation_artifact(getattr(message, "artifact", None))
+        if artifact is not None:
+            return artifact
+        return {
+            "code": "invalid_recommendation_artifact",
+            "error": "推荐结果生成失败，请重新执行。",
+        }
+    return _tool_payload(getattr(message, "content", ""))
 
 
 def _namespaced_tool_call_id(
@@ -591,7 +650,7 @@ class LangGraphAgentRunner:
                 {
                     "conversationId": context.conversation_id,
                     "assistantMessageId": message_id,
-                    "recommendationManifestVersion": 1,
+                    "recommendationManifestVersion": RECOMMENDATION_MANIFEST_VERSION,
                 }
             )
             journal = AgentTurnJournal(
@@ -1075,7 +1134,7 @@ def _tool_events(payload: Any) -> list[dict[str, Any]]:
                         "data": {
                             "toolCallId": getattr(message, "tool_call_id", "") or "",
                             "name": getattr(message, "name", "") or "",
-                            "result": _tool_payload(getattr(message, "content", "")),
+                            "result": _tool_result_payload(message),
                         },
                     }
                 )

@@ -43,8 +43,13 @@ export type WebSaveState = {
 export const IDLE_SAVE: WebSaveState = { status: "idle" };
 
 export type ResultGroups = {
-  library: { items: AgentToolLink[]; total: number };
-  web: { items: AgentToolLink[]; provider: string | null; collectionDisabled: boolean };
+  library: { key: string; items: AgentToolLink[]; total: number };
+  web: {
+    key: string;
+    items: AgentToolLink[];
+    provider: string | null;
+    collectionDisabled: boolean;
+  };
 };
 
 export function hostOf(url: string): string {

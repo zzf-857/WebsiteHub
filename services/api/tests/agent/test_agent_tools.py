@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -115,6 +116,47 @@ def _set_alice_favicon(settings: Settings, favicon_url: str) -> None:
     asyncio.run(scenario())
 
 
+def _seed_alice_sites(settings: Settings, count: int) -> None:
+    async def scenario() -> None:
+        database = Database(settings.database_url)
+        try:
+            async with database.sessions() as session:
+                user_id = await session.scalar(select(User.id).where(User.username == "alice"))
+                assert user_id is not None
+                category_id = await session.scalar(
+                    select(Site.category_id).where(Site.user_id == user_id).limit(1)
+                )
+                assert category_id is not None
+                last_position = int(
+                    await session.scalar(
+                        select(func.max(Site.position)).where(
+                            Site.user_id == user_id,
+                            Site.category_id == category_id,
+                        )
+                    )
+                    or 0
+                )
+                for index in range(count):
+                    url = f"https://example.com/agent-site-{index:03d}"
+                    name = f"AI 工具 {index:03d}"
+                    session.add(
+                        Site(
+                            user_id=user_id,
+                            category_id=category_id,
+                            name=name,
+                            normalized_name=name.casefold(),
+                            original_url=url,
+                            identity_url=url,
+                            position=last_position + index + 1,
+                        )
+                    )
+                await session.commit()
+        finally:
+            await database.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_search_library_returns_only_the_calling_accounts_sites(tmp_path: Path) -> None:
     with _two_accounts(tmp_path) as settings:
         _set_alice_favicon(settings, "https://qdrant.tech/favicon.ico")
@@ -127,6 +169,151 @@ def test_search_library_returns_only_the_calling_accounts_sites(tmp_path: Path) 
     # Bob shares the database but must never see Alice's row.
     assert bob["items"] == []
     assert bob["matched_count"] == 0
+
+
+def test_complete_library_result_set_stays_scoped_and_presents_as_artifact(
+    tmp_path: Path,
+) -> None:
+    with _two_accounts(tmp_path) as settings:
+        _seed_alice_sites(settings, 24)
+
+        async def scenario() -> tuple[dict[str, Any], Any, Any]:
+            database = Database(settings.database_url)
+            try:
+                async with database.sessions() as session:
+                    alice_id = await session.scalar(
+                        select(User.id).where(User.username == "alice")
+                    )
+                    bob_id = await session.scalar(select(User.id).where(User.username == "bob"))
+                    category_id = await session.scalar(
+                        select(Site.category_id).where(Site.user_id == alice_id).limit(1)
+                    )
+                assert alice_id is not None and bob_id is not None and category_id is not None
+
+                alice_context = AgentToolContext(
+                    database=database,
+                    settings=settings,
+                    user_id=alice_id,
+                )
+                alice_tools = _tool_map(alice_context)
+                search_result = await alice_tools["search_library"].ainvoke(
+                    {
+                        "query": "",
+                        "category_id": category_id,
+                        "include_all": True,
+                        "limit": 8,
+                    }
+                )
+                result_set_id = search_result["result_set_id"]
+                presentation = await alice_tools["present_website_recommendations"].ainvoke(
+                    {
+                        "type": "tool_call",
+                        "id": "present-all",
+                        "name": "present_website_recommendations",
+                        "args": {"result_set_id": result_set_id},
+                    }
+                )
+
+                bob_context = AgentToolContext(
+                    database=database,
+                    settings=settings,
+                    user_id=bob_id,
+                )
+                rejected = await _tool_map(bob_context)[
+                    "present_website_recommendations"
+                ].ainvoke(
+                    {
+                        "type": "tool_call",
+                        "id": "present-foreign",
+                        "name": "present_website_recommendations",
+                        "args": {"result_set_id": result_set_id},
+                    }
+                )
+                return search_result, presentation, rejected
+            finally:
+                await database.dispose()
+
+        search_result, presentation, rejected = asyncio.run(scenario())
+
+    assert search_result["matched_count"] == 25
+    assert len(search_result["items"]) == 8
+    assert search_result["complete_result_set"] is True
+    assert "items" not in json.loads(presentation.content)
+    assert json.loads(presentation.content)["presented_count"] == 25
+    assert presentation.artifact["complete"] is True
+    assert presentation.artifact["matched_count"] == 25
+    assert len(presentation.artifact["items"]) == 25
+    assert all(
+        set(item) == {"site_id", "name", "url", "favicon_url"}
+        for item in presentation.artifact["items"]
+    )
+    assert rejected.artifact["code"] == "result_set_unavailable"
+    assert "items" not in rejected.artifact
+
+
+def test_present_recommendations_keeps_explicit_items_and_hides_artifact_from_model(
+    tmp_path: Path,
+) -> None:
+    with _two_accounts(tmp_path) as settings:
+
+        async def scenario() -> tuple[Any, Any]:
+            database = Database(settings.database_url)
+            try:
+                async with database.sessions() as session:
+                    alice_id = await session.scalar(
+                        select(User.id).where(User.username == "alice")
+                    )
+                assert alice_id is not None
+                context = AgentToolContext(database=database, settings=settings, user_id=alice_id)
+                tool = _tool_map(context)["present_website_recommendations"]
+                presentation = await tool.ainvoke(
+                    {
+                        "type": "tool_call",
+                        "id": "present-explicit",
+                        "name": "present_website_recommendations",
+                        "args": {
+                            "items": [
+                                {
+                                    "name": "Qdrant",
+                                    "url": "https://qdrant.tech",
+                                    "description": "向量数据库",
+                                }
+                            ]
+                        },
+                    }
+                )
+                invalid = await tool.ainvoke(
+                    {
+                        "type": "tool_call",
+                        "id": "present-too-many",
+                        "name": "present_website_recommendations",
+                        "args": {
+                            "items": [
+                                {
+                                    "name": f"站点 {index}",
+                                    "url": f"https://private-{index}.example",
+                                }
+                                for index in range(13)
+                            ]
+                        },
+                    }
+                )
+                return presentation, invalid
+            finally:
+                await database.dispose()
+
+        presentation, invalid = asyncio.run(scenario())
+
+    assert "items" not in json.loads(presentation.content)
+    assert presentation.artifact["matched_count"] == 1
+    assert presentation.artifact["items"][0]["site_id"]
+    assert presentation.artifact["source"] == SOURCE_LIBRARY
+    assert invalid.status == "error"
+    assert json.loads(invalid.content) == {
+        "code": "invalid_tool_arguments",
+        "error": "工具参数不符合要求，请修正后重试。",
+    }
+    assert "private-0.example" not in invalid.content
 
 
 def test_get_site_detail_refuses_a_foreign_site_id(tmp_path: Path) -> None:

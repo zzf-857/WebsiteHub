@@ -1334,8 +1334,10 @@ export function ConversationThread({
                 if (part.type === "data-agent-tool-result") {
                   const result = normalizeAgentToolResult(part.data);
                   if (!result) return null;
-                  // 链接结果由 Agent 面板底部的统一站点卡片区消费；这里再渲染
-                  // 通用 ToolCard 会产生重复 DOM，空最终清单还会给出误导文案。
+                  // 最终展示工具只为底部结果区供数。它的中间重试、参数校验失败等
+                  // 内部状态不能伪装成一张“旧版本”通用工具卡出现在正文里。
+                  if (result.name === "present_website_recommendations") return null;
+                  // 其他链接结果也由 Agent 面板底部统一消费，避免重复 DOM。
                   if (describeAgentToolResult(result.name, result.result).kind === "links") {
                     return null;
                   }

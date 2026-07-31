@@ -5,6 +5,7 @@ import test from "node:test";
 const THREAD = new URL("../components/agent/conversation-thread.tsx", import.meta.url);
 const PANEL_HOOK = new URL("../components/agent/use-agent-panel.tsx", import.meta.url);
 const RESULT_CARDS = new URL("../components/agent/agent-result-cards.tsx", import.meta.url);
+const RESULT_PAGINATION = new URL("../components/agent/agent-result-pagination.tsx", import.meta.url);
 const LAYOUT = new URL("../app/layout.tsx", import.meta.url);
 const GLOBALS = new URL("../app/globals.css", import.meta.url);
 
@@ -28,6 +29,7 @@ test("assistant prose uses streaming Markdown without exposing raw tool JSON", a
   assert.doesNotMatch(thread, /sourceFaviconUrl|\/favicon\.ico/u);
   assert.match(thread, /messageStatus !== "complete" \|\| metadata\.turnPersisted === false/u);
   assert.match(thread, /draftDisabled=\{draftDisabled\}/u);
+  assert.match(thread, /result\.name === "present_website_recommendations"/u);
   assert.match(thread, /followOutputRef\.current = atBottom/u);
   assert.match(thread, /className="chat-return-bottom"/u);
   assert.match(thread, /scrollToBottom\("auto"\)/u);
@@ -62,4 +64,15 @@ test("saved tool links navigate to WebHub detail pages", async () => {
   assert.match(thread, /href=\{`\/library\/\$\{encodeURIComponent\(item\.siteId\)\}`\}/u);
   assert.match(thread, /href=\{`\/library\/\$\{encodeURIComponent\(draft\.before\.siteId\)\}`\}/u);
   assert.match(thread, /<SiteFavicon url=\{item\.faviconUrl\}/u);
+});
+
+test("complete Agent results use numbered pagination with icon navigation", async () => {
+  const pagination = await readFile(RESULT_PAGINATION, "utf8");
+
+  assert.match(pagination, /agentResultPageSlice\(items, requestedPage\)/u);
+  assert.match(pagination, /aria-label="上一页"/u);
+  assert.match(pagination, /aria-label="下一页"/u);
+  assert.match(pagination, /aria-current=\{token === page\.page \? "page" : undefined\}/u);
+  assert.match(pagination, /<ChevronLeft/u);
+  assert.match(pagination, /<ChevronRight/u);
 });

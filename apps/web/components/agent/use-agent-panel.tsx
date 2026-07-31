@@ -839,26 +839,42 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
       const result = normalizeAgentToolResult(part.data);
       if (!result) return [];
       const view = describeAgentToolResult(result.name, result.result);
-      return view.kind === "links" ? [{ result, view }] : [];
+      return [{ result, view }];
     });
 
     // presentation 是模型明确提交的最终推荐清单。若一轮里因重试调用多次，
-    // 只认最后一次；即使它经服务端校验后为空，也不能回退展示原始搜索候选。
-    let finalPresentation: (typeof normalizedResults)[number] | undefined;
+    // 只认最后一次调用本身，而不是“最后一次成功调用”。后一次失败时不能
+    // 悄悄回退到旧成功清单，让用户误以为失败的调整已经生效。
+    let lastPresentation: (typeof normalizedResults)[number] | undefined;
     for (let index = normalizedResults.length - 1; index >= 0; index -= 1) {
       if (normalizedResults[index]?.result.name === "present_website_recommendations") {
-        finalPresentation = normalizedResults[index];
+        lastPresentation = normalizedResults[index];
         break;
       }
     }
+    const finalPresentation = lastPresentation?.view.kind === "links"
+      ? lastPresentation as (typeof normalizedResults)[number] & {
+          view: Extract<(typeof normalizedResults)[number]["view"], { kind: "links" }>;
+        }
+      : undefined;
     const metadata = normalizeAgentMessageMetadata(message.metadata);
     const collectionDisabled =
       (metadata.messageStatus !== undefined && metadata.messageStatus !== "complete") ||
       metadata.turnPersisted === false;
-    if (!finalPresentation && (metadata.recommendationManifestVersion ?? 0) >= 1) {
+    if (
+      (!finalPresentation && (metadata.recommendationManifestVersion ?? 0) >= 1) ||
+      (lastPresentation !== undefined && finalPresentation === undefined)
+    ) {
       return null;
     }
-    const visibleResults = finalPresentation ? [finalPresentation] : normalizedResults;
+    const visibleResults = finalPresentation
+      ? [finalPresentation]
+      : normalizedResults.filter(
+          (entry): entry is (typeof normalizedResults)[number] & {
+            view: Extract<(typeof normalizedResults)[number]["view"], { kind: "links" }>;
+          } => entry.view.kind === "links",
+        );
+    const resultKey = visibleResults.map(({ result }) => result.toolCallId).join(":");
     const seen = new Set<string>();
     const library: AgentToolLink[] = [];
     let libraryTotal = 0;
@@ -887,15 +903,15 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
           web.push(item);
         }
       }
-      if (view.source === AGENT_SOURCE_LIBRARY && !finalPresentation) {
+      if (view.source === AGENT_SOURCE_LIBRARY) {
         // matched_count 是命中总数，可能大于返回条数，分组标题以它为准
         libraryTotal += Math.max(0, (view.matchedCount ?? view.items.length) - view.items.length);
       }
     }
     return library.length > 0 || web.length > 0
       ? {
-          library: { items: library, total: libraryTotal },
-          web: { items: web, provider, collectionDisabled },
+          library: { key: `library:${resultKey}`, items: library, total: libraryTotal },
+          web: { key: `web:${resultKey}`, items: web, provider, collectionDisabled },
         }
       : null;
   }, [messages, status]);

@@ -21,14 +21,16 @@ than silently overwriting.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal, Self
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
 from webhub.bookmarks import persistence
@@ -58,6 +60,7 @@ SOURCE_MODEL = "llm推荐"
 
 MAX_TOOL_LIMIT = 20
 MAX_PROPOSAL_TEXT_LENGTH = 20_000
+RECOMMENDATION_MANIFEST_VERSION = 2
 _COLLECTION_ACTION_SUFFIX = re.compile(
     r"(?:/|\s|[，,。:：;；])+(?:入库|收藏|保存|收录)\s*[.!。！?？]*\s*$",
     re.IGNORECASE,
@@ -72,6 +75,18 @@ class SearchLibraryArgs(BaseModel):
     )
     limit: int = Field(default=8, ge=1, le=MAX_TOOL_LIMIT, description="返回条数上限")
     pinned_only: bool = Field(default=False, description="只看星标（常用）网站")
+    category_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=36,
+        description="只检索这个分类；必须先从 list_categories 获取真实 ID",
+    )
+    include_all: bool = Field(
+        default=False,
+        description=(
+            "用户明确要求全部结果时设为 true。模型仍只看到有限预览，完整结果由界面分页展示"
+        ),
+    )
 
 
 class SiteIdArgs(BaseModel):
@@ -108,10 +123,22 @@ class WebsiteRecommendation(BaseModel):
 
 class PresentWebsiteRecommendationsArgs(BaseModel):
     items: list[WebsiteRecommendation] = Field(
-        min_length=1,
+        default_factory=list,
         max_length=12,
-        description="本轮最终实际推荐给用户的网站，顺序即展示顺序",
+        description="本轮筛选后的推荐清单；展示完整检索结果时留空并改传 result_set_id",
     )
+    result_set_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=36,
+        description="search_library(include_all=true) 在本轮返回的完整结果集 ID",
+    )
+
+    @model_validator(mode="after")
+    def validate_source(self) -> Self:
+        if bool(self.items) == bool(self.result_set_id):
+            raise ValueError("items 与 result_set_id 必须且只能提供一个")
+        return self
 
 
 class ProposeSiteArgs(BaseModel):
@@ -193,6 +220,17 @@ def _site_summary(site: Any) -> dict[str, Any]:
     }
 
 
+def _selection_site_summary(site: Any) -> dict[str, Any]:
+    """Keep an all-results snapshot small while retaining every clickable field."""
+
+    return {
+        "site_id": site.id,
+        "name": site.name,
+        "url": site.original_url,
+        "favicon_url": site.favicon_url,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class AgentToolContext:
     """Everything a tool needs, with the account scope already fixed."""
@@ -201,16 +239,53 @@ class AgentToolContext:
     settings: Settings
     user_id: str
     search_binding: ProviderBinding | None = None
+    _library_result_sets: dict[str, tuple[dict[str, Any], ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def register_library_result_set(self, items: Sequence[dict[str, Any]]) -> str:
+        result_set_id = str(uuid4())
+        self._library_result_sets[result_set_id] = tuple(dict(item) for item in items)
+        return result_set_id
+
+    def library_result_set(self, result_set_id: str) -> tuple[dict[str, Any], ...] | None:
+        return self._library_result_sets.get(result_set_id)
 
 
 async def _search_library(context: AgentToolContext, args: SearchLibraryArgs) -> dict[str, Any]:
     async with context.database.sessions() as session:
         try:
+            if args.include_all:
+                selection = await library_service.list_site_selection(
+                    session,
+                    context.user_id,
+                    q=args.query.strip() or None,
+                    category_id=args.category_id,
+                    tag_id=None,
+                    pinned=True if args.pinned_only else None,
+                )
+                items = sorted(
+                    (_selection_site_summary(site) for site in selection.items),
+                    key=lambda item: (str(item["name"]).casefold(), str(item["site_id"])),
+                )
+                result_set_id = (
+                    context.register_library_result_set(items) if items else None
+                )
+                return {
+                    "source": SOURCE_LIBRARY,
+                    "matched_count": len(items),
+                    "items": items[: min(args.limit, MAX_TOOL_LIMIT)],
+                    "complete_result_set": bool(result_set_id),
+                    **({"result_set_id": result_set_id} if result_set_id is not None else {}),
+                }
             listing = await library_service.list_sites(
                 session,
                 context.user_id,
                 q=args.query.strip() or None,
-                category_id=None,
+                category_id=args.category_id,
                 tag_id=None,
                 space_id=None,
                 pinned=True if args.pinned_only else None,
@@ -355,13 +430,35 @@ def _recommendation_identity_candidates(url: str) -> list[str]:
 async def _present_website_recommendations(
     context: AgentToolContext,
     args: PresentWebsiteRecommendationsArgs,
-) -> dict[str, Any]:
+) -> tuple[str, dict[str, Any]]:
     """Project the model's final recommendations into trusted render data.
 
     This tool is read-only. The model supplies explicit URLs; the server
     validates and de-duplicates them, then resolves exact saved URL variants so
     those cards open WebHub detail pages instead of leaving the site.
     """
+
+    if args.result_set_id is not None:
+        result_set = context.library_result_set(args.result_set_id)
+        if result_set is None:
+            artifact = {
+                "manifest_version": RECOMMENDATION_MANIFEST_VERSION,
+                "source": SOURCE_LIBRARY,
+                "code": "result_set_unavailable",
+                "error": "完整结果集已失效，请重新检索。",
+            }
+            return _recommendation_model_content(artifact), artifact
+        artifact = {
+            "manifest_version": RECOMMENDATION_MANIFEST_VERSION,
+            "complete": True,
+            "result_set_id": args.result_set_id,
+            "source": SOURCE_LIBRARY,
+            "provider": None,
+            "matched_count": len(result_set),
+            "items": [dict(item) for item in result_set],
+            "rejected_count": 0,
+        }
+        return _recommendation_model_content(artifact), artifact
 
     prepared: list[tuple[WebsiteRecommendation, list[str]]] = []
     seen: set[str] = set()
@@ -428,12 +525,42 @@ async def _present_website_recommendations(
         source = SOURCE_MODEL
         provider = SOURCE_MODEL
 
-    return {
+    artifact = {
+        "manifest_version": RECOMMENDATION_MANIFEST_VERSION,
+        "complete": True,
         "source": source,
         "provider": provider,
+        "matched_count": len(items),
         "items": items,
         "rejected_count": len(args.items) - len(prepared),
     }
+    return _recommendation_model_content(artifact), artifact
+
+
+def _recommendation_model_content(artifact: dict[str, Any]) -> str:
+    """Return only bounded status data to the model; cards stay in ToolMessage.artifact."""
+
+    error = artifact.get("error")
+    if isinstance(error, str) and error:
+        payload = {
+            "source": artifact.get("source"),
+            "code": artifact.get("code", "recommendation_unavailable"),
+            "error": error,
+        }
+    else:
+        items = artifact.get("items")
+        payload = {
+            "source": artifact.get("source"),
+            "matched_count": artifact.get("matched_count", 0),
+            "presented_count": len(items) if isinstance(items, list) else 0,
+            "rejected_count": artifact.get("rejected_count", 0),
+            **(
+                {"result_set_id": artifact["result_set_id"]}
+                if isinstance(artifact.get("result_set_id"), str)
+                else {}
+            ),
+        }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 async def _propose_site(context: AgentToolContext, args: ProposeSiteArgs) -> dict[str, Any]:
@@ -964,6 +1091,8 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
         description: str,
         args_schema: type[BaseModel],
         handler: Any,
+        *,
+        response_format: Literal["content", "content_and_artifact"] = "content",
     ) -> Any:
         async def run(**kwargs: Any) -> Any:
             return await handler(context, args_schema(**kwargs))
@@ -973,12 +1102,23 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
             name=name,
             description=description,
             args_schema=args_schema,
+            response_format=response_format,
+            handle_validation_error=lambda _: json.dumps(
+                {
+                    "code": "invalid_tool_arguments",
+                    "error": "工具参数不符合要求，请修正后重试。",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
         )
 
     tools = [
         structured(
             "search_library",
-            "在【当前用户自己的网址库】里检索已收藏的网站。回答任何“我有没有/我收藏过”类问题前必须先调用它。",
+            "在【当前用户自己的网址库】里检索已收藏的网站。回答任何“我有没有/我收藏过”类问题前必须先调用它。"
+            "用户明确要求全部结果时设 include_all=true；按分类检索必须先用 list_categories "
+            "获取 category_id。",
             SearchLibraryArgs,
             _search_library,
         ),
@@ -1009,12 +1149,14 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
         ),
         structured(
             "present_website_recommendations",
-        "把本轮最终推荐的具体网站转换成界面可点击的站内卡片。只要回答里会推荐一个或多个具体网站，"
-        "就必须在最终回答前调用一次，并完整传入最终推荐清单；不要用 Markdown 表格、列表或普通链接"
-        "替代。"
+            "把本轮最终推荐的具体网站转换成界面可点击的站内卡片。只要回答里会推荐一个或多个具体网站，"
+            "就必须在最终回答前调用一次；普通推荐传 items，search_library(include_all=true) "
+            "的完整结果必须原样传 result_set_id，不能把预览项改写成 items，也不要用 Markdown "
+            "表格、列表或普通链接替代。"
             "服务端会自动识别已收藏网址并让卡片优先打开站内详情；未收藏网址保留收录和打开能力。",
             PresentWebsiteRecommendationsArgs,
             _present_website_recommendations,
+            response_format="content_and_artifact",
         ),
         structured(
             "propose_site",
@@ -1106,6 +1248,7 @@ __all__ = [
     "SOURCE_LIBRARY",
     "SOURCE_MODEL",
     "SOURCE_WEB",
+    "RECOMMENDATION_MANIFEST_VERSION",
     "AgentToolContext",
     "ProposeSiteArgs",
     "ProposeSitesArgs",

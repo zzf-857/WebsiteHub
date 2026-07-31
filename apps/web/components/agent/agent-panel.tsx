@@ -15,6 +15,9 @@ import {
   Fragment,
 } from "react";
 import {
+  AgentResultPagination,
+} from "@/components/agent/agent-result-pagination";
+import {
   ConversationThread,
 } from "@/components/agent/conversation-thread";
 import {
@@ -26,9 +29,6 @@ import {
 import {
   PopCheck,
 } from "@/components/react-bits/pop-check";
-import {
-  StaggerList,
-} from "@/components/react-bits/stagger-list";
 import {
   IDLE_SAVE,
   LibraryResultCard,
@@ -233,11 +233,14 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
                     <h3 className="agent-result-label">
                       <span>来自网址库 · {resultGroups.library.total}</span>
                     </h3>
-                    <StaggerList className="agent-result-grid">
-                      {resultGroups.library.items.map((link, index) => (
+                    <AgentResultPagination
+                      key={resultGroups.library.key}
+                      items={resultGroups.library.items}
+                      ariaLabel="网址库结果分页"
+                      renderItem={(link, index) => (
                         <LibraryResultCard key={cardKey(link, index)} link={link} />
-                      ))}
-                    </StaggerList>
+                      )}
+                    />
                   </section>
                 )}
                 {resultGroups.web.items.length > 0 && (
@@ -256,8 +259,11 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
                         </span>
                       )}
                     </h3>
-                    <StaggerList className="agent-result-grid">
-                      {resultGroups.web.items.map((link, index) => (
+                    <AgentResultPagination
+                      key={resultGroups.web.key}
+                      items={resultGroups.web.items}
+                      ariaLabel="联网结果分页"
+                      renderItem={(link, index) => (
                         <WebResultCard
                           key={cardKey(link, index)}
                           link={link}
@@ -266,8 +272,8 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
                           collectionDisabled={resultGroups.web.collectionDisabled}
                           onCollect={handleCollect}
                         />
-                      ))}
-                    </StaggerList>
+                      )}
+                    />
                   </section>
                 )}
               </div>
