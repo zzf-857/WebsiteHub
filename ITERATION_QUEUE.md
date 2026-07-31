@@ -1218,7 +1218,7 @@ P2 不阻塞 Q26：CountUp 节流数字过渡已完成；书签/Provider Stepper
 
 ## Q27 · Provider 预检精确诊断与 Fake-IP 防复发
 
-状态: 已完成（提交后回填）
+状态: 已完成 · c68022b
 对应: Provider 可靠性与 Q26 Agent 错误回执收口
 
 范围与约束：
