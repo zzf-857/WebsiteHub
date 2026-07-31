@@ -37,7 +37,7 @@ from .runner import (
     AgentChunkSource,
     AgentConversationAccess,
     AgentConversationUnavailableError,
-    AgentProviderNotConfiguredError,
+    AgentProviderError,
     AgentRunner,
     AgentRunnerExecutionError,
     AgentRunRequest,
@@ -284,16 +284,16 @@ async def _guard_runner_source(
         else:
             for chunk in source:
                 yield chunk
-    except AgentProviderNotConfiguredError:
+    except AgentProviderError as error:
         yield data_chunk(
             "agent-error",
             {
-                "code": AgentProviderNotConfiguredError.code,
-                "message": AgentProviderNotConfiguredError.safe_message,
+                "code": error.code,
+                "message": error.safe_message,
             },
             transient=True,
         )
-        yield error_chunk(AgentProviderNotConfiguredError.safe_message)
+        yield error_chunk(error.safe_message)
     except AgentConversationUnavailableError:
         # A runner must not disclose another account's conversation details.
         yield data_chunk(
@@ -418,10 +418,10 @@ async def chat(
     )
     try:
         source = await _await_runner_result(runner.run(run_request))
-    except AgentProviderNotConfiguredError:
+    except AgentProviderError as error:
         return _stream_error(
-            code=AgentProviderNotConfiguredError.code,
-            message=AgentProviderNotConfiguredError.safe_message,
+            code=error.code,
+            message=error.safe_message,
             conversation_id=payload.conversation_id,
             turn_id=turn_id,
         )

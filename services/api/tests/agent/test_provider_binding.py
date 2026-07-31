@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,13 @@ from sqlalchemy import select
 
 from webhub.agent import provider_binding as binding_module
 from webhub.agent.provider_binding import ProviderBinding, resolve_binding
-from webhub.agent.runner import AgentProviderNotConfiguredError
+from webhub.agent.runner import (
+    AgentProviderCredentialsUnavailableError,
+    AgentProviderFakeIPError,
+    AgentProviderNotConfiguredError,
+    AgentProviderTargetBlockedError,
+    AgentProviderTargetUnavailableError,
+)
 from webhub.config import Settings
 from webhub.db.database import Database
 from webhub.db.migrations import upgrade_database
@@ -142,15 +149,26 @@ def test_disabled_or_absent_config_is_reported_as_not_configured(tmp_path: Path)
         _resolve(settings)
 
 
-def test_unsafe_base_url_is_refused_at_call_time(
+@pytest.mark.parametrize(
+    ("target_code", "expected_error"),
+    (
+        ("provider_fake_ip_detected", AgentProviderFakeIPError),
+        ("unsafe_provider_target", AgentProviderTargetBlockedError),
+        ("provider_target_unreachable", AgentProviderTargetUnavailableError),
+        ("provider_target_timeout", AgentProviderTargetUnavailableError),
+    ),
+)
+def test_target_failures_are_classified_at_call_time(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    target_code: str,
+    expected_error: type[Exception],
 ) -> None:
     from webhub.providers.targets import ProviderTargetError
 
     async def reject_target(*args: object, **kwargs: object) -> None:
         del args, kwargs
-        raise ProviderTargetError("unsafe_provider_target", "指向不安全目标")
+        raise ProviderTargetError(target_code, "不得透出的目标诊断")
 
     monkeypatch.setattr(binding_module, "validate_connection_target", reject_target)
 
@@ -171,8 +189,39 @@ def test_unsafe_base_url_is_refused_at_call_time(
 
     # A hostname that passed validation at save time can be re-pointed later,
     # so the runner must not trust the stored value.
-    with pytest.raises(AgentProviderNotConfiguredError):
+    with pytest.raises(expected_error) as raised:
         _resolve(settings)
+
+    assert "不得透出的目标诊断" not in str(raised.value)
+
+
+def test_undecryptable_secret_is_not_reported_as_missing_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def allow_target(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    monkeypatch.setattr(binding_module, "validate_connection_target", allow_target)
+
+    with _client(tmp_path) as (client, settings):
+        response = client.post(
+            "/api/providers",
+            json={
+                "kind": "model",
+                "provider": "deepseek",
+                "display_name": "DeepSeek",
+                "model_name": "deepseek-chat",
+                "secret": {"action": "write", "value": "sk-stored-secret"},
+                "enabled": True,
+            },
+            headers=ORIGIN,
+        )
+        assert response.status_code == 201, response.text
+
+    wrong_key_settings = replace(settings, provider_master_key=b"x" * 32)
+    with pytest.raises(AgentProviderCredentialsUnavailableError):
+        _resolve(wrong_key_settings)
 
 
 def test_another_accounts_config_is_never_borrowed(tmp_path: Path) -> None:

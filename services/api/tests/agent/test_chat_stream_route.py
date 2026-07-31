@@ -15,6 +15,7 @@ from webhub.agent import routes as route_module
 from webhub.agent.routes import router
 from webhub.agent.runner import (
     AgentConversationUnavailableError,
+    AgentProviderFakeIPError,
     AgentProviderNotConfiguredError,
     AgentRunRequest,
 )
@@ -389,6 +390,27 @@ def test_provider_error_raised_during_stream_is_sanitized() -> None:
     assert secret not in response.text
     assert chunks[-3]["data"]["code"] == "provider_not_configured"
     assert chunks[-2]["errorText"] == AgentProviderNotConfiguredError.safe_message
+    assert chunks[-1] == "[DONE]"
+
+
+def test_fake_ip_preflight_error_keeps_precise_safe_contract() -> None:
+    secret = "https://provider.example.test?key=sk-sensitive"
+
+    class FakeIPFailureRunner:
+        def run(self, request: AgentRunRequest):
+            del request
+            raise AgentProviderFakeIPError(secret)
+
+    with _client(runner=FakeIPFailureRunner()) as client:
+        response = client.post("/api/agent/chat", json={"message": "hello"})
+
+    chunks = _chunks(response)
+    assert secret not in response.text
+    assert chunks[1]["data"] == {
+        "code": AgentProviderFakeIPError.code,
+        "message": AgentProviderFakeIPError.safe_message,
+    }
+    assert chunks[-2]["errorText"] == AgentProviderFakeIPError.safe_message
     assert chunks[-1] == "[DONE]"
 
 

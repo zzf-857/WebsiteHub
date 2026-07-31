@@ -55,8 +55,10 @@ from .provider_binding import (
     resolve_optional_binding,
 )
 from .runner import (
+    AgentProviderError,
     AgentProviderNotConfiguredError,
     AgentRunRequest,
+    agent_provider_error_message,
 )
 from .tools import (
     AgentToolContext,
@@ -285,8 +287,8 @@ class _TurnContext:
 
 
 def _safe_turn_error(code: str | None) -> str:
-    if code == AgentProviderNotConfiguredError.code:
-        return AgentProviderNotConfiguredError.safe_message
+    if provider_message := agent_provider_error_message(code):
+        return provider_message
     if code == TURN_EXPIRED_CODE:
         return "上一次执行已中断，请重新发送。"
     if code == TURN_ABORTED_CODE:
@@ -903,8 +905,8 @@ class LangGraphAgentRunner:
             raise
         except Exception as error:
             error_code = (
-                AgentProviderNotConfiguredError.code
-                if isinstance(error, AgentProviderNotConfiguredError)
+                error.code
+                if isinstance(error, AgentProviderError)
                 else TURN_RUNNER_ERROR_CODE
             )
             error_message = _safe_turn_error(error_code)
@@ -1099,6 +1101,7 @@ def build_agent_runner(database: Database, settings: Settings) -> LangGraphAgent
 
 
 __all__ = [
+    "AgentProviderError",
     "AgentProviderNotConfiguredError",
     "LangGraphAgentRunner",
     "build_agent_runner",

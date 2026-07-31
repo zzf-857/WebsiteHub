@@ -45,7 +45,7 @@ from .provider_binding import (
     resolve_binding,
     resolve_optional_binding,
 )
-from .runner import AgentProviderNotConfiguredError
+from .runner import AgentProviderError
 from .web_search import WebSearchResult, WebSearchUnavailableError, search_web
 
 SITE_ENRICHMENT_TIMEOUT_SECONDS = 55
@@ -582,9 +582,9 @@ class AgentSiteEnricher:
                     kind="model",
                 )
                 await session.rollback()
-        except AgentProviderNotConfiguredError as error:
+        except AgentProviderError as error:
             raise SiteEnrichmentUnavailableError(
-                "当前账号尚未配置或启用模型 Provider",
+                error.safe_message,
                 stop_batch=True,
             ) from error
 

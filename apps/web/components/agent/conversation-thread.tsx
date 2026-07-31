@@ -33,6 +33,7 @@ import { ShinyText } from "@/components/react-bits/shiny-text";
 import { Spinner } from "@/components/react-bits/spinner";
 import { SiteFavicon } from "@/components/site-favicon";
 import { buildAgentConversationLink } from "@/lib/agent-client";
+import { agentErrorAction } from "@/lib/agent-error";
 import {
   AGENT_SOURCE_MODEL,
   agentSourceLabels,
@@ -1180,6 +1181,7 @@ export function ConversationThread({
   const lastSubmittedUserIdRef = useRef<string | null>(null);
   const [showReturnToBottom, setShowReturnToBottom] = useState(false);
   const reducedMotion = useReducedMotion();
+  const errorAction = agentErrorAction(errorCode);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     const thread = threadRef.current;
@@ -1404,9 +1406,9 @@ export function ConversationThread({
         <p className="chat-error" role="alert">
           <CircleAlert aria-hidden="true" />
           {errorText}
-          {errorCode === "provider_not_configured" && (
-            <Link className="chat-error-action" href="/settings/providers">
-              去配置 Provider
+          {errorAction && (
+            <Link className="chat-error-action" href={errorAction.href}>
+              {errorAction.label}
             </Link>
           )}
         </p>

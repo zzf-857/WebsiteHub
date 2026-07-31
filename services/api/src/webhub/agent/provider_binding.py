@@ -11,8 +11,9 @@ Three invariants hold here and must keep holding:
   a traceback, log line, or ``dataclasses.asdict`` dump;
 * the base URL is re-validated against the SSRF rules right before use, not
   just when the config was saved (DNS can be re-pointed in between);
-* every failure collapses into ``AgentProviderNotConfiguredError`` so the
-  caller can never accidentally forward vendor error text to the browser.
+* every failure maps to a fixed ``AgentProviderError`` subtype so callers can
+  distinguish configuration, credentials, DNS and SSRF failures without ever
+  forwarding vendor text to the browser.
 """
 
 from __future__ import annotations
@@ -38,7 +39,15 @@ from webhub.providers.security import (
 )
 from webhub.providers.targets import ProviderTargetError, validate_connection_target
 
-from .runner import AgentProviderNotConfiguredError
+from .runner import (
+    AgentProviderConfigurationInvalidError,
+    AgentProviderCredentialsUnavailableError,
+    AgentProviderError,
+    AgentProviderFakeIPError,
+    AgentProviderNotConfiguredError,
+    AgentProviderTargetBlockedError,
+    AgentProviderTargetUnavailableError,
+)
 
 # Vendors that expose their API at a well-known origin.  A stored ``base_url``
 # normally wins, except for definitions whose audited adapter pins an official
@@ -92,7 +101,7 @@ def _resolved_base_url(
     if not candidate:
         # base_url_required providers (ollama, openai_compatible) have no
         # sensible default; an incomplete config is a configuration error.
-        raise AgentProviderNotConfiguredError
+        raise AgentProviderConfigurationInvalidError
     if definition.provider == "ollama" and not candidate.endswith(_OPENAI_COMPATIBLE_SUFFIX):
         candidate = f"{candidate}{_OPENAI_COMPATIBLE_SUFFIX}"
     return candidate
@@ -127,8 +136,8 @@ async def resolve_binding(
 ) -> ProviderBinding:
     """Decrypt and validate the account's enabled Provider for ``kind``.
 
-    Raises ``AgentProviderNotConfiguredError`` for every failure mode: absent,
-    incomplete, undecryptable, or pointing at an unsafe network target.
+    Raises a fixed ``AgentProviderError`` subtype for absent, incomplete,
+    undecryptable, unsafe, or unreachable configurations.
     """
 
     config = await load_enabled_config(session, user_id, kind)
@@ -140,11 +149,11 @@ async def resolve_binding(
     try:
         definition = provider_definition(cast(ProviderKind, config.kind), config.provider)
     except ValueError as error:
-        raise AgentProviderNotConfiguredError from error
+        raise AgentProviderConfigurationInvalidError from error
 
     model_name = (config.model_name or "").strip() or None
     if kind in {"model", "embedding"} and model_name is None:
-        raise AgentProviderNotConfiguredError
+        raise AgentProviderConfigurationInvalidError
 
     has_secret = config.secret_ciphertext is not None and config.secret_nonce is not None
     api_key: str | None = None
@@ -161,9 +170,9 @@ async def resolve_binding(
                 provider=config.provider,
             )
         except (ProviderSecretUnavailableError, ProviderSecretInvalidError) as error:
-            raise AgentProviderNotConfiguredError from error
+            raise AgentProviderCredentialsUnavailableError from error
     elif definition.secret_required:
-        raise AgentProviderNotConfiguredError
+        raise AgentProviderCredentialsUnavailableError
 
     base_url = _resolved_base_url(definition, config.base_url)
     try:
@@ -175,7 +184,13 @@ async def resolve_binding(
             timeout_seconds=settings.provider_test_timeout_seconds,
         )
     except ProviderTargetError as error:
-        raise AgentProviderNotConfiguredError from error
+        if error.code == "provider_fake_ip_detected":
+            raise AgentProviderFakeIPError from error
+        if error.code == "unsafe_provider_target":
+            raise AgentProviderTargetBlockedError from error
+        if error.code in {"provider_target_timeout", "provider_target_unreachable"}:
+            raise AgentProviderTargetUnavailableError from error
+        raise AgentProviderConfigurationInvalidError from error
 
     return ProviderBinding(
         kind=kind,
@@ -203,7 +218,7 @@ async def resolve_optional_binding(
 
     try:
         return await resolve_binding(session, settings, user_id=user_id, kind=kind)
-    except AgentProviderNotConfiguredError:
+    except AgentProviderError:
         return None
 
 
@@ -217,7 +232,7 @@ def build_chat_model(binding: ProviderBinding):  # noqa: ANN201 - langchain type
     from .openai_compatible import ReasoningCompatibleChatOpenAI
 
     if binding.model_name is None:
-        raise AgentProviderNotConfiguredError
+        raise AgentProviderConfigurationInvalidError
     return ReasoningCompatibleChatOpenAI(
         model=binding.model_name,
         api_key=binding.client_api_key,

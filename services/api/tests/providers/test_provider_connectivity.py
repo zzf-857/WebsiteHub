@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from ipaddress import ip_address
 
 import httpx
 import pytest
 
+from webhub.providers import targets
 from webhub.providers.connectivity import (
     MAX_RESPONSE_BYTES,
     ProviderProbeError,
@@ -355,6 +357,29 @@ def test_private_targets_are_refused_before_any_request_leaves(
     assert isinstance(outcome, ProviderProbeError)
     assert outcome.code == "unsafe_provider_target"
     # The SSRF check runs first; nothing was sent.
+    assert seen == []
+
+
+def test_proxy_fake_ip_gets_a_precise_probe_error_before_outbound_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        targets,
+        "_resolve",
+        lambda _hostname, _port: {ip_address("198.18.0.42")},
+    )
+
+    seen, outcome = _run(
+        COMPATIBLE,
+        _json({"data": []}),
+        base_url="https://provider.example/v1",
+        monkeypatch=monkeypatch,
+        skip_target_check=False,
+    )
+
+    assert isinstance(outcome, ProviderProbeError)
+    assert outcome.code == "provider_fake_ip_detected"
+    assert "Clash/Mihomo" in outcome.message
     assert seen == []
 
 

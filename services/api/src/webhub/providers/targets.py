@@ -12,6 +12,7 @@ _PRIVATE_IPV4_NETWORKS = (
     ipaddress.ip_network("192.168.0.0/16"),
 )
 _PRIVATE_IPV6_NETWORKS = (ipaddress.ip_network("fc00::/7"),)
+_PROXY_FAKE_IP_NETWORKS = (ipaddress.ip_network("198.18.0.0/15"),)
 
 
 class ProviderTargetError(ValueError):
@@ -189,6 +190,7 @@ async def _validated_addresses(
     *,
     allow_private: bool,
     timeout_seconds: int,
+    classify_fake_ip: bool = False,
 ) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]:
     direct_address = _address(hostname)
     if direct_address is not None:
@@ -209,6 +211,19 @@ async def _validated_addresses(
                 "provider_target_unreachable",
                 "Provider 地址无法解析",
             ) from error
+    if classify_fake_ip and any(
+        address.version == 4
+        and any(address in network for network in _PROXY_FAKE_IP_NETWORKS)
+        for address in addresses
+    ):
+        # Clash/Mihomo commonly uses RFC 2544 benchmarking space for Fake-IP
+        # DNS. It must stay blocked by SSRF policy, but callers need a precise
+        # diagnosis instead of being told that their Provider is unconfigured.
+        raise ProviderTargetError(
+            "provider_fake_ip_detected",
+            "目标域名解析到了代理 Fake-IP；请在 Clash/Mihomo 的全局 fake-ip-filter "
+            "中排除该域名并重新应用配置",
+        )
     if not addresses or any(
         not _allowed_address(address, allow_private=allow_private) for address in addresses
     ):
@@ -263,6 +278,7 @@ async def validate_connection_target(
         port,
         allow_private=allow_private,
         timeout_seconds=timeout_seconds,
+        classify_fake_ip=True,
     )
 
 

@@ -62,6 +62,28 @@ def test_resource_target_rejects_the_whole_dns_answer_if_any_address_is_unsafe(
     assert raised.value.code == "unsafe_provider_target"
 
 
+def test_provider_target_identifies_proxy_fake_ip_without_allowing_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        targets,
+        "_resolve",
+        lambda _hostname, _port: {ip_address("198.18.23.45")},
+    )
+
+    with pytest.raises(ProviderTargetError) as raised:
+        asyncio.run(
+            validate_connection_target(
+                "https://provider.example/v1",
+                allow_private=False,
+                timeout_seconds=1,
+            )
+        )
+
+    assert raised.value.code == "provider_fake_ip_detected"
+    assert "Clash/Mihomo" in raised.value.message
+
+
 def test_provider_base_url_parser_remains_strict_while_resource_parser_is_permissive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

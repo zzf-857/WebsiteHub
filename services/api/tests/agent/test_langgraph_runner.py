@@ -16,7 +16,11 @@ from sqlalchemy import select
 from webhub.agent import langgraph_runner as runner_module
 from webhub.agent import provider_binding as binding_module
 from webhub.agent.langgraph_runner import LangGraphAgentRunner
-from webhub.agent.runner import AgentProviderNotConfiguredError, AgentRunRequest
+from webhub.agent.runner import (
+    AgentProviderFakeIPError,
+    AgentProviderNotConfiguredError,
+    AgentRunRequest,
+)
 from webhub.chat import service as chat_service
 from webhub.config import Settings
 from webhub.db.database import Database
@@ -489,6 +493,63 @@ def test_account_without_a_model_provider_persists_a_terminal_error(tmp_path: Pa
         ("assistant", "error"),
     ]
     assert messages[-1].metadata == error_metadata
+
+
+def test_fake_ip_failure_persists_and_replays_a_precise_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolve_calls = 0
+
+    async def reject_fake_ip(*args: object, **kwargs: object) -> None:
+        nonlocal resolve_calls
+        del args, kwargs
+        resolve_calls += 1
+        raise AgentProviderFakeIPError("不得持久化的内部诊断")
+
+    monkeypatch.setattr(runner_module, "resolve_binding", reject_fake_ip)
+
+    with _account(tmp_path) as settings:
+        async def create_conversation() -> str:
+            database = Database(settings.database_url)
+            try:
+                async with database.sessions() as session:
+                    user_id = await session.scalar(select(User.id))
+                    assert user_id is not None
+                    conversation = await chat_service.create_conversation(
+                        session,
+                        user_id,
+                        title="Provider 诊断",
+                    )
+                    return conversation.id
+            finally:
+                await database.dispose()
+
+        conversation_id = asyncio.run(create_conversation())
+        chunks, messages = _run(
+            settings,
+            "你好",
+            conversation_id=conversation_id,
+            turn_id="provider-fake-ip-turn",
+        )
+        replayed, _ = _run(
+            settings,
+            "你好",
+            conversation_id=conversation_id,
+            turn_id="provider-fake-ip-turn",
+        )
+
+    error_metadata = chunks[1]["messageMetadata"]
+    assert error_metadata["errorCode"] == AgentProviderFakeIPError.code
+    assert chunks[2]["data"] == {
+        "code": AgentProviderFakeIPError.code,
+        "message": AgentProviderFakeIPError.safe_message,
+    }
+    assert "不得持久化的内部诊断" not in str(chunks)
+    assert messages[-1].metadata == error_metadata
+    assert _chunk_of_type(replayed, "data-agent-error")["data"] == chunks[2]["data"]
+    assert "不得持久化的内部诊断" not in str(replayed)
+    assert resolve_calls == 1
 
 
 def test_client_can_switch_off_a_configured_search_provider_for_one_turn(

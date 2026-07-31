@@ -1216,6 +1216,42 @@ P2 不阻塞 Q26：CountUp 节流数字过渡已完成；书签/Provider Stepper
 
 ---
 
+## Q27 · Provider 预检精确诊断与 Fake-IP 防复发
+
+状态: 已完成（提交后回填）
+对应: Provider 可靠性与 Q26 Agent 错误回执收口
+
+范围与约束：
+
+1. 保留 TUN、Fake-IP 模式与现有 SSRF 拒绝策略，不允许把 `198.18.0.0/15` 当成公网地址放行。
+2. 将模型 Provider 的“确实未启用、配置不完整、密钥不可解密、代理 Fake-IP、目标被安全策略阻止、
+   DNS 解析失败/超时”拆成固定错误码与固定中文文案；不得转发厂商异常文本、Base URL、响应体或密钥片段。
+3. 同一分类必须贯通设置页连接测试、Agent 流式错误、持久 Assistant metadata、同 `turn_id` 重放和
+   单站/批量分析的停止原因。搜索/embedding 仍是可选能力，失败时不得反向阻塞不需要它的模型回合。
+4. 前端只对已知 Provider 预检错误提供设置页操作入口，未知运行时错误保持通用提示，不制造错误指引。
+
+本轮交付：
+
+- Provider DNS 校验识别 RFC 2544 `198.18.0.0/15` 并返回 `provider_fake_ip_detected`；连接测试在任何
+  HTTP 请求发出前终止。该专用分类只用于 Provider 连接校验，不改变 favicon/网页资源抓取边界。
+- Agent 新增六类 `AgentProviderError` 固定安全契约；密钥解密失败不再伪装成“未配置”，普通私网/保留
+  地址仍由 SSRF 阻止。异常对象不保留调用方文本，响应和持久回执只保存固定 code/message。
+- LangGraph 终态与历史重放按持久错误码恢复对应安全文案；同一失败 `turn_id` 重放不会再次解析 DNS、
+  解密密钥或调用 Provider。详情分析沿用同一固定安全原因。
+- Agent 页面为配置、密钥、Fake-IP、目标受阻与 DNS 不可用显示不同操作文案，统一进入 Provider 设置页；
+  未知错误码不显示误导按钮。
+- 等价全仓门禁分拆执行全绿：前端 177 项、后端 569 项、两端 lint、TypeScript 与 Next.js 生产构建
+  通过。根级组合命令受当前执行器约 124 秒硬超时中止；后端全量单独完成，569 项耗时 249.31 秒。
+
+用户手动验收：
+
+1. 在可控 Clash 订阅中临时缺少目标域名的 `fake-ip-filter`，确认设置页连接测试和新 Agent 回合明确
+   显示 Fake-IP 诊断，而不是“未配置”；检查该请求没有到达模型服务商。
+2. 将规则放入全局 Merge，保存并应用后确认 DNS 返回真实公网 IP，新 Agent 回合恢复；刷新旧会话时
+   旧失败回执保持原错误且不会自动重试 Provider。
+
+---
+
 ## 全量门禁（每轮提交前必须全绿）
 
 ```bash
@@ -1223,7 +1259,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-基线：前端 175 测试 / 后端 561 测试。新增功能必须带测试，基线只能涨不能降。
+基线：前端 177 测试 / 后端 569 测试。新增功能必须带测试，基线只能涨不能降。
 
 ## 不可动摇的约束
 

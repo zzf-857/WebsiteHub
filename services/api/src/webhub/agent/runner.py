@@ -52,11 +52,85 @@ class AgentConversationAccess(Protocol):
         """Raise an ``AgentConversationUnavailableError`` on mismatch/missing."""
 
 
-class AgentProviderNotConfiguredError(RuntimeError):
-    """Raised when no usable account-level model Provider is configured."""
+_PROVIDER_ERROR_MESSAGES = {
+    "provider_not_configured": "尚未配置可用的模型 Provider，请先在设置中完成配置。",
+    "provider_configuration_invalid": (
+        "模型 Provider 配置不完整或已失效，请检查服务商、Base URL、模型和密钥。"
+    ),
+    "provider_credentials_unavailable": (
+        "已保存的 Provider 密钥当前无法解密，请检查 Provider 主密钥或重新保存 API Key。"
+    ),
+    "provider_fake_ip_detected": (
+        "Provider 域名解析到了代理 Fake-IP，请在 Clash/Mihomo 的全局 fake-ip-filter 中"
+        "排除该域名并重新应用配置。"
+    ),
+    "provider_target_blocked": (
+        "Provider 地址解析到本机、私网或保留地址，已被安全策略阻止，请检查 Base URL 与 DNS。"
+    ),
+    "provider_target_unavailable": (
+        "Provider 地址暂时无法解析或解析超时，请检查 DNS、代理和网络后重试。"
+    ),
+}
+
+
+class AgentProviderError(RuntimeError):
+    """A Provider preflight failure with a fixed, safe client contract."""
+
+    code = "provider_unavailable"
+    safe_message = "模型 Provider 当前不可用，请检查配置后重试。"
+
+    def __init__(self, *_: object) -> None:
+        # Never retain caller-provided text: an exception cause may contain a
+        # URL, response body, or credential fragment.
+        super().__init__(self.code)
+
+
+class AgentProviderNotConfiguredError(AgentProviderError):
+    """Raised when no enabled account-level model Provider exists."""
 
     code = "provider_not_configured"
-    safe_message = "尚未配置可用的模型 Provider，请先在设置中完成配置。"
+    safe_message = _PROVIDER_ERROR_MESSAGES[code]
+
+
+class AgentProviderConfigurationInvalidError(AgentProviderError):
+    """Raised when an enabled Provider row is incomplete or unsupported."""
+
+    code = "provider_configuration_invalid"
+    safe_message = _PROVIDER_ERROR_MESSAGES[code]
+
+
+class AgentProviderCredentialsUnavailableError(AgentProviderError):
+    """Raised when a stored Provider secret is missing or cannot be decrypted."""
+
+    code = "provider_credentials_unavailable"
+    safe_message = _PROVIDER_ERROR_MESSAGES[code]
+
+
+class AgentProviderFakeIPError(AgentProviderError):
+    """Raised when proxy DNS returns an RFC 2544 benchmarking address."""
+
+    code = "provider_fake_ip_detected"
+    safe_message = _PROVIDER_ERROR_MESSAGES[code]
+
+
+class AgentProviderTargetBlockedError(AgentProviderError):
+    """Raised when SSRF policy rejects a resolved Provider target."""
+
+    code = "provider_target_blocked"
+    safe_message = _PROVIDER_ERROR_MESSAGES[code]
+
+
+class AgentProviderTargetUnavailableError(AgentProviderError):
+    """Raised when Provider DNS resolution times out or fails."""
+
+    code = "provider_target_unavailable"
+    safe_message = _PROVIDER_ERROR_MESSAGES[code]
+
+
+def agent_provider_error_message(code: str | None) -> str | None:
+    """Return a fixed safe message for a persisted Provider error code."""
+
+    return _PROVIDER_ERROR_MESSAGES.get(code or "")
 
 
 class AgentConversationUnavailableError(RuntimeError):
@@ -95,10 +169,17 @@ __all__ = [
     "AgentChunkSource",
     "AgentConversationAccess",
     "AgentConversationUnavailableError",
+    "AgentProviderConfigurationInvalidError",
+    "AgentProviderCredentialsUnavailableError",
+    "AgentProviderError",
+    "AgentProviderFakeIPError",
     "AgentProviderNotConfiguredError",
+    "AgentProviderTargetBlockedError",
+    "AgentProviderTargetUnavailableError",
     "AgentRunnerExecutionError",
     "AgentRunRequest",
     "AgentRunner",
     "RejectingConversationAccess",
     "UnconfiguredAgentRunner",
+    "agent_provider_error_message",
 ]
