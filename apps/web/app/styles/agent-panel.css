@@ -226,6 +226,13 @@
   color: var(--text);
 }
 
+.agent-history-item:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
 .agent-history-item[data-active] {
   background: var(--surface-subtle);
   color: var(--text);
@@ -273,13 +280,23 @@
   background: var(--surface-input);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  transition: border-color var(--duration-focus) var(--ease-standard);
+  transition:
+    background-color var(--duration-focus) var(--ease-standard),
+    border-color var(--duration-focus) var(--ease-standard),
+    box-shadow var(--duration-focus) var(--ease-standard);
 }
 
-/* hover 与聚焦同为青柠描边（1a 行 90 的 style-hover），提示这里可以直接开聊 */
-.agent-composer:hover,
+/* Hover 只增强中性边线；真正输入时再给单层、低饱和的青柠焦点提示。 */
+.agent-composer:hover {
+  border-color: var(--line-strong);
+}
+
 .agent-composer:focus-within {
-  border-color: var(--accent-hover);
+  background: color-mix(in srgb, var(--accent-tint) 18%, var(--surface-input));
+  border-color: color-mix(in srgb, var(--accent-mid) 42%, var(--line-strong));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--focus) 8%, transparent),
+    var(--shadow-card);
 }
 
 .agent-composer textarea {
@@ -295,6 +312,11 @@
   line-height: 1.6;
   outline: none;
   resize: none;
+}
+
+/* 全局 textarea 焦点轮廓由外层 focus-within 统一承接，避免截图中的双重高亮框。 */
+.agent-composer textarea:focus-visible {
+  outline: none;
 }
 
 .agent-composer textarea::placeholder {
@@ -425,6 +447,11 @@
 
 .agent-command-panel button[data-selected] {
   background: var(--surface-hover);
+}
+
+.agent-command-panel button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 
 .agent-command-panel strong {
@@ -901,11 +928,18 @@
   line-height: 1.5;
   outline: none;
   resize: none;
-  transition: border-color var(--duration-focus) var(--ease-standard);
+  transition:
+    border-color var(--duration-focus) var(--ease-standard),
+    box-shadow var(--duration-focus) var(--ease-standard);
 }
 
 .agent-followup textarea:focus {
-  border-color: var(--accent-hover);
+  border-color: color-mix(in srgb, var(--accent-mid) 42%, var(--line-strong));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 8%, transparent);
+}
+
+.agent-followup textarea:focus-visible {
+  outline: none;
 }
 
 .agent-followup textarea::placeholder {
@@ -985,6 +1019,14 @@
   /* 通配选择器不命中伪元素：打字光标单独降级为常亮不闪 */
   .agent-panel[data-streaming] .chat-turn[data-role="assistant"]:last-of-type .chat-text:last-of-type::after {
     animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .agent-composer:focus-within,
+  .agent-followup textarea:focus {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
   }
 }
 

@@ -13,12 +13,16 @@ import { CountUp } from "@/components/react-bits/count-up";
 import { Spinner } from "@/components/react-bits/spinner";
 import {
   getActiveMetadataBackfill,
+  getMetadataBackfillPlan,
   getMetadataBackfillProgress,
   LibraryApiError,
   startMetadataBackfill,
 } from "@/lib/library-client";
 import {
   isMetadataBackfillTerminalStatus,
+  METADATA_BACKFILL_LIMITS,
+  type MetadataBackfillMode,
+  type MetadataBackfillPlan,
   type MetadataBackfillProgress,
 } from "@/lib/library-contract";
 
@@ -26,6 +30,16 @@ import {
 // 避免用户切走后继续给浏览器、后端和目标站点制造无意义的请求压力。
 const FOREGROUND_POLL_DELAY_MS = 2_500;
 const BACKGROUND_POLL_DELAY_MS = 15_000;
+const PLAN_DEBOUNCE_MS = 200;
+
+const MODE_OPTIONS: ReadonlyArray<Readonly<{
+  value: MetadataBackfillMode;
+  label: string;
+  title: string;
+}>> = [
+  { value: "metadata", label: "快速补全", title: "仅补全网页元数据，不调用模型" },
+  { value: "full", label: "LLM 完整分析", title: "补全分类、标签、简介和详细介绍" },
+];
 
 type ToolbarState =
   | { kind: "idle" }
@@ -35,6 +49,11 @@ type ToolbarState =
   | { kind: "warning"; message: string; progress: MetadataBackfillProgress }
   | { kind: "failed"; message: string; progress: MetadataBackfillProgress }
   | { kind: "error"; message: string; progress?: MetadataBackfillProgress };
+
+type PlanState =
+  | { kind: "loading" }
+  | { kind: "ready"; plan: MetadataBackfillPlan }
+  | { kind: "error"; message: string };
 
 type HomeMetadataBackfillToolbarProps = {
   /** Called once for each terminal run so surrounding homepage data can refresh. */
@@ -51,6 +70,18 @@ function progressPercent(progress: MetadataBackfillProgress): number {
   if (isMetadataBackfillTerminalStatus(progress.status)) return 100;
   if (progress.totalCount === 0) return 0;
   return Math.floor((progress.completedCount / progress.totalCount) * 100);
+}
+
+function retryTime(value: string | null): string | null {
+  if (value === null) return null;
+  const retryAt = new Date(value);
+  if (retryAt.getTime() <= Date.now()) return null;
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(retryAt);
 }
 
 function progressSummary(progress: MetadataBackfillProgress): string {
@@ -70,6 +101,9 @@ function progressSummary(progress: MetadataBackfillProgress): string {
   if (progress.runningCount > 0) {
     return `已处理 ${progress.completedCount} / ${progress.totalCount}，${progress.runningCount} 个正在处理`;
   }
+  if (progress.providerRetryAt !== null) {
+    return `已处理 ${progress.completedCount} / ${progress.totalCount}，等待模型服务恢复`;
+  }
   return `已处理 ${progress.completedCount} / ${progress.totalCount}，等待补全`;
 }
 
@@ -83,21 +117,46 @@ function progressDetail(progress: MetadataBackfillProgress): string {
   if (!isMetadataBackfillTerminalStatus(progress.status) && progress.queuedCount > 0) {
     outcomes.push(`等待 ${progress.queuedCount}`);
   }
+  const retryAt = retryTime(progress.providerRetryAt);
+  if (!isMetadataBackfillTerminalStatus(progress.status) && retryAt !== null) {
+    outcomes.push(`预计 ${retryAt} 重试`);
+  }
   return outcomes.join(" · ");
 }
 
 function terminalMessage(progress: MetadataBackfillProgress): string {
+  const retryAt = retryTime(progress.providerRetryAt);
+  if (progress.stopReason === "provider_rate_limited") {
+    return retryAt === null
+      ? "模型服务触发限流，任务已安全停止，已完成结果已保留。请稍后再次补全。"
+      : `模型服务触发限流，任务已安全停止，已完成结果已保留。建议在 ${retryAt} 后再次补全。`;
+  }
+  if (progress.stopReason === "provider_temporary_failure") {
+    return retryAt === null
+      ? "模型服务暂时不可用，任务已安全停止，已完成结果已保留。请稍后重试。"
+      : `模型服务暂时不可用，任务已安全停止，已完成结果已保留。建议在 ${retryAt} 后重试。`;
+  }
+  if (progress.stopReason === "provider_unavailable") {
+    return "当前模型 Provider 不可用，任务已安全停止，已完成结果已保留。请检查启用状态、密钥和模型配置后重试。";
+  }
+  if (progress.stopReason === "internal_error") {
+    return "任务因内部错误停止，已完成结果已保留。请稍后重试；若持续发生，请检查 API 日志。";
+  }
   if (progress.stoppedEarly) {
-    return "任务已提前停止，请检查模型或搜索 Provider 配置、搜索服务是否支持批量、密钥权限或模型工具调用支持后重试。";
+    return "任务已提前停止，已完成结果已保留。请检查模型或搜索 Provider、密钥权限和模型工具调用支持后重试。";
   }
   if (progress.status === "failed") {
-    return "任务执行失败，请检查模型或搜索 Provider 配置、搜索服务是否支持批量、密钥权限或模型工具调用支持后重试。";
+    return "任务执行失败，已完成结果已保留。请检查模型或搜索 Provider、密钥权限和模型工具调用支持后重试。";
   }
   return "部分网站未能补全，可再次补全失败或受限的网站。";
 }
 
+function modeLabel(mode: MetadataBackfillMode): string {
+  return mode === "metadata" ? "快速补全" : "LLM 完整分析";
+}
+
 /**
- * Account-wide LLM website-enrichment command for the homepage.
+ * Account-wide website-enrichment command for the homepage.
  *
  * Polling is deliberately timeout-chained instead of interval-based: a slow
  * response must finish before the next request can start, so foreground
@@ -108,25 +167,60 @@ export function HomeMetadataBackfillToolbar({
 }: Readonly<HomeMetadataBackfillToolbarProps>) {
   const [state, setState] = useState<ToolbarState>({ kind: "idle" });
   const [pollRevision, setPollRevision] = useState(0);
+  const [planRevision, setPlanRevision] = useState(0);
+  const [mode, setMode] = useState<MetadataBackfillMode>("metadata");
+  const [limits, setLimits] = useState<Record<MetadataBackfillMode, number>>({
+    metadata: METADATA_BACKFILL_LIMITS.metadata.defaultLimit,
+    full: METADATA_BACKFILL_LIMITS.full.defaultLimit,
+  });
+  const [planState, setPlanState] = useState<PlanState>({ kind: "loading" });
   const onCompletedRef = useRef(onCompleted);
   const finishedRunRef = useRef<string | null>(null);
   const startControllerRef = useRef<AbortController | null>(null);
   const startingRef = useRef(false);
 
+  const progress = state.kind === "running" ||
+    state.kind === "completed" ||
+    state.kind === "warning" ||
+    state.kind === "failed"
+    ? state.progress
+    : state.kind === "error"
+      ? state.progress
+      : undefined;
+  const busy = state.kind === "starting" || state.kind === "running";
+  const progressIsActive = progress !== undefined &&
+    !isMetadataBackfillTerminalStatus(progress.status);
+  const controlsLocked = busy || progressIsActive;
+  const hasResumableProgress = state.kind === "error" && progressIsActive;
+  const limit = limits[mode];
+  const plan = planState.kind === "ready" &&
+    planState.plan.mode === mode &&
+    planState.plan.requestedLimit === limit
+    ? planState.plan
+    : null;
+
   useEffect(() => {
     onCompletedRef.current = onCompleted;
   }, [onCompleted]);
 
-  const finishRun = useCallback((progress: MetadataBackfillProgress) => {
-    if (progress.status === "completed") {
-      setState({ kind: "completed", progress });
-    } else if (progress.status === "failed") {
-      setState({ kind: "failed", progress, message: terminalMessage(progress) });
+  const finishRun = useCallback((nextProgress: MetadataBackfillProgress) => {
+    if (nextProgress.status === "completed") {
+      setState({ kind: "completed", progress: nextProgress });
+    } else if (nextProgress.status === "failed") {
+      setState({
+        kind: "failed",
+        progress: nextProgress,
+        message: terminalMessage(nextProgress),
+      });
     } else {
-      setState({ kind: "warning", progress, message: terminalMessage(progress) });
+      setState({
+        kind: "warning",
+        progress: nextProgress,
+        message: terminalMessage(nextProgress),
+      });
     }
-    if (finishedRunRef.current === progress.runId) return;
-    finishedRunRef.current = progress.runId;
+    if (finishedRunRef.current === nextProgress.runId) return;
+    finishedRunRef.current = nextProgress.runId;
     onCompletedRef.current?.();
   }, []);
 
@@ -151,10 +245,11 @@ export function HomeMetadataBackfillToolbar({
     const controller = new AbortController();
     void (async () => {
       try {
-        const progress = await getActiveMetadataBackfill(controller.signal);
-        if (controller.signal.aborted || progress === null) return;
+        const nextProgress = await getActiveMetadataBackfill(controller.signal);
+        if (controller.signal.aborted || nextProgress === null) return;
+        setMode(nextProgress.mode);
         setState((current) => current.kind === "idle"
-          ? { kind: "running", progress }
+          ? { kind: "running", progress: nextProgress }
           : current);
       } catch (error) {
         if (controller.signal.aborted || isAbortError(error)) return;
@@ -166,6 +261,35 @@ export function HomeMetadataBackfillToolbar({
     return () => controller.abort();
   }, []);
 
+  // Plans are cheap, read-only snapshots. Debounce numeric edits and reject a
+  // stale response by aborting it whenever mode, limit, or active-run state changes.
+  useEffect(() => {
+    if (controlsLocked) return;
+
+    const controller = new AbortController();
+    setPlanState({ kind: "loading" });
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const nextPlan = await getMetadataBackfillPlan({ mode, limit }, controller.signal);
+          if (controller.signal.aborted) return;
+          setPlanState({ kind: "ready", plan: nextPlan });
+        } catch (error) {
+          if (controller.signal.aborted || isAbortError(error)) return;
+          setPlanState({
+            kind: "error",
+            message: errorText(error, "补全范围预估失败，请重试"),
+          });
+        }
+      })();
+    }, PLAN_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [controlsLocked, limit, mode, planRevision]);
+
   useEffect(() => {
     if (state.kind !== "running") return;
 
@@ -174,20 +298,20 @@ export function HomeMetadataBackfillToolbar({
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const progress = await getMetadataBackfillProgress(runId, controller.signal);
+          const nextProgress = await getMetadataBackfillProgress(runId, controller.signal);
           if (controller.signal.aborted) return;
-          if (progress.runId !== runId) {
+          if (nextProgress.runId !== runId) {
             setState({
               kind: "error",
               message: "补全任务标识不一致，请重新开始",
             });
             return;
           }
-          if (isMetadataBackfillTerminalStatus(progress.status)) {
-            finishRun(progress);
+          if (isMetadataBackfillTerminalStatus(nextProgress.status)) {
+            finishRun(nextProgress);
             return;
           }
-          setState({ kind: "running", progress });
+          setState({ kind: "running", progress: nextProgress });
         } catch (error) {
           if (controller.signal.aborted || isAbortError(error)) return;
           if (
@@ -217,19 +341,21 @@ export function HomeMetadataBackfillToolbar({
   }, [finishRun, pollRevision, state]);
 
   const start = useCallback(async () => {
-    if (startingRef.current || state.kind === "running") return;
+    if (startingRef.current || state.kind === "running" || plan === null) return;
+    if (plan.selectedCount === 0) return;
     startingRef.current = true;
     startControllerRef.current?.abort();
     const controller = new AbortController();
     startControllerRef.current = controller;
     setState({ kind: "starting" });
     try {
-      const progress = await startMetadataBackfill(controller.signal);
+      const nextProgress = await startMetadataBackfill({ mode, limit }, controller.signal);
       if (controller.signal.aborted) return;
-      if (isMetadataBackfillTerminalStatus(progress.status)) {
-        finishRun(progress);
+      setMode(nextProgress.mode);
+      if (isMetadataBackfillTerminalStatus(nextProgress.status)) {
+        finishRun(nextProgress);
       } else {
-        setState({ kind: "running", progress });
+        setState({ kind: "running", progress: nextProgress });
       }
     } catch (error) {
       if (controller.signal.aborted || isAbortError(error)) return;
@@ -238,7 +364,7 @@ export function HomeMetadataBackfillToolbar({
       if (startControllerRef.current === controller) startControllerRef.current = null;
       startingRef.current = false;
     }
-  }, [finishRun, state.kind]);
+  }, [finishRun, limit, mode, plan, state.kind]);
 
   const resume = useCallback(() => {
     if (state.kind !== "error" || !state.progress) {
@@ -248,43 +374,45 @@ export function HomeMetadataBackfillToolbar({
     setState({ kind: "running", progress: state.progress });
   }, [start, state]);
 
-  const progress = state.kind === "running" ||
-    state.kind === "completed" ||
-    state.kind === "warning" ||
-    state.kind === "failed"
-    ? state.progress
-    : state.kind === "error"
-      ? state.progress
-      : undefined;
-  const busy = state.kind === "starting" || state.kind === "running";
-  const hasResumableProgress = state.kind === "error" && state.progress !== undefined;
+  const planLoading = !controlsLocked && planState.kind === "loading";
+  const planFailed = !controlsLocked && planState.kind === "error";
+  const noWork = plan !== null && plan.selectedCount === 0;
   const actionLabel = state.kind === "starting"
     ? "正在启动"
     : state.kind === "running"
       ? "正在补全"
-      : state.kind === "completed"
-        ? "再次补全"
-        : state.kind === "warning" || state.kind === "failed"
-          ? "再次补全"
-          : hasResumableProgress
-            ? "重试查询"
-            : state.kind === "error"
-              ? "重新开始"
-              : "开始补全";
+      : hasResumableProgress
+        ? "重试查询"
+        : planLoading
+          ? "正在预估"
+          : planFailed
+            ? "重试预估"
+            : noWork
+              ? "无需补全"
+              : state.kind === "completed" || state.kind === "warning" || state.kind === "failed"
+                ? "再次补全"
+                : state.kind === "error"
+                  ? "重新开始"
+                  : "开始补全";
+  const actionDisabled = busy || (
+    !hasResumableProgress &&
+    !planFailed &&
+    (planLoading || noWork || plan === null)
+  );
 
   return (
     <section
       className="home-metadata-backfill"
       data-state={state.kind}
-      aria-label="LLM 网站资料批量分析"
+      aria-label="网站资料批量分析"
     >
       <div className="home-metadata-backfill-overview">
         <span className="home-metadata-backfill-icon" aria-hidden="true">
           <WandSparkles />
         </span>
         <div className="home-metadata-backfill-copy">
-          <h2>LLM 网站分析</h2>
-          <p>批量补全分类、标签、简介、详细介绍、图标和预览图</p>
+          <h2>网站信息分析</h2>
+          <p>先补图标与预览，或按需使用 LLM 完整补全</p>
         </div>
       </div>
 
@@ -294,22 +422,94 @@ export function HomeMetadataBackfillToolbar({
           className="home-metadata-backfill-action"
           onClick={() => {
             if (hasResumableProgress) resume();
+            else if (planFailed) setPlanRevision((revision) => revision + 1);
             else void start();
           }}
-          disabled={busy}
+          disabled={actionDisabled}
           title={actionLabel}
         >
-          {state.kind === "starting" || state.kind === "running" ? (
+          {state.kind === "starting" || state.kind === "running" || planLoading ? (
             <Spinner />
+          ) : planFailed ? (
+            <RefreshCw aria-hidden="true" />
           ) : state.kind === "completed" ? (
             <Check aria-hidden="true" />
-          ) : state.kind === "warning" || state.kind === "failed" || state.kind === "error" ? (
-            <RefreshCw aria-hidden="true" />
-          ) : (
-            <WandSparkles aria-hidden="true" />
-          )}
+          ) : state.kind === "warning" ||
+            state.kind === "failed" ||
+            state.kind === "error" ? (
+              <RefreshCw aria-hidden="true" />
+            ) : (
+              <WandSparkles aria-hidden="true" />
+            )}
           {actionLabel}
         </button>
+      </div>
+
+      <div className="home-metadata-backfill-config">
+        <div className="home-metadata-backfill-modes" role="group" aria-label="网站分析模式">
+          {MODE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={mode === option.value}
+              title={option.title}
+              disabled={controlsLocked}
+              onClick={() => setMode(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        <label className="home-metadata-backfill-limit">
+          <span>处理上限</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={METADATA_BACKFILL_LIMITS[mode].maxLimit}
+            value={limit}
+            disabled={controlsLocked}
+            onChange={(event) => {
+              const value = event.currentTarget.valueAsNumber;
+              if (!Number.isFinite(value)) return;
+              const nextLimit = Math.min(
+                METADATA_BACKFILL_LIMITS[mode].maxLimit,
+                Math.max(1, Math.trunc(value)),
+              );
+              setLimits((current) => ({ ...current, [mode]: nextLimit }));
+            }}
+          />
+        </label>
+
+        <div
+          className="home-metadata-backfill-plan"
+          data-tone={planState.kind === "error" && !controlsLocked ? "error" : undefined}
+          aria-live="polite"
+        >
+          {state.kind === "starting" ? (
+            <><Spinner />正在建立固定任务</>
+          ) : progressIsActive && progress ? (
+            <>
+              本次已锁定 <strong>{progress.totalCount}</strong> 个网站 · {modeLabel(progress.mode)}
+            </>
+          ) : planState.kind === "loading" ? (
+            <><Spinner />正在计算可补全范围</>
+          ) : planState.kind === "error" ? (
+            <><CircleAlert aria-hidden="true" />{planState.message}</>
+          ) : plan === null ? (
+            "正在更新补全范围"
+          ) : (
+            <>
+              将处理 <strong>{plan.selectedCount}</strong> / {plan.eligibleCount} 个网站 ·
+              {plan.mode === "metadata" ? (
+                " 不调用 LLM"
+              ) : (
+                <> 其中 <strong>{plan.llmCount}</strong> 个网站使用 LLM</>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {progress && (

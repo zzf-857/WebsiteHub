@@ -12,6 +12,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from typing import Literal
 from urllib.parse import urlsplit
 
 from sqlalchemy import and_, case, delete, func, or_, select, text, update
@@ -34,6 +35,7 @@ from .enrichment import (
     MIN_SITE_TAGS,
     SiteCategoryOption,
     SiteEnricher,
+    SiteEnrichmentFailureReason,
     SiteEnrichmentRequest,
     SiteEnrichmentResult,
     SiteEnrichmentUnavailableError,
@@ -74,6 +76,8 @@ class AnalysisProviderSignal:
 
     failed: bool | None
     stop_batch: bool
+    failure_reason: SiteEnrichmentFailureReason | None = None
+    retry_after_seconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +101,13 @@ class _EnrichmentSnapshot:
 
 
 _ACTIVE_CLAIMS: dict[tuple[str, str], datetime] = {}
+AnalysisPhase = Literal[
+    "fetching_page",
+    "preparing_evidence",
+    "waiting_model",
+    "calling_model",
+    "saving_result",
+]
 
 
 def _claim_key(user_id: str, site_id: str) -> tuple[str, str]:
@@ -111,6 +122,37 @@ def _release_claim(claim: AnalysisClaim) -> None:
     key = _claim_key(claim.user_id, claim.site_id)
     if _ACTIVE_CLAIMS.get(key) == claim.claimed_at:
         _ACTIVE_CLAIMS.pop(key, None)
+
+
+async def _set_analysis_phase(
+    session: AsyncSession,
+    claim: AnalysisClaim,
+    phase: AnalysisPhase,
+) -> bool:
+    """Publish one fenced progress step without touching edit metadata."""
+
+    await session.rollback()
+    if not _claim_is_current(claim):
+        return False
+    updated = await session.execute(
+        update(Site)
+        .where(
+            Site.user_id == claim.user_id,
+            Site.id == claim.site_id,
+            Site.analysis_status == "pending",
+            Site.analysis_updated_at == claim.claimed_at,
+        )
+        .values(
+            analysis_phase=phase,
+            updated_at=Site.updated_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if updated.rowcount != 1:  # type: ignore[attr-defined]
+        await session.rollback()
+        return False
+    await session.commit()
+    return True
 
 
 def _blank(value: str | None) -> bool:
@@ -248,15 +290,8 @@ def _automatic_eligibility(*, stale_before: datetime, partial_before: datetime) 
     )
 
 
-def metadata_backfill_eligibility(*, stale_before: datetime) -> object:
-    """Work that a user explicitly asked a durable metadata run to revisit.
-
-    Unlike the quiet automatic sweep, an explicit run may revisit an immediately
-    incomplete ``complete`` record.  The version guard used when claiming still
-    makes an intentional user clear or any later edit win over this derived
-    write.  A fresh ``pending`` record is deliberately excluded: it belongs to
-    another live request until its claim becomes stale.
-    """
+def metadata_only_backfill_eligibility(*, stale_before: datetime) -> object:
+    """Basic page metadata work that never implies an LLM call."""
 
     metadata_status = or_(
         Site.analysis_status == "not_analyzed",
@@ -284,13 +319,26 @@ def metadata_backfill_eligibility(*, stale_before: datetime) -> object:
             Site.updated_at <= Site.analysis_updated_at,
         ),
     )
+    return and_(_backfill_metadata_condition(), metadata_status)
+
+
+def metadata_backfill_eligibility(*, stale_before: datetime) -> object:
+    """All work that a user explicitly asked a durable full run to revisit.
+
+    Unlike the quiet automatic sweep, an explicit run may revisit an immediately
+    incomplete ``complete`` record.  The version guard used when claiming still
+    makes an intentional user clear or any later edit win over this derived
+    write.  A fresh ``pending`` record is deliberately excluded: it belongs to
+    another live request until its claim becomes stale.
+    """
+
     llm_status = or_(
         Site.analysis_status != "pending",
         Site.analysis_updated_at.is_(None),
         Site.analysis_updated_at < stale_before,
     )
     return or_(
-        and_(_backfill_metadata_condition(), metadata_status),
+        metadata_only_backfill_eligibility(stale_before=stale_before),
         and_(llm_enrichment_missing_condition(), llm_status),
     )
 
@@ -404,6 +452,7 @@ async def _claim_analysis(
             )
             .values(
                 analysis_status="pending",
+                analysis_phase="fetching_page",
                 analysis_updated_at=claimed_at,
                 # ``updated_at`` has a Python onupdate default. Explicitly keep
                 # it unchanged: derived analysis is not a user edit.
@@ -952,6 +1001,7 @@ async def _apply_enriched_outcome(
     completed_at = utc_now()
     values: dict[str, object] = {
         "analysis_status": outcome.status,
+        "analysis_phase": None,
         "analysis_updated_at": completed_at,
         "updated_at": Site.updated_at,
     }
@@ -1045,6 +1095,7 @@ async def apply_outcome(
     final_status = outcome.status
     values: dict[str, object] = {
         "analysis_status": final_status,
+        "analysis_phase": None,
         "analysis_updated_at": completed_at,
         "updated_at": Site.updated_at,
     }
@@ -1153,6 +1204,7 @@ async def apply_outcome(
                     (Site.original_url == claim.url, final_status),
                     else_="not_analyzed",
                 ),
+                analysis_phase=None,
                 analysis_updated_at=completed_at,
                 updated_at=Site.updated_at,
             )
@@ -1191,6 +1243,7 @@ async def _record_claim_terminal(
                 (Site.original_url == claim.url, status),
                 else_="not_analyzed",
             ),
+            analysis_phase=None,
             analysis_updated_at=completed_at,
             updated_at=Site.updated_at,
         )
@@ -1218,6 +1271,7 @@ async def analyze_site(
     before_provider_call: (
         Callable[[AsyncSession], Awaitable[bool]] | None
     ) = None,
+    enrichment_semaphore: asyncio.Semaphore | None = None,
     use_llm: bool = False,
     enricher: SiteEnricher | None = None,
 ) -> FetchOutcome | None:
@@ -1258,7 +1312,11 @@ async def analyze_site(
             await session.rollback()
             await on_provider_signal(
                 session,
-                AnalysisProviderSignal(failed=None, stop_batch=True),
+                AnalysisProviderSignal(
+                    failed=None,
+                    stop_batch=True,
+                    failure_reason="internal_error",
+                ),
             )
         except Exception:  # noqa: BLE001 - preserve the original failure
             _LOGGER.exception(
@@ -1285,23 +1343,39 @@ async def analyze_site(
         enrichment_error: str | None = None
         stop_batch = False
         provider_failed: bool | None = None
+        provider_failure_reason: SiteEnrichmentFailureReason | None = None
+        provider_retry_after_seconds: int | None = None
         if should_use_llm:
-            enrichment_snapshot = await _load_enrichment_snapshot(
-                session,
-                claim,
-                outcome,
-                bulk=bulk,
-            )
-            # Never retain a SQLite read snapshot while Provider I/O is in
-            # flight. The exact site/taxonomy state is re-read under the final
-            # write lock before anything is stored.
-            await session.rollback()
-            if enrichment_snapshot is None:
-                enrichment_error = "网站在分析期间已发生变化"
-            elif enricher is None:
-                enrichment_error = "LLM 网站分析服务尚未初始化"
-                stop_batch = True
-            else:
+            await _set_analysis_phase(session, claim, "preparing_evidence")
+
+            async def perform_enrichment() -> bool:
+                nonlocal enrichment_snapshot
+                nonlocal enrichment
+                nonlocal enrichment_error
+                nonlocal stop_batch
+                nonlocal provider_failed
+                nonlocal provider_failure_reason
+                nonlocal provider_retry_after_seconds
+                nonlocal provider_invoked
+
+                enrichment_snapshot = await _load_enrichment_snapshot(
+                    session,
+                    claim,
+                    outcome,
+                    bulk=bulk,
+                )
+                # Never retain a SQLite read snapshot while Provider I/O is in
+                # flight. The exact site/taxonomy state is re-read under the
+                # final write lock before anything is stored.
+                await session.rollback()
+                if enrichment_snapshot is None:
+                    enrichment_error = "网站在分析期间已发生变化"
+                    return True
+                if enricher is None:
+                    enrichment_error = "LLM 网站分析服务尚未初始化"
+                    stop_batch = True
+                    provider_failure_reason = "internal_error"
+                    return True
                 if before_provider_call is not None:
                     provider_allowed = await before_provider_call(session)
                     # The check opens a short read transaction. Never retain
@@ -1309,7 +1383,8 @@ async def analyze_site(
                     await session.rollback()
                     if not provider_allowed:
                         await _record_claim_terminal(session, claim, "not_analyzed")
-                        return None
+                        return False
+                await _set_analysis_phase(session, claim, "calling_model")
                 try:
                     provider_invoked = True
                     enrichment = await enricher.enrich(enrichment_snapshot.request)
@@ -1317,6 +1392,8 @@ async def analyze_site(
                 except SiteEnrichmentUnavailableError as error:
                     enrichment_error = error.safe_message
                     stop_batch = error.stop_batch
+                    provider_failure_reason = error.failure_reason
+                    provider_retry_after_seconds = error.retry_after_seconds
                     if error.provider_failure:
                         provider_failed = True
                 except asyncio.CancelledError:
@@ -1331,11 +1408,22 @@ async def analyze_site(
                     # Provider adapters translate remote failures into the
                     # typed exception above. An unknown exception here may be
                     # a local programming/configuration fault. Stop this batch
-                    # without pretending it is a retryable Provider failure;
-                    # otherwise the same local fault could repeat thousands
-                    # of times while poisoning the Provider health streak.
+                    # without pretending it is a retryable Provider failure.
                     stop_batch = True
                     provider_failed = None
+                    provider_failure_reason = "internal_error"
+                return True
+
+            if enrichment_semaphore is None:
+                if not await perform_enrichment():
+                    return None
+            else:
+                await _set_analysis_phase(session, claim, "waiting_model")
+                async with enrichment_semaphore:
+                    if not await perform_enrichment():
+                        return None
+
+        await _set_analysis_phase(session, claim, "saving_result")
 
         effective_outcome = _effective_outcome(
             claim,
@@ -1356,6 +1444,8 @@ async def analyze_site(
                         AnalysisProviderSignal(
                             failed=provider_failed,
                             stop_batch=stop_batch,
+                            failure_reason=provider_failure_reason,
+                            retry_after_seconds=provider_retry_after_seconds,
                         ),
                     )
                     if not recorded:
@@ -1440,6 +1530,7 @@ async def analyze_in_background(
     before_provider_call: (
         Callable[[AsyncSession], Awaitable[bool]] | None
     ) = None,
+    enrichment_semaphore: asyncio.Semaphore | None = None,
     propagate_errors: bool = False,
     use_llm: bool = False,
     enricher: SiteEnricher | None = None,
@@ -1466,6 +1557,7 @@ async def analyze_in_background(
                 on_claimed=on_claimed,
                 on_provider_signal=on_provider_signal,
                 before_provider_call=before_provider_call,
+                enrichment_semaphore=enrichment_semaphore,
                 use_llm=use_llm,
                 enricher=enricher,
             )
@@ -1489,6 +1581,7 @@ __all__ = [
     "auto_backfill_site_ids",
     "llm_enrichment_missing_condition",
     "metadata_backfill_eligibility",
+    "metadata_only_backfill_eligibility",
     "not_analyzed_site_ids",
     "recent_not_analyzed_site_ids",
 ]

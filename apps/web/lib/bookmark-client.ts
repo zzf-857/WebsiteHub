@@ -4,16 +4,26 @@ import {
   normalizeBookmarkImportStatus,
   normalizeBookmarkImportUpload,
   normalizeBookmarkPreviewSummary,
+  normalizeBookmarkSimilarityClusterPage,
+  normalizeBookmarkSimilarityDecisionResult,
+  normalizeBookmarkSimilarityMemberPage,
   type BookmarkImportResult,
   type BookmarkImportStatus,
   type BookmarkImportUpload,
   type BookmarkPreviewSummary,
+  type BookmarkSimilarityClusterPage,
+  type BookmarkSimilarityDecision,
+  type BookmarkSimilarityDecisionFilter,
+  type BookmarkSimilarityDecisionResult,
+  type BookmarkSimilarityMemberPage,
 } from "./bookmark-contract.ts";
 
 const BOOKMARK_BASE = "/api/backend/bookmark-imports";
 
 // 后端要求幂等键至少 16 字符；randomUUID 是 36 字符，天然满足。
 const MIN_IDEMPOTENCY_KEY_LENGTH = 16;
+export const DEFAULT_BOOKMARK_SIMILARITY_PAGE_SIZE = 20;
+export const DEFAULT_BOOKMARK_SIMILARITY_MEMBER_PAGE_SIZE = 50;
 
 export class BookmarkApiError extends Error {
   status: number;
@@ -111,16 +121,137 @@ export async function getBookmarkPreviewSummary(
   );
 }
 
+type BookmarkSimilarityPageQuery = {
+  cursor?: string;
+  page?: number;
+  limit?: number;
+  decision?: BookmarkSimilarityDecisionFilter;
+};
+
+function encodeResourceId(value: string, label: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new TypeError(`${label} 不能为空`);
+  return encodeURIComponent(normalized);
+}
+
+function boundedPageSize(value: number | undefined, fallback: number, maximum: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isFinite(value)) throw new TypeError("分页大小必须是有限数字");
+  return Math.min(maximum, Math.max(1, Math.trunc(value)));
+}
+
+export async function getBookmarkSimilarityClusters(
+  jobId: string,
+  query: BookmarkSimilarityPageQuery = {},
+  signal?: AbortSignal,
+): Promise<BookmarkSimilarityClusterPage> {
+  const requestedPage = query.page ?? 1;
+  if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) {
+    throw new TypeError("相似书签页码必须是正整数");
+  }
+  const cursor = query.cursor?.trim();
+  if (cursor && query.page !== undefined) {
+    throw new TypeError("相似书签页码和游标不能同时使用");
+  }
+  const params = new URLSearchParams({
+    limit: String(
+      boundedPageSize(query.limit, DEFAULT_BOOKMARK_SIMILARITY_PAGE_SIZE, 50),
+    ),
+  });
+  if (cursor) params.set("cursor", cursor);
+  else params.set("page", String(requestedPage));
+  if (query.decision) params.set("decision", query.decision);
+  return normalizeBookmarkSimilarityClusterPage(
+    await request(
+      `/${encodeResourceId(jobId, "导入任务 ID")}/preview/similarity-clusters?${params}`,
+      { signal },
+    ),
+  );
+}
+
+export async function getBookmarkSimilarityMembers(
+  jobId: string,
+  clusterId: string,
+  query: Pick<BookmarkSimilarityPageQuery, "cursor" | "limit"> = {},
+  signal?: AbortSignal,
+): Promise<BookmarkSimilarityMemberPage> {
+  const params = new URLSearchParams({
+    limit: String(
+      boundedPageSize(
+        query.limit,
+        DEFAULT_BOOKMARK_SIMILARITY_MEMBER_PAGE_SIZE,
+        100,
+      ),
+    ),
+  });
+  if (query.cursor?.trim()) params.set("cursor", query.cursor.trim());
+  return normalizeBookmarkSimilarityMemberPage(
+    await request(
+      `/${encodeResourceId(jobId, "导入任务 ID")}/preview/similarity-clusters/${encodeResourceId(clusterId, "相似组 ID")}/members?${params}`,
+      { signal },
+    ),
+  );
+}
+
+export async function setBookmarkSimilarityDecision(
+  jobId: string,
+  clusterId: string,
+  input: {
+    expectedJobVersion: number;
+    expectedDecisionVersion: number;
+    decision: BookmarkSimilarityDecision;
+  },
+): Promise<BookmarkSimilarityDecisionResult> {
+  return normalizeBookmarkSimilarityDecisionResult(
+    await request(
+      `/${encodeResourceId(jobId, "导入任务 ID")}/preview/similarity-clusters/${encodeResourceId(clusterId, "相似组 ID")}/decision`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_job_version: input.expectedJobVersion,
+          expected_decision_version: input.expectedDecisionVersion,
+          decision: input.decision,
+        }),
+      },
+    ),
+  );
+}
+
+export async function keepOriginalBookmarkSimilarityClusters(
+  jobId: string,
+  input: { expectedJobVersion: number; expectedDecisionVersion: number },
+): Promise<BookmarkSimilarityDecisionResult> {
+  return normalizeBookmarkSimilarityDecisionResult(
+    await request(
+      `/${encodeResourceId(jobId, "导入任务 ID")}/preview/similarity-decisions/keep-originals`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_job_version: input.expectedJobVersion,
+          expected_decision_version: input.expectedDecisionVersion,
+          decision: "keep_originals",
+        }),
+      },
+    ),
+  );
+}
+
 /** 唯一真正写库的一步，必须由用户点击触发。 */
 export async function applyBookmarkImport(
   jobId: string,
   expectedJobVersion: number,
+  expectedDecisionVersion: number,
 ): Promise<BookmarkImportResult> {
   return normalizeBookmarkImportResult(
     await request(`/${encodeURIComponent(jobId)}/apply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ expected_job_version: expectedJobVersion }),
+      body: JSON.stringify({
+        expected_job_version: expectedJobVersion,
+        expected_decision_version: expectedDecisionVersion,
+      }),
     }),
   );
 }

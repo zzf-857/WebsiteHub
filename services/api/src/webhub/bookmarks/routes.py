@@ -28,7 +28,7 @@ from webhub.auth.dependencies import (
     SettingsDependency,
     require_trusted_origin,
 )
-from webhub.bookmarks import intake, persistence, queries, worker
+from webhub.bookmarks import intake, persistence, queries, similarity_queries, worker
 from webhub.bookmarks.admission import (
     BookmarkUploadQuotaExceededError,
     BookmarkUploadRateLimitError,
@@ -44,7 +44,13 @@ from webhub.bookmarks.schemas import (
     BookmarkPreviewFolderPageResponse,
     BookmarkPreviewOccurrencePageResponse,
     BookmarkPreviewSummaryResponse,
+    BookmarkSimilarityClusterPageResponse,
+    BookmarkSimilarityDecisionRequest,
+    BookmarkSimilarityDecisionResponse,
+    BookmarkSimilarityMemberPageResponse,
+    BookmarkSimilarityResolveAllRequest,
     ProposedAction,
+    SimilarityDecisionFilter,
     ValidationStatus,
 )
 from webhub.bookmarks.uploads import (
@@ -89,6 +95,7 @@ def _schedule_parse(
 
 JobId = Annotated[str, Path(max_length=128)]
 OptionalIdentifier = Annotated[str | None, Query(max_length=128)]
+ClusterId = Annotated[str, Path(max_length=128)]
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]
 IdempotencyKeyHeader = Annotated[
     str,
@@ -437,6 +444,109 @@ async def preview_occurrences(
     )
 
 
+@router.get(
+    "/{job_id}/preview/similarity-clusters",
+    response_model=BookmarkSimilarityClusterPageResponse,
+)
+async def preview_similarity_clusters(
+    job_id: JobId,
+    response: Response,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    decision: SimilarityDecisionFilter | None = None,
+    cursor: Annotated[str | None, Query(max_length=2_048)] = None,
+    page: Annotated[int | None, Query(ge=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> BookmarkSimilarityClusterPageResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return await _call(
+        similarity_queries.list_similarity_clusters(
+            session,
+            identity.user.id,
+            job_id,
+            decision=decision,
+            cursor=cursor,
+            page=page,
+            limit=limit,
+        ),
+        no_store=True,
+    )
+
+
+@router.get(
+    "/{job_id}/preview/similarity-clusters/{cluster_id}/members",
+    response_model=BookmarkSimilarityMemberPageResponse,
+)
+async def preview_similarity_cluster_members(
+    job_id: JobId,
+    cluster_id: ClusterId,
+    response: Response,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    cursor: Annotated[str | None, Query(max_length=2_048)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> BookmarkSimilarityMemberPageResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return await _call(
+        similarity_queries.list_similarity_members(
+            session,
+            identity.user.id,
+            job_id,
+            cluster_id,
+            cursor=cursor,
+            limit=limit,
+        ),
+        no_store=True,
+    )
+
+
+@router.put(
+    "/{job_id}/preview/similarity-clusters/{cluster_id}/decision",
+    response_model=BookmarkSimilarityDecisionResponse,
+)
+async def decide_similarity_cluster(
+    job_id: JobId,
+    cluster_id: ClusterId,
+    payload: BookmarkSimilarityDecisionRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> BookmarkSimilarityDecisionResponse:
+    return await _call(
+        similarity_queries.set_similarity_decision(
+            session,
+            identity.user.id,
+            job_id,
+            cluster_id,
+            expected_job_version=payload.expected_job_version,
+            expected_decision_version=payload.expected_decision_version,
+            decision=payload.decision,
+        )
+    )
+
+
+@router.post(
+    "/{job_id}/preview/similarity-decisions/keep-originals",
+    response_model=BookmarkSimilarityDecisionResponse,
+)
+async def keep_all_unresolved_similarity_clusters(
+    job_id: JobId,
+    payload: BookmarkSimilarityResolveAllRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> BookmarkSimilarityDecisionResponse:
+    return await _call(
+        similarity_queries.resolve_all_similarity_clusters(
+            session,
+            identity.user.id,
+            job_id,
+            expected_job_version=payload.expected_job_version,
+            expected_decision_version=payload.expected_decision_version,
+        )
+    )
+
+
 @router.post("/{job_id}/apply", response_model=BookmarkImportApplyResponse)
 async def apply_import(
     job_id: str,
@@ -459,6 +569,7 @@ async def apply_import(
             identity.user.id,
             job_id,
             expected_job_version=payload.expected_job_version,
+            expected_decision_version=payload.expected_decision_version,
         )
     )
     if response.created > 0:

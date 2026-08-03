@@ -1,6 +1,5 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
 import Link from "next/link";
 import {
   forwardRef,
@@ -19,6 +18,7 @@ import {
   siteHostname,
 } from "@/components/home/home-shared";
 import { SiteFavicon } from "@/components/site-favicon";
+import { ThemedSelect } from "@/components/ui/themed-select";
 import {
   hasRefreshableSiteAnalysis,
   useBoundedAnalysisRefresh,
@@ -71,10 +71,6 @@ const SORT_OPTIONS: ReadonlyArray<{ value: LibrarySort; label: string }> = [
 ];
 
 const SORT_TITLE = "排序方式（最近使用按更新时间近似）";
-
-function isLibrarySort(value: string): value is LibrarySort {
-  return SORT_OPTIONS.some((option) => option.value === value);
-}
 
 export type CategorySectionsHandle = {
   scrollToCategory: (id: string | null) => void;
@@ -305,30 +301,22 @@ type SortSelectProps = {
   variant?: "boxed" | "plain";
 };
 
-/* 排序控件（1c 行 308 / 319）：原生 select 保证键盘可操作，
-   外观用 appearance:none + 覆盖式 chevron 对齐设计稿的按钮形态。 */
+/* 排序控件（1c 行 308 / 319）：使用共享主题选择器，
+   避免原生选项弹层脱离站内深浅色主题。 */
 function SortSelect({ sort, onSortChange, variant = "boxed" }: Readonly<SortSelectProps>) {
   return (
     <span
       className={variant === "plain" ? "home-sort home-sort--plain" : "home-sort"}
       title={SORT_TITLE}
     >
-      <select
-        className="home-sort-select"
-        aria-label="排序方式"
+      <ThemedSelect<LibrarySort>
+        ariaLabel="排序方式"
+        align="end"
+        options={SORT_OPTIONS}
+        variant={variant === "plain" ? "plain" : "toolbar"}
         value={sort}
-        onChange={(event) => {
-          const next = event.target.value;
-          if (isLibrarySort(next)) onSortChange(next);
-        }}
-      >
-        {SORT_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown className="home-sort-chevron" aria-hidden="true" />
+        onValueChange={onSortChange}
+      />
     </span>
   );
 }

@@ -4,6 +4,7 @@ import { Plus, Save } from "lucide-react";
 import { useId, useMemo, useState, type FormEvent } from "react";
 
 import { Spinner } from "@/components/react-bits/spinner";
+import { ThemedSelect } from "@/components/ui/themed-select";
 
 import {
   libraryTagNameKey,
@@ -73,12 +74,20 @@ function SiteFormContent({
   const [tagCreateError, setTagCreateError] = useState<string | null>(null);
   const errorId = useId();
   const tagCreateErrorId = useId();
+  const categorySelectId = useId();
   const isEdit = Boolean(site);
 
   const visibleTags = useMemo(() => {
     const query = libraryTagNameKey(tagQuery);
     return query ? tags.filter((tag) => libraryTagNameKey(tag.name).includes(query)) : tags;
   }, [tagQuery, tags]);
+  const categoryOptions = useMemo(
+    () => [
+      { value: "", label: "使用默认分类" },
+      ...categories.map((category) => ({ value: category.id, label: category.name })),
+    ],
+    [categories],
+  );
 
   const selectTag = (tag: LibraryTag) => {
     setValues((current) => ({
@@ -206,19 +215,16 @@ function SiteFormContent({
             disabled={busy}
           />
         </label>
-        <label className="library-field">
-          <span>分类</span>
-          <select
+        <div className="library-field">
+          <label htmlFor={categorySelectId}>分类</label>
+          <ThemedSelect
+            id={categorySelectId}
             value={values.categoryId}
-            onChange={(event) => setValues((current) => ({ ...current, categoryId: event.target.value }))}
+            options={categoryOptions}
+            onValueChange={(categoryId) => setValues((current) => ({ ...current, categoryId }))}
             disabled={busy}
-          >
-            <option value="">使用默认分类</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>{category.name}</option>
-            ))}
-          </select>
-        </label>
+          />
+        </div>
         <label className="library-check library-pin-check">
           <input
             type="checkbox"

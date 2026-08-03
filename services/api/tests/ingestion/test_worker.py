@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 from weakref import ref
 
@@ -9,6 +10,7 @@ import pytest
 
 from webhub.ingestion import worker
 from webhub.ingestion.fetcher import FetchOutcome
+from webhub.ingestion.service import AnalysisProviderSignal
 
 
 class _PreferenceSession:
@@ -95,6 +97,121 @@ def test_analysis_queue_deduplicates_and_caps_execution_concurrency(
     asyncio.run(scenario())
     assert sorted(analyzed) == sorted(f"site-{index}" for index in range(21))
     assert maximum_active == worker.MAX_CONCURRENT_ANALYSES
+
+
+def test_llm_analysis_serializes_only_provider_work_while_fetches_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active_fetches = 0
+    maximum_active_fetches = 0
+    active_providers = 0
+    maximum_active_providers = 0
+
+    async def fake_analyze(
+        *_args: object,
+        enrichment_semaphore: asyncio.Semaphore,
+        **_kwargs: object,
+    ) -> FetchOutcome:
+        nonlocal active_fetches, maximum_active_fetches
+        nonlocal active_providers, maximum_active_providers
+        active_fetches += 1
+        maximum_active_fetches = max(maximum_active_fetches, active_fetches)
+        await asyncio.sleep(0.01)
+        active_fetches -= 1
+        async with enrichment_semaphore:
+            active_providers += 1
+            maximum_active_providers = max(maximum_active_providers, active_providers)
+            await asyncio.sleep(0.01)
+            active_providers -= 1
+        return FetchOutcome(status="complete", reason="test")
+
+    monkeypatch.setattr(worker, "analyze_in_background", fake_analyze)
+
+    async def scenario() -> None:
+        database = object()
+        user_id = "serial-llm-test"
+        result = worker.schedule_analysis(
+            database,  # type: ignore[arg-type]
+            user_id=user_id,
+            site_ids=("site-1", "site-2", "site-3"),
+            intent=worker.AnalysisIntent.SITE_ENRICHMENT,
+        )
+        assert result.queued == 3
+        while worker.pending_site_ids(database, user_id):  # type: ignore[arg-type]
+            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    asyncio.run(scenario())
+
+    assert worker.MAX_CONCURRENT_LLM_ANALYSES == 1
+    assert worker.MAX_CONCURRENT_METADATA_BACKFILL_ANALYSES == 2
+    assert maximum_active_fetches > 1
+    assert maximum_active_providers == 1
+
+
+def test_durable_worker_forwards_structured_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def execution_intent(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    async def record_provider_result(
+        *_args: object,
+        **kwargs: object,
+    ) -> bool:
+        captured.update(kwargs)
+        return False
+
+    async def analyze(
+        *_args: object,
+        on_provider_signal: object,
+        **_kwargs: object,
+    ) -> FetchOutcome:
+        persisted = await on_provider_signal(  # type: ignore[operator]
+            _PreferenceSession(),
+            AnalysisProviderSignal(
+                failed=True,
+                stop_batch=False,
+                failure_reason="provider_rate_limited",
+                retry_after_seconds=45,
+            ),
+        )
+        assert persisted is True
+        return FetchOutcome(status="limited", reason="rate limited")
+
+    monkeypatch.setattr(worker.metadata_backfill, "item_execution_intent", execution_intent)
+    monkeypatch.setattr(worker.metadata_backfill, "record_provider_result", record_provider_result)
+    monkeypatch.setattr(worker, "analyze_in_background", analyze)
+
+    item = SimpleNamespace(
+        site_id="site-1",
+        expected_version=1,
+        initial_analysis_status="not_analyzed",
+        analysis_claimed_at=None,
+    )
+    state = worker._MetadataBackfill(  # noqa: SLF001 - focused signal bridge
+        database=_PreferenceDatabase(),  # type: ignore[arg-type]
+        user_id="user-1",
+        run_id="run-1",
+    )
+    outcome = asyncio.run(
+        worker._analyze_metadata_item_with_capacity(  # noqa: SLF001
+            state,
+            SimpleNamespace(),
+            item,
+            requires_llm=True,
+        )
+    )
+
+    assert outcome == FetchOutcome(status="limited", reason="rate limited")
+    assert captured == {
+        "failed": True,
+        "stop_batch": False,
+        "failure_reason": "provider_rate_limited",
+        "retry_after_seconds": 45,
+    }
 
 
 def test_waiting_analysis_joins_existing_site_job(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -45,9 +45,15 @@ class SiteMetadataBackfillRun(Base):
             ondelete="CASCADE",
         ),
         CheckConstraint(
-            "state IN ('queued', 'running', 'completed', "
-            "'completed_with_errors', 'failed')",
+            "state IN ('queued', 'running', 'completed', 'completed_with_errors', 'failed')",
             name="valid_state",
+        ),
+        CheckConstraint("mode IN ('metadata', 'full')", name="valid_mode"),
+        CheckConstraint(
+            "stop_reason IS NULL OR stop_reason IN ("
+            "'provider_rate_limited', 'provider_temporary_failure', "
+            "'provider_unavailable', 'internal_error')",
+            name="valid_stop_reason",
         ),
         CheckConstraint("version > 0", name="positive_version"),
         CheckConstraint(
@@ -101,6 +107,9 @@ class SiteMetadataBackfillRun(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="full", server_default="full"
+    )
     state: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
     # Set once while snapshotting the eligible rows. Item deletion is never
     # cascaded from sites, so this stays a stable progress denominator.
@@ -119,6 +128,7 @@ class SiteMetadataBackfillRun(Base):
     # fuse prevents expired running items from retrying the same Provider after
     # a process crash.
     stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stop_reason: Mapped[str | None] = mapped_column(String(48))
     # Retryable Provider failures are a run property, not thousands of
     # independent site failures. A successful model call resets the streak;
     # failures add a persisted cooldown and eventually trip stop_requested.

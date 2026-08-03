@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+from collections.abc import Iterable
 from dataclasses import dataclass
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -191,6 +192,8 @@ async def _validated_addresses(
     allow_private: bool,
     timeout_seconds: int,
     classify_fake_ip: bool = False,
+    require_all_fake_ip: bool = False,
+    fake_ip_error_code: str = "provider_fake_ip_detected",
 ) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]:
     direct_address = _address(hostname)
     if direct_address is not None:
@@ -211,18 +214,28 @@ async def _validated_addresses(
                 "provider_target_unreachable",
                 "Provider 地址无法解析",
             ) from error
-    if classify_fake_ip and any(
-        address.version == 4
-        and any(address in network for network in _PROXY_FAKE_IP_NETWORKS)
+    fake_ip_addresses = {
+        address
         for address in addresses
-    ):
+        if address.version == 4
+        and any(address in network for network in _PROXY_FAKE_IP_NETWORKS)
+    }
+    should_classify_fake_ip = bool(fake_ip_addresses) and (
+        not require_all_fake_ip
+        or (direct_address is None and len(fake_ip_addresses) == len(addresses))
+    )
+    if classify_fake_ip and should_classify_fake_ip:
         # Clash/Mihomo commonly uses RFC 2544 benchmarking space for Fake-IP
         # DNS. It must stay blocked by SSRF policy, but callers need a precise
         # diagnosis instead of being told that their Provider is unconfigured.
         raise ProviderTargetError(
-            "provider_fake_ip_detected",
-            "目标域名解析到了代理 Fake-IP；请在 Clash/Mihomo 的全局 fake-ip-filter "
-            "中排除该域名并重新应用配置",
+            fake_ip_error_code,
+            (
+                "目标域名解析到了代理 Fake-IP；请在 Clash/Mihomo 的全局 fake-ip-filter "
+                "中排除该域名并重新应用配置"
+                if fake_ip_error_code == "provider_fake_ip_detected"
+                else "资源域名解析到了代理 Fake-IP，需要独立验证其真实公网地址"
+            ),
         )
     if not addresses or any(
         not _allowed_address(address, allow_private=allow_private) for address in addresses
@@ -232,6 +245,52 @@ async def _validated_addresses(
             "Provider 地址解析到本机、私网、保留或其他不安全目标",
         )
     return tuple(sorted(addresses, key=lambda address: (address.version, int(address))))
+
+
+def resource_target_from_addresses(
+    value: str,
+    addresses: Iterable[ipaddress.IPv4Address | ipaddress.IPv6Address],
+    *,
+    allow_private: bool,
+) -> ResolvedConnectionTarget:
+    """Build a pinned resource target from addresses resolved by a trusted path.
+
+    The supplied addresses still pass the same SSRF policy as system DNS. This
+    is used when a transparent proxy replaces the system answer with a Fake-IP
+    and the caller has independently recovered the real DNS answer.
+    """
+
+    parsed, hostname, port = _parsed_resource_url(value)
+    selected = tuple(
+        sorted(set(addresses), key=lambda address: (address.version, int(address)))
+    )
+    direct_address = _address(hostname)
+    if (
+        not selected
+        or (direct_address is not None and selected != (direct_address,))
+        or any(
+            not _allowed_address(address, allow_private=allow_private)
+            for address in selected
+        )
+    ):
+        raise ProviderTargetError(
+            "unsafe_provider_target",
+            "资源地址解析到本机、私网、保留或其他不安全目标",
+        )
+
+    scheme = parsed.scheme.casefold()
+    host_display = f"[{hostname}]" if ":" in hostname else hostname
+    default_port = (scheme == "https" and port == 443) or (
+        scheme == "http" and port == 80
+    )
+    netloc = host_display if default_port else f"{host_display}:{port}"
+    request_url = urlunsplit((scheme, netloc, parsed.path, parsed.query, ""))
+    return ResolvedConnectionTarget(
+        url=request_url,
+        hostname=hostname,
+        port=port,
+        addresses=selected,
+    )
 
 
 async def resolve_resource_target(
@@ -246,23 +305,20 @@ async def resolve_resource_target(
     client-side identifier and must never be included in an HTTP request.
     """
 
-    parsed, hostname, port = _parsed_resource_url(value)
+    _parsed, hostname, port = _parsed_resource_url(value)
     addresses = await _validated_addresses(
         hostname,
         port,
         allow_private=allow_private,
         timeout_seconds=timeout_seconds,
+        classify_fake_ip=True,
+        require_all_fake_ip=True,
+        fake_ip_error_code="resource_fake_ip_detected",
     )
-    scheme = parsed.scheme.casefold()
-    host_display = f"[{hostname}]" if ":" in hostname else hostname
-    default_port = (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
-    netloc = host_display if default_port else f"{host_display}:{port}"
-    request_url = urlunsplit((scheme, netloc, parsed.path, parsed.query, ""))
-    return ResolvedConnectionTarget(
-        url=request_url,
-        hostname=hostname,
-        port=port,
-        addresses=addresses,
+    return resource_target_from_addresses(
+        value,
+        addresses,
+        allow_private=allow_private,
     )
 
 
@@ -286,6 +342,7 @@ __all__ = [
     "ProviderTargetError",
     "ResolvedConnectionTarget",
     "normalize_base_url",
+    "resource_target_from_addresses",
     "resolve_resource_target",
     "validate_connection_target",
 ]

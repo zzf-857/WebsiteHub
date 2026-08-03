@@ -36,7 +36,7 @@ MAX_CONCURRENT_AUTO_ANALYSES = 2
 # retry.  Automatic and durable bulk runs share this budget.
 MAX_CONCURRENT_BACKGROUND_ANALYSES = MAX_CONCURRENT_ANALYSES - 1
 MAX_CONCURRENT_METADATA_BACKFILL_ANALYSES = 2
-MAX_CONCURRENT_LLM_ANALYSES = 2
+MAX_CONCURRENT_LLM_ANALYSES = 1
 ANALYZE_WAIT_PENDING_TIMEOUT_SECONDS = 90
 METADATA_BACKFILL_RECOVERY_BASE_DELAY_SECONDS = 1
 METADATA_BACKFILL_RECOVERY_MAX_DELAY_SECONDS = 10
@@ -219,7 +219,7 @@ async def _run_account(key: _AccountKey, state: _AccountQueue) -> None:
             state.active_bulk_origins[site_id] = bulk_origin
             try:
                 if intent is AnalysisIntent.SITE_ENRICHMENT:
-                    async with _llm_semaphore(), _global_semaphore():
+                    async with _global_semaphore():
                         result = await analyze_in_background(
                             state.database,
                             state.user_id,
@@ -227,6 +227,7 @@ async def _run_account(key: _AccountKey, state: _AccountQueue) -> None:
                             bulk=state.active_bulk_origins.get(site_id, False),
                             use_llm=True,
                             enricher=_SITE_ENRICHERS.get(id(state.database)),
+                            enrichment_semaphore=_llm_semaphore(),
                         )
                 else:
                     async with _global_semaphore():
@@ -542,6 +543,8 @@ async def _analyze_metadata_item_with_capacity(
             item,
             failed=signal.failed,
             stop_batch=signal.stop_batch,
+            failure_reason=signal.failure_reason,
+            retry_after_seconds=signal.retry_after_seconds,
         )
         return recorded is not None
 
@@ -570,6 +573,9 @@ async def _analyze_metadata_item_with_capacity(
             before_provider_call=(
                 provider_call_is_allowed if current_requires_llm else None
             ),
+            enrichment_semaphore=(
+                _llm_semaphore() if current_requires_llm else None
+            ),
             propagate_errors=True,
             use_llm=current_requires_llm,
             enricher=(
@@ -580,7 +586,7 @@ async def _analyze_metadata_item_with_capacity(
         )
 
     if requires_llm:
-        async with _llm_semaphore(), _global_semaphore():
+        async with _global_semaphore():
             return await analyze_claimed_item(await execution_intent())
 
     async with _global_semaphore():
@@ -733,8 +739,13 @@ async def _run_metadata_backfill(state: _MetadataBackfill) -> None:
                 return
 
             assert lease is not None
+            consumer_count = (
+                1
+                if lease.mode == "full"
+                else MAX_CONCURRENT_METADATA_BACKFILL_ANALYSES
+            )
             async with asyncio.TaskGroup() as group:
-                for _ in range(MAX_CONCURRENT_METADATA_BACKFILL_ANALYSES):
+                for _ in range(consumer_count):
                     group.create_task(_consume_metadata_backfill(state, lease))
             recovery_attempts = 0
         except asyncio.CancelledError:

@@ -5,6 +5,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from webhub.bookmarks.similarity import rebuild_similarity_projections
 from webhub.db.models import (
     BookmarkImportCurrentRun,
     BookmarkImportJob,
@@ -142,6 +143,12 @@ async def finalize_parse_run(
             user_id,
             run_id,
             now,
+        )
+        await rebuild_similarity_projections(
+            session,
+            user_id,
+            job_id,
+            run_id,
         )
         completed_run = await session.execute(
             update(BookmarkImportRun)

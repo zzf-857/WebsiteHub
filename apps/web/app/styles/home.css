@@ -206,6 +206,105 @@
   flex-shrink: 0;
 }
 
+.home-metadata-backfill-config {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: auto auto minmax(220px, 1fr);
+  gap: 10px 14px;
+  align-items: center;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.home-metadata-backfill-modes {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.home-metadata-backfill-modes button {
+  min-height: 28px;
+  padding: 4px 9px;
+  overflow: hidden;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.home-metadata-backfill-modes button[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.home-metadata-backfill-modes button:disabled,
+.home-metadata-backfill-limit input:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.home-metadata-backfill-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+
+.home-metadata-backfill-limit input {
+  width: 70px;
+  height: 32px;
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.home-metadata-backfill-plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.home-metadata-backfill-plan strong {
+  font-weight: 650;
+  color: var(--text-secondary);
+}
+
+.home-metadata-backfill-plan svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.home-metadata-backfill-plan[data-tone="error"] {
+  color: var(--danger);
+}
+
 .home-metadata-backfill-progress {
   display: grid;
   grid-column: 1 / -1;
@@ -295,6 +394,23 @@
 
   .home-metadata-backfill-action {
     width: 100%;
+  }
+
+  .home-metadata-backfill-config {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-metadata-backfill-modes {
+    width: 100%;
+  }
+
+  .home-metadata-backfill-limit {
+    justify-content: space-between;
+  }
+
+  .home-metadata-backfill-plan {
+    justify-content: flex-start;
+    text-align: left;
   }
 }
 
@@ -872,8 +988,7 @@
 
 /* ============ 排序控件（1c 行 308 / 319） ============ */
 
-/* 原生 select 隐去系统箭头后自绘 chevron：既保住键盘/读屏可达性，
-   又能贴合设计稿的按钮外观 */
+/* 共享主题选择器负责弹层、箭头和键盘交互；外层只参与标题行布局。 */
 .home-sort {
   position: relative;
   display: inline-flex;
@@ -881,53 +996,9 @@
   align-items: center;
 }
 
-.home-sort-select {
-  appearance: none;
-  padding: 6px 29px 6px 12px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--line-header);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition:
-    border-color var(--duration-hover) var(--ease-standard),
-    color var(--duration-hover) var(--ease-standard);
-}
-
-.home-sort-select:hover {
-  border-color: var(--accent-hover);
-  color: var(--text);
-}
-
-/* chevron 覆盖在 select 右端，pointer-events 关掉不挡点击 */
-.home-sort-chevron {
-  position: absolute;
-  right: 10px;
-  width: 13px;
-  height: 13px;
-  color: var(--text-muted);
-  pointer-events: none;
-}
-
-/* 分区标题行内的轻量形态：无边框纯文本 + 12px chevron（1c 行 319） */
-.home-sort--plain .home-sort-select {
-  padding: 2px 21px 2px 4px;
-  color: var(--text-subtle);
-  background: none;
-  border: none;
-}
-
-.home-sort--plain .home-sort-select:hover {
-  color: var(--text-muted);
-}
-
-.home-sort--plain .home-sort-chevron {
-  right: 5px;
-  width: 12px;
-  height: 12px;
-  color: var(--text-subtle);
+.home-sort .themed-select[data-variant="toolbar"] .themed-select-trigger {
+  min-height: 34px;
+  border-color: var(--line-header);
 }
 
 .home-category-sections {
@@ -1043,6 +1114,8 @@
 
 .home-section-action:focus-visible,
 .home-metadata-backfill-action:focus-visible,
+.home-metadata-backfill-modes button:focus-visible,
+.home-metadata-backfill-limit input:focus-visible,
 .home-error-retry:focus-visible,
 .home-pinned-card:focus-visible,
 .home-space-copy:focus-visible,
@@ -1052,7 +1125,6 @@
 .home-open-cancel:focus-visible,
 .home-recent-row:focus-visible,
 .home-category-tab:focus-visible,
-.home-sort-select:focus-visible,
 .home-site-card:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
@@ -1079,7 +1151,6 @@
   .home-open-cancel,
   .home-recent-row,
   .home-category-tab,
-  .home-sort-select,
   .home-site-card {
     transition-duration: 0ms;
   }

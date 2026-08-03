@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, PlugZap } from "lucide-react";
+import { Check, ExternalLink, PlugZap } from "lucide-react";
 import {
   useId,
   useMemo,
@@ -11,6 +11,10 @@ import {
 } from "react";
 
 import { Spinner } from "@/components/react-bits/spinner";
+import {
+  ThemedSelect,
+  type ThemedSelectOption,
+} from "@/components/ui/themed-select";
 import {
   SECRET_MASK,
   type ProviderConfig,
@@ -97,7 +101,6 @@ export function ProviderForm({
   const [clearSecret, setClearSecret] = useState(false);
 
   const vendorGroupId = useId();
-  const modelListId = useId();
   const displayNameId = useId();
   const baseUrlId = useId();
   const modelNameId = useId();
@@ -303,6 +306,11 @@ export function ProviderForm({
     draft.modelName && !fetchedModels.includes(draft.modelName)
       ? [draft.modelName, ...fetchedModels]
       : fetchedModels;
+  const modelSelectOptions: ThemedSelectOption<string>[] = [
+    ...(!draft.modelName ? [{ value: "", label: "请选择模型" }] : []),
+    ...modelOptions.map((name) => ({ value: name, label: name })),
+    { value: MANUAL_MODEL_OPTION, label: "手动输入其他模型…" },
+  ];
 
   return (
     <form className="provider-form" onSubmit={(event) => void handleSubmit(event)} noValidate>
@@ -370,30 +378,25 @@ export function ProviderForm({
             模型名称
             {!draft.enabled && <span className="provider-form-optional"> · 启用前必填</span>}
           </label>
-          {/* 拉到目录后走真下拉：模型 ID 是抄不对就用不了的东西，让用户凭记忆
+          {/* 拉到目录后走可搜索的主题下拉：模型 ID 是抄不对就用不了的东西，让用户凭记忆
               手打没有意义。目录里没有的新模型仍可切回手填。 */}
           {modelOptions.length > 0 && !manualModel ? (
-            <select
+            <ThemedSelect
               id={modelNameId}
-              className="provider-select"
               value={draft.modelName}
+              options={modelSelectOptions}
               disabled={submitting}
-              aria-invalid={errors.modelName ? true : undefined}
-              onChange={(event) => {
-                if (event.target.value === MANUAL_MODEL_OPTION) {
+              invalid={Boolean(errors.modelName)}
+              searchable
+              onValueChange={(value) => {
+                if (value === MANUAL_MODEL_OPTION) {
                   setManualModel(true);
                   patchDraft({ modelName: "" }, "modelName");
                   return;
                 }
-                patchDraft({ modelName: event.target.value }, "modelName");
+                patchDraft({ modelName: value }, "modelName");
               }}
-            >
-              {!draft.modelName && <option value="">请选择模型</option>}
-              {modelOptions.map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-              <option value={MANUAL_MODEL_OPTION}>手动输入其他模型…</option>
-            </select>
+            />
           ) : (
             <input
               id={modelNameId}
@@ -402,7 +405,6 @@ export function ProviderForm({
               maxLength={160}
               value={draft.modelName}
               disabled={submitting}
-              list={fetchedModels.length > 0 ? modelListId : undefined}
               placeholder={
                 definition?.connectionTestSupported
                   ? "点下方「获取模型列表」自动拉取，或直接手填"
@@ -413,25 +415,18 @@ export function ProviderForm({
             />
           )}
           {fetchedModels.length > 0 && (
-            <>
-              <datalist id={modelListId}>
-                {fetchedModels.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-              <p className="provider-form-hint">
-                已从服务商读取 {fetchedModels.length} 个模型。
-                {manualModel && (
-                  <button
-                    className="provider-inline-link"
-                    type="button"
-                    onClick={() => setManualModel(false)}
-                  >
-                    回到下拉选择
-                  </button>
-                )}
-              </p>
-            </>
+            <p className="provider-form-hint">
+              已从服务商读取 {fetchedModels.length} 个模型。
+              {manualModel && (
+                <button
+                  className="provider-inline-link"
+                  type="button"
+                  onClick={() => setManualModel(false)}
+                >
+                  回到下拉选择
+                </button>
+              )}
+            </p>
           )}
           {errors.modelName && <p className="provider-form-error" role="alert">{errors.modelName}</p>}
         </div>
@@ -500,7 +495,7 @@ export function ProviderForm({
           />
           <p className="provider-form-hint">{secretHint}</p>
           {editing && config?.hasSecret && (
-            <label className="provider-form-hint">
+            <label className="provider-form-hint provider-checkbox">
               <input
                 type="checkbox"
                 checked={clearSecret}
@@ -512,7 +507,10 @@ export function ProviderForm({
                   setErrors((current) => ({ ...current, secret: undefined }));
                 }}
               />
-              {" "}删除已存储的 API Key
+              <span className="provider-checkbox-control" aria-hidden="true">
+                <Check />
+              </span>
+              <span>删除已存储的 API Key</span>
             </label>
           )}
           {definition.applicationUrl && (
@@ -532,7 +530,7 @@ export function ProviderForm({
       )}
 
       <div className="provider-form-field provider-form-field--full">
-        <label className="provider-form-hint" htmlFor={enabledId}>
+        <label className="provider-form-hint provider-checkbox" htmlFor={enabledId}>
           <input
             id={enabledId}
             type="checkbox"
@@ -540,7 +538,10 @@ export function ProviderForm({
             disabled={submitting}
             onChange={(event) => patchDraft({ enabled: event.target.checked })}
           />
-          {" "}保存后立即启用（同类型下原先启用的配置会自动停用）
+          <span className="provider-checkbox-control" aria-hidden="true">
+            <Check />
+          </span>
+          <span>保存后立即启用（同类型下原先启用的配置会自动停用）</span>
         </label>
       </div>
 

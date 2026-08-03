@@ -40,6 +40,13 @@ import {
   siteHost,
 } from "@/components/spaces/space-workspace-parts";
 import { useSpaceWorkspace } from "@/components/spaces/use-space-workspace";
+import { ThemedSelect } from "@/components/ui/themed-select";
+
+const SPACE_SORT_OPTIONS: ReadonlyArray<{ value: SpaceSort; label: string }> = [
+  { value: "updated", label: "最近更新" },
+  { value: "created", label: "创建时间" },
+  { value: "name", label: "名称" },
+];
 
 export function SpaceWorkspace({
   initialSpaceId = null,
@@ -220,14 +227,16 @@ export function SpaceWorkspace({
           <Blocks aria-hidden="true" />
           <span>共 {spacePage.totalCount} 个 Space</span>
         </div>
-        <label className="space-sort-field">
-          <span className="sr-only">Space 排序方式</span>
-          <select value={sort} onChange={(event) => setSort(event.target.value as SpaceSort)}>
-            <option value="updated">最近更新</option>
-            <option value="created">创建时间</option>
-            <option value="name">名称</option>
-          </select>
-        </label>
+        <div className="space-sort-field">
+          <ThemedSelect<SpaceSort>
+            ariaLabel="Space 排序方式"
+            className="space-toolbar-select"
+            options={SPACE_SORT_OPTIONS}
+            variant="toolbar"
+            value={sort}
+            onValueChange={setSort}
+          />
+        </div>
         <button
           className="icon-button space-direction-button"
           type="button"

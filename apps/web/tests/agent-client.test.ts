@@ -72,6 +72,7 @@ const librarySite = {
   pinned: false,
   source: "manual",
   analysis_status: "not_analyzed",
+  analysis_phase: null,
   version: 1,
   created_at: "2026-07-25T10:00:00Z",
   updated_at: "2026-07-25T10:00:00Z",

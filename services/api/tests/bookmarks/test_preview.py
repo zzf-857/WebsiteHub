@@ -60,7 +60,7 @@ def test_preview_is_disk_backed_and_preserves_occurrences(tmp_path: Path) -> Non
     assert preview.summary["pipeline_versions"] == {
         "parser": "netscape-html.v2",
         "normalizer": "conservative-url.v1",
-        "classification_rules": "bookmark-category-rules.v2",
+        "classification_rules": "bookmark-category-rules.v3",
         "sensitive_url_rules": "sensitive-url-keys.v2",
     }
     assert preview.summary["suspected_duplicates"] == {

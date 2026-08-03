@@ -16,7 +16,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
 } from "react";
 import {
   createLibraryTagResolvingConflict,
@@ -89,13 +88,21 @@ export function useLibraryWorkspace() {
   const [categoryId, setCategoryId] = useState(intent.categoryId);
   const [tagId, setTagId] = useState("");
   const [pinnedOnly, setPinnedOnly] = useState(intent.pinnedOnly);
-  const [sort, setSort] = useState<LibrarySort>(intent.sort);
+  // 网址库初始没有搜索词；URL 即使传入 relevance 也不能向后端发出非法组合。
+  const [sort, setSort] = useState<LibrarySort>(
+    intent.sort === "relevance" ? "updated" : intent.sort,
+  );
   const [direction, setDirection] = useState<LibraryDirection>("desc");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // ⌘K 从顶栏跳过来时应当直接可以打字，否则用户还要再点一次输入框。
   useEffect(() => {
-    if (intent.focusSearch) searchInputRef.current?.focus();
+    if (
+      intent.focusSearch
+      && document.documentElement.dataset.librarySearchTransition !== "active"
+    ) {
+      searchInputRef.current?.focus({ preventScroll: true });
+    }
   }, [intent.focusSearch]);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
 
@@ -175,7 +182,8 @@ export function useLibraryWorkspace() {
   }, [loadTaxonomies]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setSearchQuery(searchInput.trim()), 250);
+    const nextSearchQuery = searchInput.trim();
+    const timer = window.setTimeout(() => setSearchQuery(nextSearchQuery), 250);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
@@ -747,9 +755,19 @@ export function useLibraryWorkspace() {
     }
   };
 
-  const handleSortChange = (event: ChangeEvent<HTMLSelectElement>) => {
+  const handleSortChange = (nextSort: LibrarySort) => {
     clearSelection();
-    setSort(event.target.value as LibrarySort);
+    setSort(nextSort);
+  };
+
+  const clearFilters = () => {
+    clearSelection();
+    setSearchInput("");
+    setSearchQuery("");
+    setCategoryId("");
+    setTagId("");
+    setPinnedOnly(false);
+    setSort((current) => current === "relevance" ? "updated" : current);
   };
 
   const totalMatched = pinnedPage.matchedCount + (pinnedOnly ? 0 : regularPage.matchedCount);
@@ -823,6 +841,7 @@ export function useLibraryWorkspace() {
     categories,
     categoryId,
     closeDialog,
+    clearFilters,
     clearSelection,
     collectionProps,
     dialog,
@@ -850,6 +869,7 @@ export function useLibraryWorkspace() {
     regularPage,
     searchInput,
     searchInputRef,
+    searchQuery,
     selectedSites,
     selectionMode,
     setCategoryId,
@@ -857,7 +877,6 @@ export function useLibraryWorkspace() {
     setNotice,
     setPinnedOnly,
     setSearchInput,
-    setSearchQuery,
     setSelectionMode,
     setTagId,
     setViewMode,

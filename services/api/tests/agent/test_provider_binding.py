@@ -260,3 +260,32 @@ def test_another_accounts_config_is_never_borrowed(tmp_path: Path) -> None:
 
     with pytest.raises(AgentProviderNotConfiguredError):
         asyncio.run(scenario())
+
+
+def test_chat_model_retry_count_defaults_to_one_and_allows_bulk_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from webhub.agent import openai_compatible
+
+    captured: list[dict[str, object]] = []
+
+    class FakeChatModel:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+
+    monkeypatch.setattr(openai_compatible, "ReasoningCompatibleChatOpenAI", FakeChatModel)
+    binding = ProviderBinding(
+        kind="model",
+        provider="openai",
+        config_id="config-1",
+        display_name="OpenAI",
+        base_url="https://api.openai.com/v1",
+        model_name="gpt-test",
+        timeout_seconds=30,
+        api_key="secret-key",
+    )
+
+    binding_module.build_chat_model(binding)
+    binding_module.build_chat_model(binding, max_retries=0)
+
+    assert [item["max_retries"] for item in captured] == [1, 0]

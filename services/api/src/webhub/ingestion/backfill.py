@@ -12,9 +12,11 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from math import isfinite
+from typing import Literal, cast
 from urllib.parse import urlsplit
 
-from sqlalchemy import and_, case, or_, select, update
+from sqlalchemy import and_, case, func, literal, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,9 +32,9 @@ from .service import (
     AUTO_PENDING_STALE_AFTER,
     llm_enrichment_missing_condition,
     metadata_backfill_eligibility,
+    metadata_only_backfill_eligibility,
 )
 
-SNAPSHOT_CHUNK_SIZE = 256
 RUN_LEASE_DURATION = timedelta(seconds=90)
 ITEM_LEASE_DURATION = timedelta(seconds=90)
 ITEM_LEASE_HEARTBEAT_SECONDS = 20
@@ -40,16 +42,39 @@ ITEM_DEFER_DURATION = timedelta(seconds=5)
 MAX_CONSECUTIVE_PROVIDER_FAILURES = 3
 PROVIDER_RETRY_BASE_SECONDS = 5
 PROVIDER_RETRY_MAX_SECONDS = 60
+MAX_SAFE_PROVIDER_RETRY_AFTER_SECONDS = 300
 MAX_LEASE_RETRY_DELAY_SECONDS = 10
+MAX_METADATA_BACKFILL_LIMIT = 500
+MAX_FULL_BACKFILL_LIMIT = 100
 _ACTIVE_RUN_STATES = ("queued", "running")
 _ITEM_TERMINAL_STATES = ("complete", "limited", "failed", "skipped")
+_BACKFILL_MODES = frozenset({"metadata", "full"})
+_STOP_REASONS = frozenset(
+    {
+        "provider_rate_limited",
+        "provider_temporary_failure",
+        "provider_unavailable",
+        "internal_error",
+    }
+)
+
+MetadataBackfillMode = Literal["metadata", "full"]
+MetadataBackfillStopReason = Literal[
+    "provider_rate_limited",
+    "provider_temporary_failure",
+    "provider_unavailable",
+    "internal_error",
+]
 
 
 @dataclass(frozen=True, slots=True)
 class MetadataBackfillProgress:
     id: str
+    mode: MetadataBackfillMode
     status: str
     stopped_early: bool
+    stop_reason: MetadataBackfillStopReason | None
+    provider_retry_at: datetime | None
     total_count: int
     queued_count: int
     running_count: int
@@ -71,10 +96,21 @@ class MetadataBackfillStart:
 
 
 @dataclass(frozen=True, slots=True)
+class MetadataBackfillPlan:
+    mode: MetadataBackfillMode
+    requested_limit: int
+    eligible_count: int
+    selected_count: int
+    llm_count: int
+    max_limit: int
+
+
+@dataclass(frozen=True, slots=True)
 class MetadataBackfillRunLease:
     user_id: str
     run_id: str
     token_hash: str
+    mode: MetadataBackfillMode = "full"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +141,92 @@ def _run_token_hash() -> str:
     return hashlib.sha256(secrets.token_bytes(32)).hexdigest()
 
 
+def metadata_backfill_limit(mode: str) -> int:
+    if mode == "metadata":
+        return MAX_METADATA_BACKFILL_LIMIT
+    if mode == "full":
+        return MAX_FULL_BACKFILL_LIMIT
+    raise ValueError(f"unsupported metadata backfill mode: {mode}")
+
+
+def _validated_backfill_options(
+    mode: str,
+    limit: int,
+) -> tuple[MetadataBackfillMode, int]:
+    if mode not in _BACKFILL_MODES:
+        raise ValueError(f"unsupported metadata backfill mode: {mode}")
+    if isinstance(limit, bool) or limit < 1:
+        raise ValueError("metadata backfill limit must be a positive integer")
+    max_limit = metadata_backfill_limit(mode)
+    if limit > max_limit:
+        raise ValueError(f"{mode} metadata backfill limit cannot exceed {max_limit}")
+    return cast(MetadataBackfillMode, mode), max_limit
+
+
+def _selection_parts(
+    *,
+    user_id: str,
+    mode: MetadataBackfillMode,
+    snapshot_started_at: datetime,
+) -> tuple[list[object], object]:
+    stale_before = snapshot_started_at - AUTO_PENDING_STALE_AFTER
+    requires_llm = (
+        literal(False)
+        if mode == "metadata"
+        else llm_enrichment_missing_condition()
+    ).label("requires_llm")
+    conditions: list[object] = [
+        Site.user_id == user_id,
+        Site.created_at <= snapshot_started_at,
+        (
+            metadata_only_backfill_eligibility(stale_before=stale_before)
+            if mode == "metadata"
+            else metadata_backfill_eligibility(stale_before=stale_before)
+        ),
+    ]
+    return conditions, requires_llm
+
+
+async def plan_metadata_backfill(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    mode: str,
+    limit: int,
+) -> MetadataBackfillPlan:
+    """Return exact current selection counts without creating durable work."""
+
+    selected_mode, max_limit = _validated_backfill_options(mode, limit)
+    snapshot_started_at = utc_now()
+    conditions, requires_llm = _selection_parts(
+        user_id=user_id,
+        mode=selected_mode,
+        snapshot_started_at=snapshot_started_at,
+    )
+    eligible_count = int(
+        await session.scalar(select(func.count()).select_from(Site).where(*conditions)) or 0
+    )
+    selected_llm_flags = list(
+        (
+            await session.scalars(
+                select(requires_llm)
+                .select_from(Site)
+                .where(*conditions)
+                .order_by(requires_llm.desc(), Site.created_at, Site.id)
+                .limit(limit)
+            )
+        ).all()
+    )
+    return MetadataBackfillPlan(
+        mode=selected_mode,
+        requested_limit=limit,
+        eligible_count=eligible_count,
+        selected_count=len(selected_llm_flags),
+        llm_count=sum(bool(value) for value in selected_llm_flags),
+        max_limit=max_limit,
+    )
+
+
 def _progress_from_run(run: SiteMetadataBackfillRun) -> MetadataBackfillProgress:
     """Project a run's denormalized counters without scanning its items.
 
@@ -120,15 +242,14 @@ def _progress_from_run(run: SiteMetadataBackfillRun) -> MetadataBackfillProgress
     failed = run.failed_count
     skipped = run.skipped_count
     completed = complete + limited + failed + skipped
-    status = (
-        "failed"
-        if run.stop_requested and run.state not in _ACTIVE_RUN_STATES
-        else run.state
-    )
+    status = "failed" if run.stop_requested and run.state not in _ACTIVE_RUN_STATES else run.state
     return MetadataBackfillProgress(
         id=run.id,
+        mode=cast(MetadataBackfillMode, run.mode),
         status=status,
         stopped_early=run.stop_requested,
+        stop_reason=cast(MetadataBackfillStopReason | None, run.stop_reason),
+        provider_retry_at=run.provider_retry_at,
         total_count=run.total_count,
         queued_count=queued,
         running_count=running,
@@ -147,10 +268,12 @@ async def progress_for_run(
     run_id: str,
 ) -> MetadataBackfillProgress | None:
     run = await session.scalar(
-        select(SiteMetadataBackfillRun).where(
+        select(SiteMetadataBackfillRun)
+        .where(
             SiteMetadataBackfillRun.user_id == user_id,
             SiteMetadataBackfillRun.id == run_id,
         )
+        .execution_options(populate_existing=True)
     )
     if run is None:
         return None
@@ -190,9 +313,12 @@ async def start_metadata_backfill(
     session: AsyncSession,
     *,
     user_id: str,
+    mode: str = "full",
+    limit: int = MAX_FULL_BACKFILL_LIMIT,
 ) -> MetadataBackfillStart:
     """Freeze one account's eligible targets without retaining them in memory."""
 
+    selected_mode, _ = _validated_backfill_options(mode, limit)
     active = await _active_run(session, user_id=user_id)
     if active is not None:
         return MetadataBackfillStart(
@@ -207,50 +333,38 @@ async def start_metadata_backfill(
     await session.rollback()
 
     snapshot_started_at = utc_now()
-    run = SiteMetadataBackfillRun(user_id=user_id, state="queued", total_count=0)
+    run = SiteMetadataBackfillRun(
+        user_id=user_id,
+        mode=selected_mode,
+        state="queued",
+        total_count=0,
+    )
     session.add(run)
     total = 0
     try:
         await session.flush()
-        last_created_at: datetime | None = None
-        last_id: str | None = None
-        eligibility = metadata_backfill_eligibility(
-            stale_before=snapshot_started_at - AUTO_PENDING_STALE_AFTER,
+        conditions, requires_llm = _selection_parts(
+            user_id=user_id,
+            mode=selected_mode,
+            snapshot_started_at=snapshot_started_at,
         )
-        requires_llm = llm_enrichment_missing_condition().label("requires_llm")
-        while True:
-            conditions: list[object] = [
-                Site.user_id == user_id,
-                Site.created_at <= snapshot_started_at,
-                eligibility,
-            ]
-            if last_created_at is not None and last_id is not None:
-                conditions.append(
-                    or_(
-                        Site.created_at > last_created_at,
-                        and_(Site.created_at == last_created_at, Site.id > last_id),
+        rows = list(
+            (
+                await session.execute(
+                    select(
+                        Site.id,
+                        Site.version,
+                        Site.analysis_status,
+                        requires_llm,
+                        Site.identity_url,
                     )
+                    .where(*conditions)
+                    .order_by(requires_llm.desc(), Site.created_at, Site.id)
+                    .limit(limit)
                 )
-            rows = list(
-                (
-                    await session.execute(
-                        select(
-                            Site.id,
-                            Site.version,
-                            Site.analysis_status,
-                            requires_llm,
-                            Site.identity_url,
-                            Site.created_at,
-                        )
-                        .where(*conditions)
-                        .order_by(Site.created_at, Site.id)
-                        .limit(SNAPSHOT_CHUNK_SIZE)
-                    )
-                ).all()
-            )
-            if not rows:
-                break
-
+            ).all()
+        )
+        if rows:
             now = utc_now()
             values = [
                 {
@@ -273,13 +387,10 @@ async def start_metadata_backfill(
                     analysis_status,
                     item_requires_llm,
                     identity_url,
-                    _,
                 ) in rows
             ]
             await session.execute(SiteMetadataBackfillItem.__table__.insert(), values)
-            total += len(values)
-            _, _, _, _, _, last_created_at = rows[-1]
-            last_id = str(rows[-1][0])
+            total = len(values)
 
         # The snapshot is invisible until this transaction commits. Publish the
         # fixed denominator and its initial queued state together so counters
@@ -352,6 +463,11 @@ async def acquire_run_lease(
             SiteMetadataBackfillRun.id == run_id,
             SiteMetadataBackfillRun.state.in_(_ACTIVE_RUN_STATES),
             or_(
+                SiteMetadataBackfillRun.stop_requested.is_(True),
+                SiteMetadataBackfillRun.provider_retry_at.is_(None),
+                SiteMetadataBackfillRun.provider_retry_at <= now,
+            ),
+            or_(
                 SiteMetadataBackfillRun.lease_expires_at.is_(None),
                 SiteMetadataBackfillRun.lease_expires_at < now,
             ),
@@ -368,8 +484,24 @@ async def acquire_run_lease(
     if acquired.rowcount != 1:  # type: ignore[attr-defined]
         await session.rollback()
         return None
+    selected_mode = await session.scalar(
+        select(SiteMetadataBackfillRun.mode).where(
+            SiteMetadataBackfillRun.user_id == user_id,
+            SiteMetadataBackfillRun.id == run_id,
+            SiteMetadataBackfillRun.state == "running",
+            SiteMetadataBackfillRun.lease_token_hash == token_hash,
+        )
+    )
+    if selected_mode not in _BACKFILL_MODES:
+        await session.rollback()
+        return None
     await session.commit()
-    return MetadataBackfillRunLease(user_id=user_id, run_id=run_id, token_hash=token_hash)
+    return MetadataBackfillRunLease(
+        user_id=user_id,
+        run_id=run_id,
+        token_hash=token_hash,
+        mode=cast(MetadataBackfillMode, selected_mode),
+    )
 
 
 async def lease_retry_delay(
@@ -388,6 +520,13 @@ async def lease_retry_delay(
     )
     if run is None or run.state not in _ACTIVE_RUN_STATES:
         return None
+    if not run.stop_requested and run.provider_retry_at is not None:
+        provider_retry_at = run.provider_retry_at
+        if provider_retry_at.tzinfo is None:
+            provider_retry_at = provider_retry_at.replace(tzinfo=UTC)
+        provider_remaining = (provider_retry_at - utc_now()).total_seconds()
+        if provider_remaining > 0:
+            return min(max(provider_remaining, 0.5), MAX_LEASE_RETRY_DELAY_SECONDS)
     if run.lease_expires_at is None:
         return 0.5
     expires_at = run.lease_expires_at
@@ -541,9 +680,7 @@ async def _requeue_expired_items(
         .values(
             state="failed" if stop_requested else "queued",
             analysis_claimed_at=(
-                None
-                if stop_requested
-                else SiteMetadataBackfillItem.analysis_claimed_at
+                None if stop_requested else SiteMetadataBackfillItem.analysis_claimed_at
             ),
             lease_token_hash=None,
             lease_expires_at=None,
@@ -568,6 +705,7 @@ async def _requeue_expired_items(
                 )
                 .values(
                     analysis_status="not_analyzed",
+                    analysis_phase=None,
                     analysis_updated_at=now,
                     updated_at=Site.updated_at,
                 )
@@ -728,14 +866,18 @@ async def record_item_site_claim(
     """
 
     now = utc_now()
-    active_run = select(SiteMetadataBackfillRun.id).where(
-        SiteMetadataBackfillRun.user_id == lease.user_id,
-        SiteMetadataBackfillRun.id == lease.run_id,
-        SiteMetadataBackfillRun.state == "running",
-        SiteMetadataBackfillRun.stop_requested.is_(False),
-        SiteMetadataBackfillRun.lease_token_hash == lease.token_hash,
-        SiteMetadataBackfillRun.lease_expires_at >= now,
-    ).exists()
+    active_run = (
+        select(SiteMetadataBackfillRun.id)
+        .where(
+            SiteMetadataBackfillRun.user_id == lease.user_id,
+            SiteMetadataBackfillRun.id == lease.run_id,
+            SiteMetadataBackfillRun.state == "running",
+            SiteMetadataBackfillRun.stop_requested.is_(False),
+            SiteMetadataBackfillRun.lease_token_hash == lease.token_hash,
+            SiteMetadataBackfillRun.lease_expires_at >= now,
+        )
+        .exists()
+    )
     recorded = await session.execute(
         update(SiteMetadataBackfillItem)
         .where(
@@ -777,8 +919,7 @@ async def item_execution_intent(
             .join(
                 SiteMetadataBackfillItem,
                 and_(
-                    SiteMetadataBackfillItem.user_id
-                    == SiteMetadataBackfillRun.user_id,
+                    SiteMetadataBackfillItem.user_id == SiteMetadataBackfillRun.user_id,
                     SiteMetadataBackfillItem.run_id == SiteMetadataBackfillRun.id,
                 ),
             )
@@ -922,11 +1063,7 @@ async def _return_or_fail_item(
             ),
             lease_token_hash=None,
             lease_expires_at=None,
-            available_at=(
-                None
-                if stop_requested or not defer
-                else now + ITEM_DEFER_DURATION
-            ),
+            available_at=(None if stop_requested or not defer else now + ITEM_DEFER_DURATION),
             completed_at=now if stop_requested else None,
             updated_at=now,
         )
@@ -954,6 +1091,7 @@ async def _return_or_fail_item(
             )
             .values(
                 analysis_status="not_analyzed",
+                analysis_phase=None,
                 analysis_updated_at=now,
                 updated_at=Site.updated_at,
             )
@@ -1009,7 +1147,7 @@ async def _fail_queued_items_locked(
     *,
     now: datetime,
 ) -> int | None:
-    """Fail every unleased item inside the caller's fuse transaction."""
+    """Terminalize queued work without calling untouched targets failures."""
 
     abandoned_claims = [
         (str(site_id), claimed_at)
@@ -1028,12 +1166,32 @@ async def _fail_queued_items_locked(
         ).all()
         if claimed_at is not None
     ]
+    skipped = await session.execute(
+        update(SiteMetadataBackfillItem)
+        .where(
+            SiteMetadataBackfillItem.user_id == lease.user_id,
+            SiteMetadataBackfillItem.run_id == lease.run_id,
+            SiteMetadataBackfillItem.state == "queued",
+            SiteMetadataBackfillItem.attempt_count == 0,
+        )
+        .values(
+            state="skipped",
+            analysis_claimed_at=None,
+            lease_token_hash=None,
+            lease_expires_at=None,
+            available_at=None,
+            completed_at=now,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
     failed = await session.execute(
         update(SiteMetadataBackfillItem)
         .where(
             SiteMetadataBackfillItem.user_id == lease.user_id,
             SiteMetadataBackfillItem.run_id == lease.run_id,
             SiteMetadataBackfillItem.state == "queued",
+            SiteMetadataBackfillItem.attempt_count > 0,
         )
         .values(
             state="failed",
@@ -1046,6 +1204,7 @@ async def _fail_queued_items_locked(
         )
         .execution_options(synchronize_session=False)
     )
+    skipped_count = int(skipped.rowcount or 0)  # type: ignore[attr-defined]
     failed_count = int(failed.rowcount or 0)  # type: ignore[attr-defined]
     for site_id, claimed_at in abandoned_claims:
         await session.execute(
@@ -1058,21 +1217,56 @@ async def _fail_queued_items_locked(
             )
             .values(
                 analysis_status="not_analyzed",
+                analysis_phase=None,
                 analysis_updated_at=now,
                 updated_at=Site.updated_at,
             )
         )
-    if failed_count:
+    terminalized_count = skipped_count + failed_count
+    if terminalized_count:
         adjusted = await _adjust_run_counts(
             session,
             lease,
-            queued_delta=-failed_count,
+            queued_delta=-terminalized_count,
             failed_delta=failed_count,
+            skipped_delta=skipped_count,
         )
         if not adjusted:
             return None
     await _finish_run_if_terminal(session, lease, now=now)
-    return failed_count
+    return terminalized_count
+
+
+def _safe_retry_after_seconds(value: float | None) -> float | None:
+    if value is None:
+        return None
+    selected = float(value)
+    if not isfinite(selected) or selected < 0:
+        return None
+    return min(selected, float(MAX_SAFE_PROVIDER_RETRY_AFTER_SECONDS))
+
+
+def _validated_stop_reason(
+    *,
+    failed: bool | None,
+    stop_batch: bool,
+    failure_reason: str | None,
+) -> MetadataBackfillStopReason | None:
+    if failure_reason is not None and failure_reason not in _STOP_REASONS:
+        raise ValueError(f"unsupported metadata backfill stop reason: {failure_reason}")
+    if failed is False:
+        if stop_batch or failure_reason is not None:
+            raise ValueError("a successful Provider result cannot stop the batch")
+        return None
+    if failed is None and not stop_batch:
+        raise ValueError("a Provider signal must contain a result or stop request")
+
+    selected = failure_reason
+    if selected is None:
+        selected = "provider_unavailable" if stop_batch else "provider_temporary_failure"
+    if selected in {"provider_unavailable", "internal_error"} and not stop_batch:
+        raise ValueError(f"{selected} must stop the metadata backfill")
+    return cast(MetadataBackfillStopReason, selected)
 
 
 async def record_provider_result(
@@ -1082,6 +1276,8 @@ async def record_provider_result(
     *,
     failed: bool | None,
     stop_batch: bool = False,
+    failure_reason: str | None = None,
+    retry_after_seconds: float | None = None,
 ) -> bool | None:
     """Persist one model signal and return whether the run fuse is now set.
 
@@ -1091,23 +1287,32 @@ async def record_provider_result(
     atomically stops all queued work.
     """
 
-    if failed is None and not stop_batch:
-        raise ValueError("a Provider signal must contain a result or stop request")
+    selected_reason = _validated_stop_reason(
+        failed=failed,
+        stop_batch=stop_batch,
+        failure_reason=failure_reason,
+    )
+    safe_retry_after = _safe_retry_after_seconds(retry_after_seconds)
 
     now = utc_now()
-    current_item = select(SiteMetadataBackfillItem.id).where(
-        SiteMetadataBackfillItem.id == item.id,
-        SiteMetadataBackfillItem.user_id == lease.user_id,
-        SiteMetadataBackfillItem.run_id == lease.run_id,
-        SiteMetadataBackfillItem.state == "running",
-        SiteMetadataBackfillItem.lease_token_hash == item.token_hash,
-        SiteMetadataBackfillItem.attempt_count == item.attempt_count,
-        SiteMetadataBackfillItem.lease_expires_at >= now,
-    ).exists()
+    current_item = (
+        select(SiteMetadataBackfillItem.id)
+        .where(
+            SiteMetadataBackfillItem.id == item.id,
+            SiteMetadataBackfillItem.user_id == lease.user_id,
+            SiteMetadataBackfillItem.run_id == lease.run_id,
+            SiteMetadataBackfillItem.state == "running",
+            SiteMetadataBackfillItem.lease_token_hash == item.token_hash,
+            SiteMetadataBackfillItem.attempt_count == item.attempt_count,
+            SiteMetadataBackfillItem.lease_expires_at >= now,
+        )
+        .exists()
+    )
     values: dict[str, object]
     if stop_batch:
         values = {
             "stop_requested": True,
+            "stop_reason": selected_reason,
             "provider_retry_at": None,
             "updated_at": now,
         }
@@ -1122,6 +1327,7 @@ async def record_provider_result(
         values = {
             "consecutive_provider_failures": 0,
             "provider_retry_at": None,
+            "stop_reason": None,
             "updated_at": now,
         }
     recorded = await session.execute(
@@ -1160,6 +1366,8 @@ async def record_provider_result(
             PROVIDER_RETRY_BASE_SECONDS * (3 ** max(failure_count - 1, 0)),
             PROVIDER_RETRY_MAX_SECONDS,
         )
+        if safe_retry_after is not None:
+            cooldown_seconds = max(cooldown_seconds, safe_retry_after)
         cooled_down = await session.execute(
             update(SiteMetadataBackfillRun)
             .where(
@@ -1170,6 +1378,7 @@ async def record_provider_result(
             )
             .values(
                 stop_requested=stop_requested,
+                stop_reason=selected_reason if stop_requested else None,
                 provider_retry_at=now + timedelta(seconds=cooldown_seconds),
                 updated_at=now,
             )
@@ -1179,8 +1388,8 @@ async def record_provider_result(
             await session.rollback()
             return None
     if stop_requested:
-        failed_count = await _fail_queued_items_locked(session, lease, now=now)
-        if failed_count is None:
+        terminalized_count = await _fail_queued_items_locked(session, lease, now=now)
+        if terminalized_count is None:
             await session.rollback()
             return None
     await session.commit()
@@ -1203,7 +1412,7 @@ async def finish_item(
     if stop_requested is None:
         await session.rollback()
         return False
-    final_state = "failed" if stop_requested else state
+    final_state = state
     analysis_claimed_at = None
     if stop_requested:
         analysis_claimed_at = await session.scalar(
@@ -1265,6 +1474,7 @@ async def finish_item(
             )
             .values(
                 analysis_status="not_analyzed",
+                analysis_phase=None,
                 analysis_updated_at=now,
                 updated_at=Site.updated_at,
             )
@@ -1341,9 +1551,7 @@ async def release_run_lease(
         .values(
             state="failed" if stop_requested else "queued",
             analysis_claimed_at=(
-                None
-                if stop_requested
-                else SiteMetadataBackfillItem.analysis_claimed_at
+                None if stop_requested else SiteMetadataBackfillItem.analysis_claimed_at
             ),
             lease_token_hash=None,
             lease_expires_at=None,
@@ -1359,9 +1567,7 @@ async def release_run_lease(
         lease,
         running_delta=-released_count,
         **(
-            {"failed_delta": released_count}
-            if stop_requested
-            else {"queued_delta": released_count}
+            {"failed_delta": released_count} if stop_requested else {"queued_delta": released_count}
         ),
     ):
         await session.rollback()
@@ -1378,6 +1584,7 @@ async def release_run_lease(
                 )
                 .values(
                     analysis_status="not_analyzed",
+                    analysis_phase=None,
                     analysis_updated_at=now,
                     updated_at=Site.updated_at,
                 )
@@ -1405,10 +1612,15 @@ async def release_run_lease(
 
 
 __all__ = [
+    "MAX_FULL_BACKFILL_LIMIT",
+    "MAX_METADATA_BACKFILL_LIMIT",
     "MetadataBackfillItemClaim",
+    "MetadataBackfillMode",
+    "MetadataBackfillPlan",
     "MetadataBackfillProgress",
     "MetadataBackfillRunLease",
     "MetadataBackfillStart",
+    "MetadataBackfillStopReason",
     "ITEM_LEASE_HEARTBEAT_SECONDS",
     "active_metadata_backfill",
     "acquire_run_lease",
@@ -1418,6 +1630,8 @@ __all__ = [
     "item_execution_intent",
     "lease_retry_delay",
     "list_active_runs",
+    "metadata_backfill_limit",
+    "plan_metadata_backfill",
     "progress_for_run",
     "record_item_site_claim",
     "record_provider_result",

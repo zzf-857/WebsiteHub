@@ -22,6 +22,7 @@ from webhub.config import Settings
 from webhub.db.database import Database
 from webhub.ingestion.enrichment import (
     MAX_NEW_SITE_TAGS,
+    MAX_PROVIDER_RETRY_AFTER_SECONDS,
     MAX_SITE_DESCRIPTION_CHARS,
     MAX_SITE_SUMMARY_CHARS,
     MAX_SITE_TAGS,
@@ -29,6 +30,7 @@ from webhub.ingestion.enrichment import (
     MIN_SITE_SUMMARY_CHARS,
     MIN_SITE_TAGS,
     SiteCategoryOption,
+    SiteEnrichmentFailureReason,
     SiteEnrichmentRequest,
     SiteEnrichmentResult,
     SiteEnrichmentUnavailableError,
@@ -45,7 +47,7 @@ from .provider_binding import (
     resolve_binding,
     resolve_optional_binding,
 )
-from .runner import AgentProviderError
+from .runner import AgentProviderError, AgentProviderTargetUnavailableError
 from .web_search import WebSearchResult, WebSearchUnavailableError, search_web
 
 SITE_ENRICHMENT_TIMEOUT_SECONDS = 55
@@ -74,8 +76,17 @@ _RETRYABLE_PROVIDER_ERRORS = frozenset(
         "GraphRecursionError",
         "InternalServerError",
         "RateLimitError",
+        "WebSearchUnavailableError",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ProviderFailurePolicy:
+    stop_batch: bool
+    provider_failure: bool
+    failure_reason: SiteEnrichmentFailureReason
+    retry_after_seconds: int | None = None
 
 _SYSTEM_PROMPT = """你是 WebHub 的网站资料规范化处理器。你只有四个站内工具，
 必须完成一次网站资料草稿：
@@ -273,7 +284,8 @@ class _SiteEnrichmentDraft:
         if not self.complete:
             raise SiteEnrichmentUnavailableError(
                 "模型没有完成分类、标签、简短摘要和详细介绍",
-                provider_failure=True,
+                stop_batch=True,
+                failure_reason="provider_unavailable",
             )
         assert self.category_id is not None
         assert self.existing_tag_ids is not None
@@ -471,12 +483,14 @@ async def _run_tool_graph(
         if len(calls) > MAX_MODEL_TOOL_CALLS_PER_ROUND:
             raise SiteEnrichmentUnavailableError(
                 "模型一次调用了过多站内工具",
-                provider_failure=True,
+                stop_batch=True,
+                failure_reason="provider_unavailable",
             )
         if not calls and not draft.complete:
             raise SiteEnrichmentUnavailableError(
                 "当前模型没有完成站内工具调用",
-                provider_failure=True,
+                stop_batch=True,
+                failure_reason="provider_unavailable",
             )
         return {"messages": [message]}
 
@@ -506,39 +520,99 @@ async def _run_tool_graph(
     return draft.result()
 
 
-def _provider_error_policy(error: BaseException) -> tuple[bool, bool]:
-    """Return (fatal, retryable_failure) without exposing vendor text."""
+def _bounded_retry_after_seconds(value: object) -> int | None:
+    """Accept only an HTTP delta-seconds value and cap hostile magnitudes."""
+
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate or not candidate.isascii() or not candidate.isdecimal():
+        return None
+    normalized = candidate.lstrip("0") or "0"
+    maximum = str(MAX_PROVIDER_RETRY_AFTER_SECONDS)
+    if len(normalized) > len(maximum) or (
+        len(normalized) == len(maximum) and normalized > maximum
+    ):
+        return MAX_PROVIDER_RETRY_AFTER_SECONDS
+    return max(1, int(normalized))
+
+
+def _retry_after_seconds(error: BaseException) -> int | None:
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return None
+    try:
+        value = getter("retry-after")
+        if value is None:
+            value = getter("Retry-After")
+    except Exception:  # noqa: BLE001 - untrusted SDK response wrapper
+        return None
+    return _bounded_retry_after_seconds(value)
+
+
+def _provider_error_policy(error: BaseException) -> _ProviderFailurePolicy:
+    """Classify a private exception tree without rendering any vendor value."""
 
     pending: list[BaseException] = [error]
     seen: set[int] = set()
+    saw_internal = False
+    saw_rate_limit = False
+    saw_unavailable = False
+    saw_temporary = False
+    retry_after_seconds: int | None = None
     while pending:
         current = pending.pop()
         if id(current) in seen:
             continue
         seen.add(id(current))
-        if isinstance(current, (NameError, NotImplementedError)):
-            return True, False
-        if type(current).__name__ in _BATCH_FATAL_PROVIDER_ERRORS:
-            return True, False
-        if type(current).__name__ in _RETRYABLE_PROVIDER_ERRORS:
-            return False, True
+        error_name = type(current).__name__
         response = getattr(current, "response", None)
         status_code = getattr(current, "status_code", None)
         if status_code is None and response is not None:
             status_code = getattr(response, "status_code", None)
-        if status_code in _BATCH_FATAL_PROVIDER_STATUSES:
-            return True, False
-        if status_code in {408, 409, 425, 429} or (
-            isinstance(status_code, int) and 500 <= status_code <= 599
+
+        if isinstance(current, NameError):
+            saw_internal = True
+        elif error_name == "RateLimitError" or status_code == 429:
+            saw_rate_limit = True
+            retry_after_seconds = retry_after_seconds or _retry_after_seconds(current)
+        elif isinstance(current, NotImplementedError) or (
+            error_name in _BATCH_FATAL_PROVIDER_ERRORS
+            or status_code in _BATCH_FATAL_PROVIDER_STATUSES
         ):
-            return False, True
+            saw_unavailable = True
+        elif (
+            isinstance(current, (TimeoutError, ConnectionError))
+            or error_name in _RETRYABLE_PROVIDER_ERRORS
+            or status_code in {408, 409, 425}
+            or (
+                isinstance(status_code, int) and 500 <= status_code <= 599
+            )
+        ):
+            saw_temporary = True
         for nested in (current.__cause__, current.__context__):
             if isinstance(nested, BaseException):
                 pending.append(nested)
-    # This branch is already inside a Provider invocation. Unknown vendor
-    # wrappers are treated as retryable and require a persisted consecutive
-    # failure threshold before the durable run is stopped.
-    return False, True
+        grouped = getattr(current, "exceptions", ())
+        if isinstance(grouped, tuple):
+            pending.extend(item for item in grouped if isinstance(item, BaseException))
+
+    if saw_internal:
+        return _ProviderFailurePolicy(True, False, "internal_error")
+    if saw_rate_limit:
+        return _ProviderFailurePolicy(
+            False,
+            True,
+            "provider_rate_limited",
+            retry_after_seconds,
+        )
+    if saw_unavailable:
+        return _ProviderFailurePolicy(True, False, "provider_unavailable")
+    if saw_temporary:
+        return _ProviderFailurePolicy(False, True, "provider_temporary_failure")
+    return _ProviderFailurePolicy(True, False, "internal_error")
 
 
 class AgentSiteEnricher:
@@ -583,9 +657,14 @@ class AgentSiteEnricher:
                 )
                 await session.rollback()
         except AgentProviderError as error:
+            temporary = isinstance(error, AgentProviderTargetUnavailableError)
             raise SiteEnrichmentUnavailableError(
                 error.safe_message,
-                stop_batch=True,
+                stop_batch=not temporary,
+                provider_failure=temporary,
+                failure_reason=(
+                    "provider_temporary_failure" if temporary else "provider_unavailable"
+                ),
             ) from error
 
         search_evidence: tuple[WebSearchResult, ...] = ()
@@ -608,9 +687,13 @@ class AgentSiteEnricher:
                     "site evidence search failed (%s)",
                     type(error).__name__,
                 )
+                policy = _provider_error_policy(error)
                 raise SiteEnrichmentUnavailableError(
                     "网页没有足够的公开文字内容，且联网搜索暂时不可用",
-                    provider_failure=True,
+                    stop_batch=policy.stop_batch,
+                    provider_failure=policy.provider_failure,
+                    failure_reason=policy.failure_reason,
+                    retry_after_seconds=policy.retry_after_seconds,
                 ) from error
             search_evidence = _matching_search_evidence(request, raw_search_evidence)
             if not search_evidence:
@@ -661,7 +744,10 @@ class AgentSiteEnricher:
                 )
             ):
                 return await _run_tool_graph(
-                    model=build_chat_model(model_binding),
+                    model=build_chat_model(
+                        model_binding,
+                        max_retries=0 if request.bulk else 1,
+                    ),
                     tools=tools,
                     draft=draft,
                     page_payload=_page_payload(
@@ -679,17 +765,20 @@ class AgentSiteEnricher:
             raise SiteEnrichmentUnavailableError(
                 "模型分析超时，请稍后重试",
                 provider_failure=True,
+                failure_reason="provider_temporary_failure",
             ) from error
         except Exception as error:  # noqa: BLE001 - never expose vendor text
             _LOGGER.warning(
                 "site enrichment provider call failed (%s)",
                 type(error).__name__,
             )
-            stop_batch, provider_failure = _provider_error_policy(error)
+            policy = _provider_error_policy(error)
             raise SiteEnrichmentUnavailableError(
                 "模型未能完成网站资料分析",
-                stop_batch=stop_batch,
-                provider_failure=provider_failure,
+                stop_batch=policy.stop_batch,
+                provider_failure=policy.provider_failure,
+                failure_reason=policy.failure_reason,
+                retry_after_seconds=policy.retry_after_seconds,
             ) from error
 
 

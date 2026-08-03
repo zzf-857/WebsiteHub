@@ -34,6 +34,7 @@ def test_bookmark_apply_prioritizes_a_small_fresh_slice_then_starts_backfill(
         created=2,
         skipped_existing=1,
         skipped_needs_review=0,
+        merged_candidates=0,
         failed=0,
     )
 

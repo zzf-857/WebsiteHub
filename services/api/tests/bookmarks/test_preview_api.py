@@ -7,14 +7,17 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, update
+from sqlalchemy import event, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.bookmarks import persistence
+from webhub.bookmarks import queries as bookmark_queries
+from webhub.bookmarks import routes as bookmark_routes
 from webhub.bookmarks.models import ParsedBookmark, ParsedFolder
 from webhub.config import Settings
 from webhub.db.database import Database
 from webhub.db.migrations import upgrade_database
-from webhub.db.models import BookmarkImportJob
+from webhub.db.models import BookmarkImportJob, Site
 from webhub.main import create_app
 
 COOKIE_NAME = "webhub_session"
@@ -147,6 +150,44 @@ def _events() -> list[ParsedFolder | ParsedBookmark]:
     ]
 
 
+def _similarity_events(
+    host: str = "example.com",
+    *,
+    additional_hosts: tuple[str, ...] = (),
+) -> list[ParsedFolder | ParsedBookmark]:
+    events: list[ParsedFolder | ParsedBookmark] = [
+        ParsedFolder(
+            source_folder_id=1,
+            parent_source_folder_id=None,
+            source_order=1,
+            source_sequence=1,
+            title="AI 工具",
+            folder_path=("AI 工具",),
+            depth=1,
+        ),
+    ]
+    for current_host in (host, *additional_hosts):
+        for path, title in (
+            ("/", "Example home"),
+            ("/docs", "Example docs"),
+            ("/pricing?ref=bookmark", "Example pricing"),
+        ):
+            position = len(events)
+            events.append(
+                ParsedBookmark(
+                    position=position,
+                    source_sequence=position + 1,
+                    raw_url=f"https://{current_host}{path}",
+                    title=title,
+                    folder_path=("AI 工具",),
+                    source_folder_id=1,
+                    add_date=None,
+                    last_modified=None,
+                )
+            )
+    return events
+
+
 def _source_digest(label: str) -> str:
     return hashlib.sha256(label.encode()).hexdigest()
 
@@ -231,6 +272,59 @@ async def _create_job(
         key=key,
     )
     return created.job_id, preview.run_id, source_sha256
+
+
+async def _create_similarity_job(
+    database: Database,
+    user_id: str,
+    *,
+    key: str,
+    host: str = "example.com",
+    additional_hosts: tuple[str, ...] = (),
+) -> str:
+    source_sha256 = _source_digest(f"{user_id}:{key}")
+    async with database.sessions() as session:
+        created = await persistence.create_import(
+            session,
+            user_id,
+            source_sha256=source_sha256,
+            source_size_bytes=1_024,
+            original_filename=f"{key}.html",
+            idempotency_key=f"upload-similarity-{key}-request",
+        )
+    async with database.sessions() as session:
+        run = await persistence.begin_parse_run(
+            session,
+            user_id,
+            created.job_id,
+            expected_job_version=1,
+            idempotency_key=f"parse-similarity-{key}-request",
+        )
+    events = _similarity_events(host, additional_hosts=additional_hosts)
+    async with database.sessions() as session:
+        await persistence.append_parse_chunk(
+            session,
+            user_id,
+            created.job_id,
+            run.run_id,
+            chunk_index=0,
+            events=events,
+        )
+    async with database.sessions() as session:
+        await persistence.finalize_parse_run(
+            session,
+            user_id,
+            created.job_id,
+            run.run_id,
+            expected_job_version=2,
+            completion=persistence.ParseCompletion(
+                source_sha256=source_sha256,
+                source_sequence_count=len(events),
+                folder_count=1,
+                occurrence_count=len(events) - 1,
+            ),
+        )
+    return created.job_id
 
 
 @pytest.fixture
@@ -405,6 +499,16 @@ def test_preview_summary_and_rows_expose_only_the_safe_read_contract(
         },
         "metadata_only_candidate_count": 1,
         "sensitive_candidate_count": 1,
+        "decision_version": 1,
+        "similarity_cluster_count": 0,
+        "similarity_candidate_count": 0,
+        "similarity_decision_counts": {
+            "unresolved": 0,
+            "merge_to_homepage": 0,
+            "keep_originals": 0,
+        },
+        "selected_merge_reduction_count": 0,
+        "projected_create_count": 2,
     }
 
     folders = client.get(f"{base}/folders").json()["items"]
@@ -651,3 +755,437 @@ def test_preview_cursor_expires_when_preview_version_changes_without_a_run_switc
     assert summary.status_code == 200
     assert summary.json()["run_id"] == environment.alice_run_id
     assert summary.json()["preview_version"] == 2
+
+
+def test_similarity_cluster_numbered_pagination_stays_on_page_after_decision(
+    preview_environment: PreviewEnvironment,
+) -> None:
+    environment = preview_environment
+    client = environment.client
+    database = Database(environment.database_url)
+
+    try:
+        job_id = asyncio.run(
+            _create_similarity_job(
+                database,
+                environment.alice_id,
+                key="similarity-pagination",
+                additional_hosts=("second.example",),
+            )
+        )
+        base = f"/api/bookmark-imports/{job_id}"
+        _use_token(client, environment.alice_token)
+
+        first_page = client.get(
+            f"{base}/preview/similarity-clusters",
+            params={"limit": 1, "page": 1},
+        )
+        assert first_page.status_code == 200, first_page.text
+        assert first_page.json()["page"] == 1
+        assert first_page.json()["page_size"] == 1
+        assert first_page.json()["total_count"] == 2
+        assert first_page.json()["total_pages"] == 2
+        assert first_page.json()["next_cursor"] is not None
+
+        cursor_page = client.get(
+            f"{base}/preview/similarity-clusters",
+            params={"limit": 1, "cursor": first_page.json()["next_cursor"]},
+        )
+        assert cursor_page.status_code == 200, cursor_page.text
+        assert cursor_page.json()["page"] == 2
+
+        second_page = client.get(
+            f"{base}/preview/similarity-clusters",
+            params={"limit": 1, "page": 2},
+        )
+        assert second_page.status_code == 200, second_page.text
+        second_payload = second_page.json()
+        assert second_payload["page"] == 2
+        assert second_payload["next_cursor"] is None
+        second_cluster = second_payload["items"][0]
+
+        mixed_pagination = client.get(
+            f"{base}/preview/similarity-clusters",
+            params={"limit": 1, "page": 2, "cursor": first_page.json()["next_cursor"]},
+        )
+        assert mixed_pagination.status_code == 422, mixed_pagination.text
+
+        decided = client.put(
+            f"{base}/preview/similarity-clusters/{second_cluster['id']}/decision",
+            json={
+                "expected_job_version": 3,
+                "expected_decision_version": 1,
+                "decision": "merge_to_homepage",
+            },
+            headers=ORIGIN,
+        )
+        assert decided.status_code == 200, decided.text
+        assert decided.json()["decision_version"] == 2
+
+        refreshed_page = client.get(
+            f"{base}/preview/similarity-clusters",
+            params={"limit": 1, "page": 2},
+        )
+        assert refreshed_page.status_code == 200, refreshed_page.text
+        refreshed_payload = refreshed_page.json()
+        assert refreshed_payload["page"] == 2
+        assert refreshed_payload["total_pages"] == 2
+        assert refreshed_payload["items"][0]["id"] == second_cluster["id"]
+        assert refreshed_payload["items"][0]["decision"] == "merge_to_homepage"
+        assert refreshed_payload["decision_version"] == 2
+
+        filtered_page = client.get(
+            f"{base}/preview/similarity-clusters",
+            params={"limit": 1, "page": 1, "decision": "merge_to_homepage"},
+        )
+        assert filtered_page.status_code == 200, filtered_page.text
+        assert filtered_page.json()["total_count"] == 1
+        assert filtered_page.json()["total_pages"] == 1
+    finally:
+        asyncio.run(database.dispose())
+
+
+def test_similarity_decisions_gate_atomic_apply_and_are_account_scoped(
+    preview_environment: PreviewEnvironment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment = preview_environment
+    client = environment.client
+    database = Database(environment.database_url)
+    monkeypatch.setattr(
+        bookmark_routes.ingestion_worker,
+        "schedule_analysis",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        bookmark_routes.ingestion_worker,
+        "ensure_auto_backfill",
+        lambda *_args, **_kwargs: False,
+    )
+
+    try:
+        job_id = asyncio.run(
+            _create_similarity_job(
+                database,
+                environment.alice_id,
+                key="similarity-merge",
+            )
+        )
+        base = f"/api/bookmark-imports/{job_id}"
+
+        _use_token(client, environment.bob_token)
+        assert client.get(f"{base}/preview/similarity-clusters").status_code == 404
+
+        _use_token(client, environment.alice_token)
+        summary = client.get(f"{base}/preview").json()
+        assert summary["similarity_cluster_count"] == 1
+        assert summary["similarity_candidate_count"] == 3
+        assert summary["similarity_decision_counts"] == {
+            "unresolved": 1,
+            "merge_to_homepage": 0,
+            "keep_originals": 0,
+        }
+        assert summary["projected_create_count"] == 3
+
+        unresolved_apply = client.post(
+            f"{base}/apply",
+            json={"expected_job_version": 3, "expected_decision_version": 1},
+            headers=ORIGIN,
+        )
+        assert unresolved_apply.status_code == 409, unresolved_apply.text
+
+        cluster_page = client.get(
+            f"{base}/preview/similarity-clusters",
+            params={"limit": 1},
+        )
+        assert cluster_page.status_code == 200, cluster_page.text
+        cluster_payload = cluster_page.json()
+        assert cluster_payload["decision_version"] == 1
+        assert cluster_payload["next_cursor"] is None
+        assert cluster_payload["page"] == 1
+        assert cluster_payload["page_size"] == 1
+        assert cluster_payload["total_count"] == 1
+        assert cluster_payload["total_pages"] == 1
+        cluster = cluster_payload["items"][0]
+        assert cluster["candidate_count"] == 3
+        assert cluster["canonical"]["url"] == "https://example.com/"
+        assert cluster["decision"] is None
+
+        members = client.get(
+            f"{base}/preview/similarity-clusters/{cluster['id']}/members",
+            params={"limit": 2},
+        )
+        assert members.status_code == 200, members.text
+        assert len(members.json()["items"]) == 2
+        assert members.json()["next_cursor"] is not None
+
+        decided = client.put(
+            f"{base}/preview/similarity-clusters/{cluster['id']}/decision",
+            json={
+                "expected_job_version": 3,
+                "expected_decision_version": 1,
+                "decision": "merge_to_homepage",
+            },
+            headers=ORIGIN,
+        )
+        assert decided.status_code == 200, decided.text
+        assert decided.json()["decision_version"] == 2
+        assert decided.json()["similarity_decision_counts"]["unresolved"] == 0
+        assert decided.json()["selected_merge_reduction_count"] == 2
+        assert decided.json()["projected_create_count"] == 1
+
+        stale_decision = client.put(
+            f"{base}/preview/similarity-clusters/{cluster['id']}/decision",
+            json={
+                "expected_job_version": 3,
+                "expected_decision_version": 1,
+                "decision": "keep_originals",
+            },
+            headers=ORIGIN,
+        )
+        assert stale_decision.status_code == 409, stale_decision.text
+
+        stale_apply = client.post(
+            f"{base}/apply",
+            json={"expected_job_version": 3, "expected_decision_version": 1},
+            headers=ORIGIN,
+        )
+        assert stale_apply.status_code == 409, stale_apply.text
+
+        applied = client.post(
+            f"{base}/apply",
+            json={"expected_job_version": 3, "expected_decision_version": 2},
+            headers=ORIGIN,
+        )
+        assert applied.status_code == 200, applied.text
+        assert applied.json() == {
+            "job_id": job_id,
+            "state": "completed",
+            "job_version": 4,
+            "total_candidates": 3,
+            "created": 1,
+            "skipped_existing": 0,
+            "skipped_needs_review": 0,
+            "merged_candidates": 2,
+            "failed": 0,
+        }
+        replay = client.post(
+            f"{base}/apply",
+            json={"expected_job_version": 4, "expected_decision_version": 2},
+            headers=ORIGIN,
+        )
+        assert replay.status_code == 409, replay.text
+
+        originals_job_id = asyncio.run(
+            _create_similarity_job(
+                database,
+                environment.alice_id,
+                key="similarity-originals",
+                host="originals.example",
+            )
+        )
+        originals_base = f"/api/bookmark-imports/{originals_job_id}"
+        kept = client.post(
+            f"{originals_base}/preview/similarity-decisions/keep-originals",
+            json={
+                "expected_job_version": 3,
+                "expected_decision_version": 1,
+                "decision": "keep_originals",
+            },
+            headers=ORIGIN,
+        )
+        assert kept.status_code == 200, kept.text
+        assert kept.json()["decision_version"] == 2
+        assert kept.json()["similarity_decision_counts"] == {
+            "unresolved": 0,
+            "merge_to_homepage": 0,
+            "keep_originals": 1,
+        }
+        originals_apply = client.post(
+            f"{originals_base}/apply",
+            json={"expected_job_version": 3, "expected_decision_version": 2},
+            headers=ORIGIN,
+        )
+        assert originals_apply.status_code == 200, originals_apply.text
+        assert originals_apply.json()["created"] == 3
+        assert originals_apply.json()["merged_candidates"] == 0
+
+        async def imported_urls() -> list[str]:
+            async with database.sessions() as session:
+                return list(
+                    (
+                        await session.scalars(
+                            select(Site.identity_url)
+                            .where(
+                                Site.user_id == environment.alice_id,
+                                Site.identity_url.in_(
+                                    (
+                                        "https://example.com/",
+                                        "https://example.com/docs",
+                                        "https://example.com/pricing?ref=bookmark",
+                                    )
+                                ),
+                            )
+                            .order_by(Site.identity_url)
+                        )
+                    ).all()
+                )
+
+        assert asyncio.run(imported_urls()) == ["https://example.com/"]
+    finally:
+        asyncio.run(database.dispose())
+
+
+def test_apply_failure_rolls_back_library_and_job_claim(
+    preview_environment: PreviewEnvironment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment = preview_environment
+    client = environment.client
+    database = Database(environment.database_url)
+    _use_token(client, environment.alice_token)
+
+    try:
+        job_id = asyncio.run(
+            _create_similarity_job(
+                database,
+                environment.alice_id,
+                key="similarity-rollback",
+                host="rollback.example",
+            )
+        )
+        resolved = client.post(
+            f"/api/bookmark-imports/{job_id}/preview/similarity-decisions/keep-originals",
+            json={
+                "expected_job_version": 3,
+                "expected_decision_version": 1,
+                "decision": "keep_originals",
+            },
+            headers=ORIGIN,
+        )
+        assert resolved.status_code == 200, resolved.text
+
+        async def fail_after_library_write(
+            session: AsyncSession,
+            user_id: str,
+            _run_id: str,
+        ) -> None:
+            site = await session.scalar(
+                select(Site).where(
+                    Site.user_id == user_id,
+                    Site.identity_url == "https://example.com/shared?q=1#keep",
+                )
+            )
+            assert site is not None
+            site.name = "must be rolled back"
+            await session.flush()
+            raise RuntimeError("injected apply failure")
+
+        monkeypatch.setattr(bookmark_queries, "apply_candidates", fail_after_library_write)
+
+        async def scenario() -> None:
+            async with database.sessions() as session:
+                with pytest.raises(RuntimeError, match="injected apply failure"):
+                    await bookmark_queries.apply_import(
+                        session,
+                        environment.alice_id,
+                        job_id,
+                        expected_job_version=3,
+                        expected_decision_version=2,
+                    )
+            async with database.sessions() as session:
+                job = await session.scalar(
+                    select(BookmarkImportJob).where(
+                        BookmarkImportJob.user_id == environment.alice_id,
+                        BookmarkImportJob.id == job_id,
+                    )
+                )
+                site_name = await session.scalar(
+                    select(Site.name).where(
+                        Site.user_id == environment.alice_id,
+                        Site.identity_url == "https://example.com/shared?q=1#keep",
+                    )
+                )
+            assert job is not None
+            assert (job.state, job.version) == ("parse_preview_ready", 3)
+            assert site_name == "Existing shared bookmark"
+
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.dispose())
+
+
+def test_concurrent_apply_claim_allows_only_one_commit(
+    preview_environment: PreviewEnvironment,
+) -> None:
+    environment = preview_environment
+    client = environment.client
+    database = Database(environment.database_url)
+    _use_token(client, environment.alice_token)
+
+    try:
+        job_id = asyncio.run(
+            _create_similarity_job(
+                database,
+                environment.alice_id,
+                key="similarity-concurrent",
+                host="concurrent.example",
+            )
+        )
+        resolved = client.post(
+            f"/api/bookmark-imports/{job_id}/preview/similarity-decisions/keep-originals",
+            json={
+                "expected_job_version": 3,
+                "expected_decision_version": 1,
+                "decision": "keep_originals",
+            },
+            headers=ORIGIN,
+        )
+        assert resolved.status_code == 200, resolved.text
+
+        async def apply_once() -> object:
+            async with database.sessions() as session:
+                return await bookmark_queries.apply_import(
+                    session,
+                    environment.alice_id,
+                    job_id,
+                    expected_job_version=3,
+                    expected_decision_version=2,
+                )
+
+        async def scenario() -> list[object]:
+            return list(
+                await asyncio.gather(
+                    apply_once(),
+                    apply_once(),
+                    return_exceptions=True,
+                )
+            )
+
+        results = asyncio.run(scenario())
+        successes = [result for result in results if not isinstance(result, BaseException)]
+        conflicts = [
+            result
+            for result in results
+            if isinstance(result, persistence.BookmarkPersistenceConflictError)
+        ]
+        assert len(successes) == 1
+        assert len(conflicts) == 1
+        assert successes[0].created == 3
+
+        async def created_count() -> int:
+            async with database.sessions() as session:
+                return len(
+                    (
+                        await session.scalars(
+                            select(Site.id).where(
+                                Site.user_id == environment.alice_id,
+                                Site.identity_url.like("https://concurrent.example/%"),
+                            )
+                        )
+                    ).all()
+                )
+
+        assert asyncio.run(created_count()) == 3
+    finally:
+        asyncio.run(database.dispose())

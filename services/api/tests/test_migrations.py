@@ -23,6 +23,10 @@ BOOKMARK_TABLES = {
     "bookmark_import_snapshots",
     "bookmark_source_folders",
     "bookmark_source_occurrences",
+    "bookmark_similarity_cluster_members",
+    "bookmark_similarity_clusters",
+    "bookmark_similarity_decision_states",
+    "bookmark_similarity_decisions",
     "bookmark_staging_candidate_folders",
     "bookmark_staging_candidate_occurrences",
     "bookmark_staging_candidate_site_matches",
@@ -37,6 +41,10 @@ _TERMINAL_PARSE_FACT_TABLES = (
     "bookmark_staging_candidate_occurrences",
     "bookmark_staging_candidate_folders",
 )
+_TERMINAL_SIMILARITY_PROJECTION_TABLES = (
+    "bookmark_similarity_clusters",
+    "bookmark_similarity_cluster_members",
+)
 BOOKMARK_TRIGGERS = {
     "bookmark_import_runs_terminal_immutable",
     "bookmark_import_current_run_insert_complete",
@@ -50,6 +58,10 @@ BOOKMARK_TRIGGERS = {
 } | {
     f"{table_name}_terminal_{operation}"
     for table_name in _TERMINAL_PARSE_FACT_TABLES
+    for operation in ("insert", "update", "delete")
+} | {
+    f"{table_name}_terminal_{operation}"
+    for table_name in _TERMINAL_SIMILARITY_PROJECTION_TABLES
     for operation in ("insert", "update", "delete")
 }
 
@@ -152,7 +164,10 @@ def bookmark_candidate_trigger_database(
         "running_candidate": "candidate-running",
         "finalizing_candidate": "candidate-finalizing",
         "complete_candidate": "candidate-complete",
+        "complete_extra_candidate": "candidate-complete-extra",
         "finalizing_folder": "folder-finalizing",
+        "finalizing_similarity_cluster": "cluster-finalizing",
+        "complete_similarity_cluster": "cluster-complete",
     }
     connection = sqlite3.connect(database_path)
     connection.execute("PRAGMA foreign_keys = ON")
@@ -210,6 +225,10 @@ def bookmark_candidate_trigger_database(
             ('candidate-complete', 'user', 'run-complete', 'https://complete.example/',
              printf('%064d', 11), 'Complete title', 'complete.example',
              'public_revalidation_required', 0, 'create', 1, 1,
+             '2026-07-26 00:00:00+00:00'),
+            ('candidate-complete-extra', 'user', 'run-complete',
+             'https://complete.example/docs', printf('%064d', 14), 'Complete docs',
+             'complete.example', 'public_revalidation_required', 0, 'create', 1, 2,
              '2026-07-26 00:00:00+00:00');
         INSERT INTO bookmark_staging_folders(
             id, user_id, run_id, source_folder_key, source_sequence, source_order, depth, title,
@@ -225,6 +244,27 @@ def bookmark_candidate_trigger_database(
             'user', 'run-finalizing', 'candidate-finalizing', 'folder-finalizing',
             'folder-finalizing', 1, 1
         );
+        INSERT INTO bookmark_similarity_clusters(
+            id, user_id, run_id, site_key, ruleset_version, display_host,
+            canonical_candidate_id, canonical_url, canonical_title, canonical_source,
+            confidence, reason_codes_json, candidate_count, occurrence_count,
+            keep_original_create_count, merge_create_count, first_source_sequence, created_at
+        ) VALUES
+            ('cluster-finalizing', 'user', 'run-finalizing', 'finalizing.example',
+             'bookmark-similarity.v1', 'finalizing.example', 'candidate-finalizing',
+             'https://finalizing.example/', 'Finalizing title', 'imported_homepage', 'high',
+             '["same_site_authority"]', 2, 2, 2, 1, 1,
+             '2026-07-26 00:00:00+00:00'),
+            ('cluster-complete', 'user', 'run-complete', 'complete.example',
+             'bookmark-similarity.v1', 'complete.example', 'candidate-complete',
+             'https://complete.example/', 'Complete title', 'imported_homepage', 'high',
+             '["same_site_authority"]', 2, 2, 2, 1, 1,
+             '2026-07-26 00:00:00+00:00');
+        INSERT INTO bookmark_similarity_cluster_members(
+            user_id, run_id, cluster_id, candidate_id, first_source_sequence, is_canonical
+        ) VALUES
+            ('user', 'run-finalizing', 'cluster-finalizing', 'candidate-finalizing', 1, 1),
+            ('user', 'run-complete', 'cluster-complete', 'candidate-complete', 1, 1);
         UPDATE bookmark_import_runs
         SET state = 'finalizing', completion_hash = printf('%064d', 12)
         WHERE id = 'run-finalizing';
@@ -613,3 +653,351 @@ def test_complete_candidate_allows_only_display_and_action_review(
             (candidate_id,),
         )
     connection.rollback()
+
+
+def test_finalizing_similarity_projection_can_be_rebuilt(
+    bookmark_candidate_trigger_database: tuple[sqlite3.Connection, dict[str, str]],
+) -> None:
+    connection, ids = bookmark_candidate_trigger_database
+    cluster_id = ids["finalizing_similarity_cluster"]
+
+    connection.execute(
+        "UPDATE bookmark_similarity_clusters SET reason_codes_json = ? WHERE id = ?",
+        ('["same_site_authority","homepage_and_subpages"]', cluster_id),
+    )
+    connection.execute(
+        "DELETE FROM bookmark_similarity_cluster_members WHERE cluster_id = ?",
+        (cluster_id,),
+    )
+    connection.execute(
+        "DELETE FROM bookmark_similarity_clusters WHERE id = ?",
+        (cluster_id,),
+    )
+    connection.execute(
+        "INSERT INTO bookmark_similarity_clusters("
+        "id, user_id, run_id, site_key, ruleset_version, display_host, "
+        "canonical_candidate_id, canonical_url, canonical_title, canonical_source, "
+        "confidence, reason_codes_json, candidate_count, occurrence_count, "
+        "keep_original_create_count, merge_create_count, first_source_sequence, created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            cluster_id,
+            ids["user"],
+            ids["finalizing_run"],
+            "finalizing.example",
+            "bookmark-similarity.v1",
+            "finalizing.example",
+            ids["finalizing_candidate"],
+            "https://finalizing.example/",
+            "Rebuilt title",
+            "imported_homepage",
+            "high",
+            '["same_site_authority"]',
+            2,
+            2,
+            2,
+            1,
+            1,
+            "2026-07-26 00:00:00+00:00",
+        ),
+    )
+    connection.execute(
+        "INSERT INTO bookmark_similarity_cluster_members("
+        "user_id, run_id, cluster_id, candidate_id, first_source_sequence, is_canonical"
+        ") VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            ids["user"],
+            ids["finalizing_run"],
+            cluster_id,
+            ids["finalizing_candidate"],
+            1,
+            1,
+        ),
+    )
+    connection.commit()
+
+    assert connection.execute(
+        "SELECT canonical_title FROM bookmark_similarity_clusters WHERE id = ?",
+        (cluster_id,),
+    ).fetchone() == ("Rebuilt title",)
+
+
+def test_complete_similarity_projection_rejects_every_structural_mutation(
+    bookmark_candidate_trigger_database: tuple[sqlite3.Connection, dict[str, str]],
+) -> None:
+    connection, ids = bookmark_candidate_trigger_database
+    cluster_id = ids["complete_similarity_cluster"]
+    mutations: tuple[tuple[str, tuple[object, ...]], ...] = (
+        (
+            "INSERT INTO bookmark_similarity_clusters("
+            "id, user_id, run_id, site_key, ruleset_version, display_host, "
+            "canonical_candidate_id, canonical_url, canonical_title, canonical_source, "
+            "confidence, reason_codes_json, candidate_count, occurrence_count, "
+            "keep_original_create_count, merge_create_count, first_source_sequence, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "late-complete-cluster",
+                ids["user"],
+                ids["complete_run"],
+                "late.complete.example",
+                "bookmark-similarity.v1",
+                "complete.example",
+                ids["complete_extra_candidate"],
+                "https://complete.example/docs",
+                "Late cluster",
+                "imported_homepage",
+                "medium",
+                '["same_site_authority"]',
+                2,
+                2,
+                2,
+                1,
+                2,
+                "2026-07-26 00:00:00+00:00",
+            ),
+        ),
+        (
+            "UPDATE bookmark_similarity_clusters SET confidence = 'low' WHERE id = ?",
+            (cluster_id,),
+        ),
+        (
+            "DELETE FROM bookmark_similarity_clusters WHERE id = ?",
+            (cluster_id,),
+        ),
+        (
+            "INSERT INTO bookmark_similarity_cluster_members("
+            "user_id, run_id, cluster_id, candidate_id, first_source_sequence, is_canonical"
+            ") VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                ids["user"],
+                ids["complete_run"],
+                cluster_id,
+                ids["complete_extra_candidate"],
+                2,
+                0,
+            ),
+        ),
+        (
+            "UPDATE bookmark_similarity_cluster_members SET is_canonical = 0 "
+            "WHERE cluster_id = ?",
+            (cluster_id,),
+        ),
+        (
+            "DELETE FROM bookmark_similarity_cluster_members WHERE cluster_id = ?",
+            (cluster_id,),
+        ),
+    )
+
+    for statement, parameters in mutations:
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="terminal bookmark similarity projection is immutable",
+        ):
+            connection.execute(statement, parameters)
+        connection.rollback()
+
+
+def test_similarity_projection_update_checks_both_old_and_new_run_state(
+    bookmark_candidate_trigger_database: tuple[sqlite3.Connection, dict[str, str]],
+) -> None:
+    connection, ids = bookmark_candidate_trigger_database
+
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="terminal bookmark similarity projection is immutable",
+    ):
+        connection.execute(
+            "UPDATE bookmark_similarity_clusters "
+            "SET run_id = ?, site_key = ?, canonical_candidate_id = ?, canonical_url = ? "
+            "WHERE id = ?",
+            (
+                ids["finalizing_run"],
+                "moved-complete.example",
+                ids["finalizing_candidate"],
+                "https://finalizing.example/",
+                ids["complete_similarity_cluster"],
+            ),
+        )
+    connection.rollback()
+
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="terminal bookmark similarity projection is immutable",
+    ):
+        connection.execute(
+            "UPDATE bookmark_similarity_clusters "
+            "SET run_id = ?, site_key = ?, canonical_candidate_id = ?, canonical_url = ? "
+            "WHERE id = ?",
+            (
+                ids["complete_run"],
+                "moved-finalizing.example",
+                ids["complete_candidate"],
+                "https://complete.example/",
+                ids["finalizing_similarity_cluster"],
+            ),
+        )
+    connection.rollback()
+
+
+def test_similarity_decisions_remain_editable_after_projection_is_frozen(
+    bookmark_candidate_trigger_database: tuple[sqlite3.Connection, dict[str, str]],
+) -> None:
+    connection, ids = bookmark_candidate_trigger_database
+    timestamp = "2026-07-26 00:00:00+00:00"
+
+    connection.execute(
+        "INSERT INTO bookmark_similarity_decision_states("
+        "user_id, run_id, job_id, version, created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?)",
+        (ids["user"], ids["complete_run"], "job", 1, timestamp, timestamp),
+    )
+    connection.execute(
+        "INSERT INTO bookmark_similarity_decisions("
+        "user_id, run_id, cluster_id, decision, updated_at"
+        ") VALUES (?, ?, ?, ?, ?)",
+        (
+            ids["user"],
+            ids["complete_run"],
+            ids["complete_similarity_cluster"],
+            "keep_originals",
+            timestamp,
+        ),
+    )
+    connection.execute(
+        "UPDATE bookmark_similarity_decisions SET decision = ? "
+        "WHERE user_id = ? AND run_id = ? AND cluster_id = ?",
+        (
+            "merge_to_homepage",
+            ids["user"],
+            ids["complete_run"],
+            ids["complete_similarity_cluster"],
+        ),
+    )
+    connection.commit()
+
+    assert connection.execute(
+        "SELECT decision FROM bookmark_similarity_decisions WHERE cluster_id = ?",
+        (ids["complete_similarity_cluster"],),
+    ).fetchone() == ("merge_to_homepage",)
+
+
+def test_bounded_backfill_migration_repairs_only_unattempted_failures(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "backfill-migration.sqlite3"
+    database_url = f"sqlite+aiosqlite:///{database_path.as_posix()}"
+    config = create_alembic_config(database_url)
+    command.upgrade(config, "20260731_0015")
+    timestamp = "2026-07-31 06:00:00+00:00"
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            "INSERT INTO users(id, username, display_name, password_hash, is_active, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("user", "migration-user", "Migration User", "hash", 1, timestamp, timestamp),
+        )
+        connection.execute(
+            "INSERT INTO site_metadata_backfill_runs("
+            "id, user_id, state, total_count, queued_count, running_count, complete_count, "
+            "limited_count, failed_count, skipped_count, version, lease_token_hash, "
+            "lease_expires_at, heartbeat_at, stop_requested, consecutive_provider_failures, "
+            "provider_retry_at, created_at, updated_at, completed_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "run",
+                "user",
+                "completed_with_errors",
+                4,
+                0,
+                0,
+                0,
+                1,
+                2,
+                1,
+                1,
+                None,
+                None,
+                timestamp,
+                1,
+                3,
+                timestamp,
+                timestamp,
+                timestamp,
+                timestamp,
+            ),
+        )
+        rows = (
+            ("failed-unattempted", "failed", 0),
+            ("failed-attempted", "failed", 1),
+            ("limited-attempted", "limited", 1),
+            ("legitimate-skipped", "skipped", 0),
+        )
+        connection.executemany(
+            "INSERT INTO site_metadata_backfill_items("
+            "id, user_id, run_id, site_id, expected_version, initial_analysis_status, "
+            "requires_llm, origin_key, state, attempt_count, analysis_claimed_at, "
+            "lease_token_hash, lease_expires_at, available_at, created_at, updated_at, "
+            "completed_at"
+            ") VALUES (?, 'user', 'run', ?, 1, 'complete', 1, ?, ?, ?, NULL, NULL, "
+            "NULL, NULL, ?, ?, ?)",
+            [
+                (
+                    item_id,
+                    f"site-{item_id}",
+                    f"https://{item_id}.example",
+                    state,
+                    attempt_count,
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                )
+                for item_id, state, attempt_count in rows
+            ],
+        )
+        connection.commit()
+
+    command.upgrade(config, "20260731_0016")
+    with sqlite3.connect(database_path) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(site_metadata_backfill_runs)")
+        }
+        states = dict(
+            connection.execute(
+                "SELECT id, state FROM site_metadata_backfill_items ORDER BY id"
+            ).fetchall()
+        )
+        counters = connection.execute(
+            "SELECT total_count, limited_count, failed_count, skipped_count, mode, stop_reason "
+            "FROM site_metadata_backfill_runs WHERE id = 'run'"
+        ).fetchone()
+    assert {"mode", "stop_reason"}.issubset(columns)
+    assert states == {
+        "failed-attempted": "failed",
+        "failed-unattempted": "skipped",
+        "legitimate-skipped": "skipped",
+        "limited-attempted": "limited",
+    }
+    assert counters == (4, 1, 1, 2, "full", None)
+
+    command.downgrade(config, "20260731_0015")
+    with sqlite3.connect(database_path) as connection:
+        downgraded_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(site_metadata_backfill_runs)")
+        }
+        downgraded_states = dict(
+            connection.execute("SELECT id, state FROM site_metadata_backfill_items").fetchall()
+        )
+    assert "mode" not in downgraded_columns
+    assert "stop_reason" not in downgraded_columns
+    assert downgraded_states == states
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(database_path) as connection:
+        version_at_head = connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()
+    assert version_at_head is not None
+    assert {version_at_head[0]} == DATABASE_SCHEMA_HEADS

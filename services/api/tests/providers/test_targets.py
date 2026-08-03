@@ -84,6 +84,63 @@ def test_provider_target_identifies_proxy_fake_ip_without_allowing_it(
     assert "Clash/Mihomo" in raised.value.message
 
 
+def test_resource_target_identifies_proxy_fake_ip_for_safe_fetch_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        targets,
+        "_resolve",
+        lambda _hostname, _port: {ip_address("198.18.23.45")},
+    )
+
+    with pytest.raises(ProviderTargetError) as raised:
+        asyncio.run(
+            resolve_resource_target(
+                "https://www.example.com/page",
+                allow_private=False,
+                timeout_seconds=1,
+            )
+        )
+
+    assert raised.value.code == "resource_fake_ip_detected"
+    assert "真实公网地址" in raised.value.message
+
+
+@pytest.mark.parametrize(
+    ("url", "answers"),
+    (
+        ("https://198.18.23.45/page", None),
+        (
+            "https://mixed.example/page",
+            {ip_address("198.18.23.45"), ip_address("93.184.216.34")},
+        ),
+        (
+            "https://mixed.example/page",
+            {ip_address("198.18.23.45"), ip_address("127.0.0.1")},
+        ),
+    ),
+    ids=("direct-literal", "fake-plus-public", "fake-plus-private"),
+)
+def test_resource_fake_ip_fallback_requires_an_exclusive_dns_answer(
+    url: str,
+    answers: set[object] | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if answers is not None:
+        monkeypatch.setattr(targets, "_resolve", lambda _hostname, _port: answers)
+
+    with pytest.raises(ProviderTargetError) as raised:
+        asyncio.run(
+            resolve_resource_target(
+                url,
+                allow_private=False,
+                timeout_seconds=1,
+            )
+        )
+
+    assert raised.value.code == "unsafe_provider_target"
+
+
 def test_provider_base_url_parser_remains_strict_while_resource_parser_is_permissive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -21,6 +21,7 @@ import type {
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -189,6 +190,9 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
   const [webSaves, setWebSaves] = useState<Record<string, WebSaveState>>({});
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
+  const historyTriggerRef = useRef<HTMLButtonElement>(null);
+  const historyInitialFocusRef = useRef<"active" | "first" | "last">("active");
+  const commandPanelId = useId();
   // 历史项快速连点时的请求序号：只认最后一次点击的加载结果，防止旧响应覆盖新会话
   const openRequestRef = useRef(0);
   // 业务写入成功、会话 marker 失败时保留第二阶段；重试只补 marker，绝不重放业务写入。
@@ -463,7 +467,7 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     window.history.replaceState(null, "", url);
   }, [conversationId]);
 
-  // 历史下拉：点外部或按 Esc 关闭
+  // 历史下拉：点外部或按 Esc 关闭；键盘关闭时把焦点还给触发按钮。
   useEffect(() => {
     if (!historyOpen) return;
     const handlePointerDown = (event: PointerEvent) => {
@@ -476,7 +480,10 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
       }
     };
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setHistoryOpen(false);
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setHistoryOpen(false);
+      window.requestAnimationFrame(() => historyTriggerRef.current?.focus());
     };
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
@@ -485,6 +492,28 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [historyOpen]);
+
+  // 菜单数据可能在打开后才异步到达，因此在 ready 后再把焦点移入菜单。
+  useEffect(() => {
+    if (!historyOpen || historyStatus !== "ready") return;
+    const frame = window.requestAnimationFrame(() => {
+      const items = Array.from(
+        historyRef.current?.querySelectorAll<HTMLButtonElement>(
+          '[role="menuitem"]:not(:disabled)',
+        ) ?? [],
+      );
+      if (items.length === 0) return;
+      const preferred = historyInitialFocusRef.current;
+      const target = preferred === "last"
+        ? items[items.length - 1]
+        : preferred === "active"
+          ? items.find((item) => item.hasAttribute("data-active")) ?? items[0]
+          : items[0];
+      historyInitialFocusRef.current = "active";
+      target?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [historyGroups, historyOpen, historyStatus]);
 
   const normalizedInput = input.trimStart();
   const commandPanelOpen = normalizedInput.startsWith("/") && !normalizedInput.includes(" ");
@@ -714,8 +743,68 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
 
   const toggleHistory = () => {
     const next = !historyOpen;
+    if (next) historyInitialFocusRef.current = "active";
     setHistoryOpen(next);
     if (next) void refreshHistory();
+  };
+
+  const handleHistoryTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    historyInitialFocusRef.current = event.key === "ArrowUp" ? "last" : "first";
+    if (!historyOpen) {
+      setHistoryOpen(true);
+      void refreshHistory();
+    }
+  };
+
+  const handleHistoryMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setHistoryOpen(false);
+      window.requestAnimationFrame(() => historyTriggerRef.current?.focus());
+      return;
+    }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
+      const trigger = historyTriggerRef.current;
+      const menu = event.currentTarget;
+      const scope = trigger?.closest(".agent-panel-head");
+      const controls = Array.from(
+        scope?.querySelectorAll<HTMLElement>(
+          'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((element) => !menu.contains(element));
+      const triggerIndex = trigger ? controls.indexOf(trigger) : -1;
+      const offset = event.shiftKey ? -1 : 1;
+      const nextIndex = triggerIndex >= 0 && controls.length > 0
+        ? (triggerIndex + offset + controls.length) % controls.length
+        : -1;
+      setHistoryOpen(false);
+      window.requestAnimationFrame(() => {
+        if (nextIndex >= 0) controls[nextIndex]?.focus();
+        else trigger?.focus();
+      });
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]:not(:disabled)',
+      ),
+    );
+    if (items.length === 0) return;
+    event.preventDefault();
+    const currentIndex = items.findIndex((item) => item === document.activeElement);
+    let nextIndex = currentIndex;
+    if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = items.length - 1;
+    else if (event.key === "ArrowDown") nextIndex = currentIndex < items.length - 1 ? currentIndex + 1 : 0;
+    else nextIndex = currentIndex > 0 ? currentIndex - 1 : items.length - 1;
+    items[nextIndex]?.focus();
   };
 
   // 历史项刻意不用 <Link href="/?c=...">：Agent 已内嵌在首页，同路由下 Next 只更新
@@ -726,6 +815,7 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     (id: string) => {
       if (busy || draftWorkflowBusy) return;
       setHistoryOpen(false);
+      window.requestAnimationFrame(() => historyTriggerRef.current?.focus());
       if (id === conversationIdRef.current) return;
       // 清掉上一个会话的瞬态（阶段条 / 草稿 / 收录状态），避免串台
       clearError();
@@ -964,13 +1054,23 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     stageItems.push({ key: "thinking", label: "正在思考…", done: false });
   }
 
+  const activeCommandOptionId = commandPanelOpen && filteredCommands.length > 0
+    ? `${commandPanelId}-option-${commandIndex}`
+    : undefined;
   const commandPanel = commandPanelOpen ? (
-    <div className="agent-command-panel" role="listbox" aria-label="Slash 命令">
+    <div
+      className="agent-command-panel"
+      id={commandPanelId}
+      role="listbox"
+      aria-label="Slash 命令"
+    >
       {filteredCommands.length > 0 ? (
         filteredCommands.map((command, index) => (
           <button
             type="button"
             role="option"
+            id={`${commandPanelId}-option-${index}`}
+            tabIndex={-1}
             aria-selected={index === commandIndex}
             data-selected={index === commandIndex || undefined}
             key={command.name}
@@ -990,10 +1090,13 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
 
   return {
     activeToolCalls,
+    activeCommandOptionId,
     answerStreaming,
     applyPrompt,
     busy,
     commandPanel,
+    commandPanelId,
+    commandPanelOpen,
     conversationId,
     conversationStarted,
     draftStates,
@@ -1007,9 +1110,12 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     headerTime,
     headerTitle,
     historyGroups,
+    handleHistoryMenuKeyDown,
+    handleHistoryTriggerKeyDown,
     historyOpen,
     historyRef,
     historyStatus,
+    historyTriggerRef,
     input,
     messages,
     openConversation,

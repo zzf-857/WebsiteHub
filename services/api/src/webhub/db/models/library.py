@@ -141,6 +141,9 @@ class Site(Base):
     pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_analyzed")
+    # Short-lived workflow state for real progress UI. It is cleared whenever
+    # analysis reaches a terminal status and never changes the user version.
+    analysis_phase: Mapped[str | None] = mapped_column(String(32))
     # Analysis is derived data. Its lifecycle must not make an old bookmark look
     # recently edited, so it has a separate optimistic-claim timestamp.
     analysis_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

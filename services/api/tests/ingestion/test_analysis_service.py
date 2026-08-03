@@ -18,6 +18,7 @@ from webhub.db.database import Database
 from webhub.db.migrations import upgrade_database
 from webhub.ingestion import service as ingestion_service
 from webhub.ingestion import worker as ingestion_worker
+from webhub.ingestion.enrichment import SiteEnrichmentUnavailableError
 from webhub.ingestion.fetcher import FetchOutcome, SiteMetadata
 from webhub.ingestion.worker import AnalysisSchedule
 from webhub.library import service as library_service
@@ -227,6 +228,188 @@ def test_explicit_analysis_requires_an_enabled_model_provider(
         stored = client.get(f"/api/library/sites/{site['id']}")
         assert stored.status_code == 200, stored.text
         assert stored.json()["analysis_status"] == "not_analyzed"
+
+
+def test_enrichment_failure_details_reach_the_durable_provider_signal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_created_site_analysis(monkeypatch)
+    _stub_page(monkeypatch)
+
+    class RateLimitedEnricher:
+        async def enrich(self, _request: object):
+            raise SiteEnrichmentUnavailableError(
+                "模型请求过于频繁，请稍后重试",
+                provider_failure=True,
+                failure_reason="provider_rate_limited",
+                retry_after_seconds=77,
+            )
+
+    with _client(tmp_path) as client:
+        site = _site(client)
+        with sqlite3.connect(tmp_path / "main.sqlite3") as connection:
+            user_id = str(
+                connection.execute(
+                    "SELECT user_id FROM sites WHERE id = ?", (site["id"],)
+                ).fetchone()[0]
+            )
+
+        async def scenario() -> tuple[FetchOutcome, list[ingestion_service.AnalysisProviderSignal]]:
+            signals: list[ingestion_service.AnalysisProviderSignal] = []
+
+            async def record_signal(
+                _session: object,
+                signal: ingestion_service.AnalysisProviderSignal,
+            ) -> bool:
+                signals.append(signal)
+                return True
+
+            database = Database(
+                f"sqlite+aiosqlite:///{(tmp_path / 'main.sqlite3').as_posix()}"
+            )
+            try:
+                async with database.sessions() as session:
+                    outcome = await ingestion_service.analyze_site(
+                        session,
+                        user_id,
+                        str(site["id"]),
+                        bulk=True,
+                        use_llm=True,
+                        enricher=RateLimitedEnricher(),
+                        on_provider_signal=record_signal,  # type: ignore[arg-type]
+                    )
+                    assert outcome is not None
+                    return outcome, signals
+            finally:
+                await database.dispose()
+
+        outcome, signals = asyncio.run(scenario())
+
+    assert outcome.status == "limited"
+    assert signals == [
+        ingestion_service.AnalysisProviderSignal(
+            failed=True,
+            stop_batch=False,
+            failure_reason="provider_rate_limited",
+            retry_after_seconds=77,
+        )
+    ]
+
+
+def test_site_analysis_publishes_real_phases_and_clears_terminal_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_created_site_analysis(monkeypatch)
+    with _client(tmp_path) as client:
+        site = _site(client)
+        database_path = tmp_path / "main.sqlite3"
+        with sqlite3.connect(database_path) as connection:
+            user_id = str(
+                connection.execute(
+                    "SELECT user_id FROM sites WHERE id = ?", (site["id"],)
+                ).fetchone()[0]
+            )
+
+        async def scenario() -> tuple[str, str | None]:
+            fetch_started = asyncio.Event()
+            release_fetch = asyncio.Event()
+            enricher_started = asyncio.Event()
+            release_enricher = asyncio.Event()
+            saving_started = asyncio.Event()
+            release_saving = asyncio.Event()
+            model_capacity = asyncio.Semaphore(1)
+            await model_capacity.acquire()
+
+            async def delayed_fetch(_url: str, *, timeout_seconds: int) -> FetchOutcome:
+                assert timeout_seconds > 0
+                fetch_started.set()
+                await asyncio.wait_for(release_fetch.wait(), timeout=5)
+                return FetchOutcome(
+                    status="complete",
+                    reason="ok",
+                    metadata=SiteMetadata(
+                        description="页面中存在足够的公开说明，可用于验证真实分析阶段。",
+                        page_text="公开页面正文证据 " * 12,
+                    ),
+                )
+
+            class DelayedEnricher:
+                async def enrich(self, _request: object):
+                    enricher_started.set()
+                    await asyncio.wait_for(release_enricher.wait(), timeout=5)
+                    raise SiteEnrichmentUnavailableError("模型未返回可用结果")
+
+            real_apply_outcome = ingestion_service.apply_outcome
+
+            async def delayed_apply(*args: object, **kwargs: object) -> bool:
+                saving_started.set()
+                await asyncio.wait_for(release_saving.wait(), timeout=5)
+                return await real_apply_outcome(*args, **kwargs)  # type: ignore[arg-type]
+
+            def stored() -> tuple[str, str | None]:
+                with sqlite3.connect(database_path) as connection:
+                    row = connection.execute(
+                        "SELECT analysis_status, analysis_phase FROM sites WHERE id = ?",
+                        (site["id"],),
+                    ).fetchone()
+                assert row is not None
+                return str(row[0]), None if row[1] is None else str(row[1])
+
+            monkeypatch.setattr(ingestion_service, "fetch_site_metadata", delayed_fetch)
+            monkeypatch.setattr(ingestion_service, "apply_outcome", delayed_apply)
+            database = Database(
+                f"sqlite+aiosqlite:///{database_path.as_posix()}"
+            )
+            task: asyncio.Task[FetchOutcome | None] | None = None
+            try:
+                async with database.sessions() as session:
+                    task = asyncio.create_task(
+                        ingestion_service.analyze_site(
+                            session,
+                            user_id,
+                            str(site["id"]),
+                            use_llm=True,
+                            enricher=DelayedEnricher(),
+                            enrichment_semaphore=model_capacity,
+                        )
+                    )
+                    await asyncio.wait_for(fetch_started.wait(), timeout=5)
+                    assert stored() == ("pending", "fetching_page")
+
+                    release_fetch.set()
+                    for _ in range(100):
+                        if stored()[1] == "waiting_model":
+                            break
+                        await asyncio.sleep(0.01)
+                    assert stored() == ("pending", "waiting_model")
+
+                    model_capacity.release()
+                    await asyncio.wait_for(enricher_started.wait(), timeout=5)
+                    assert stored() == ("pending", "calling_model")
+
+                    release_enricher.set()
+                    await asyncio.wait_for(saving_started.wait(), timeout=5)
+                    assert stored() == ("pending", "saving_result")
+
+                    release_saving.set()
+                    outcome = await asyncio.wait_for(task, timeout=5)
+                    assert outcome is not None
+                    assert outcome.status == "limited"
+                    return stored()
+            finally:
+                release_fetch.set()
+                release_enricher.set()
+                release_saving.set()
+                if model_capacity.locked():
+                    model_capacity.release()
+                if task is not None and not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                await database.dispose()
+
+        assert asyncio.run(scenario()) == ("limited", None)
 
 
 def test_analysis_is_account_scoped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

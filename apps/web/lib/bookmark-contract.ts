@@ -58,15 +58,52 @@ export type BookmarkImportUpload = {
   sameSourceWarning: boolean;
 };
 
+export const BOOKMARK_SIMILARITY_DECISIONS = [
+  "merge_to_homepage",
+  "keep_originals",
+] as const;
+export type BookmarkSimilarityDecision = (typeof BOOKMARK_SIMILARITY_DECISIONS)[number];
+
+export const BOOKMARK_SIMILARITY_DECISION_FILTERS = [
+  "unresolved",
+  ...BOOKMARK_SIMILARITY_DECISIONS,
+] as const;
+export type BookmarkSimilarityDecisionFilter =
+  (typeof BOOKMARK_SIMILARITY_DECISION_FILTERS)[number];
+
+const BOOKMARK_SIMILARITY_CONFIDENCES = ["high", "medium", "low"] as const;
+export type BookmarkSimilarityConfidence =
+  (typeof BOOKMARK_SIMILARITY_CONFIDENCES)[number];
+
+const BOOKMARK_SIMILARITY_CANONICAL_SOURCES = [
+  "imported_homepage",
+  "derived_origin_root",
+  "existing_library",
+] as const;
+export type BookmarkSimilarityCanonicalSource =
+  (typeof BOOKMARK_SIMILARITY_CANONICAL_SOURCES)[number];
+
+export type BookmarkSimilarityDecisionCounts = {
+  unresolved: number;
+  mergeToHomepage: number;
+  keepOriginals: number;
+};
+
 export type BookmarkPreviewSummary = {
   jobId: string;
   runId: string;
   jobVersion: number;
+  decisionVersion: number;
   folderCount: number;
   occurrenceCount: number;
   candidateCount: number;
   duplicateOccurrenceCount: number;
   sensitiveCandidateCount: number;
+  similarityClusterCount: number;
+  similarityCandidateCount: number;
+  similarityDecisions: BookmarkSimilarityDecisionCounts;
+  selectedMergeReductionCount: number;
+  projectedCreateCount: number;
   actions: {
     create: number;
     skipExisting: number;
@@ -74,6 +111,62 @@ export type BookmarkPreviewSummary = {
     reject: number;
     needsReview: number;
   };
+};
+
+export type BookmarkSimilarityCanonical = {
+  candidateId: string | null;
+  url: string;
+  title: string;
+  source: BookmarkSimilarityCanonicalSource;
+};
+
+export type BookmarkSimilarityMember = {
+  candidateId: string;
+  title: string;
+  displayUrl: string;
+  occurrenceCount: number;
+  firstSourceSequence: number;
+  isCanonical: boolean;
+};
+
+export type BookmarkSimilarityCluster = {
+  id: string;
+  displayHost: string;
+  confidence: BookmarkSimilarityConfidence;
+  reasonCodes: string[];
+  candidateCount: number;
+  occurrenceCount: number;
+  firstSourceSequence: number;
+  decision: BookmarkSimilarityDecision | null;
+  canonical: BookmarkSimilarityCanonical;
+  sampleMembers: BookmarkSimilarityMember[];
+  hasMoreMembers: boolean;
+};
+
+export type BookmarkSimilarityClusterPage = {
+  items: BookmarkSimilarityCluster[];
+  nextCursor: string | null;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  decisionVersion: number;
+};
+
+export type BookmarkSimilarityMemberPage = {
+  items: BookmarkSimilarityMember[];
+  nextCursor: string | null;
+  decisionVersion: number;
+};
+
+export type BookmarkSimilarityDecisionResult = {
+  jobId: string;
+  runId: string;
+  jobVersion: number;
+  decisionVersion: number;
+  similarityDecisions: BookmarkSimilarityDecisionCounts;
+  selectedMergeReductionCount: number;
+  projectedCreateCount: number;
 };
 
 export type BookmarkImportResult = {
@@ -84,6 +177,7 @@ export type BookmarkImportResult = {
   created: number;
   skippedExisting: number;
   skippedNeedsReview: number;
+  mergedCandidates: number;
   failed: number;
 };
 
@@ -101,9 +195,105 @@ export class BookmarkContractError extends Error {
 const {
   record,
   text,
+  identifier,
+  boolean,
   count,
   version,
+  absoluteWebUrl,
+  literal,
 } = createContractGuards((message) => new BookmarkContractError(message));
+
+function nullableCursor(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  return text(value, path);
+}
+
+function normalizeSimilarityDecisionCountsAt(
+  value: unknown,
+  path: string,
+): BookmarkSimilarityDecisionCounts {
+  const candidate = record(value, path);
+  return {
+    unresolved: count(candidate.unresolved, `${path}.unresolved`),
+    mergeToHomepage: count(candidate.merge_to_homepage, `${path}.merge_to_homepage`),
+    keepOriginals: count(candidate.keep_originals, `${path}.keep_originals`),
+  };
+}
+
+function normalizeSimilarityMemberAt(
+  value: unknown,
+  path: string,
+): BookmarkSimilarityMember {
+  const candidate = record(value, path);
+  return {
+    candidateId: identifier(candidate.candidate_id, `${path}.candidate_id`),
+    title: text(candidate.title, `${path}.title`),
+    displayUrl: absoluteWebUrl(candidate.display_url, `${path}.display_url`),
+    occurrenceCount: count(candidate.occurrence_count, `${path}.occurrence_count`),
+    firstSourceSequence: count(
+      candidate.first_source_sequence,
+      `${path}.first_source_sequence`,
+    ),
+    isCanonical: boolean(candidate.is_canonical, `${path}.is_canonical`),
+  };
+}
+
+function normalizeSimilarityClusterAt(
+  value: unknown,
+  path: string,
+): BookmarkSimilarityCluster {
+  const candidate = record(value, path);
+  const canonical = record(candidate.canonical, `${path}.canonical`);
+  if (!Array.isArray(candidate.reason_codes)) {
+    throw new BookmarkContractError(`${path}.reason_codes 必须是数组`);
+  }
+  if (!Array.isArray(candidate.sample_members)) {
+    throw new BookmarkContractError(`${path}.sample_members 必须是数组`);
+  }
+  return {
+    id: identifier(candidate.id, `${path}.id`),
+    displayHost: text(candidate.display_host, `${path}.display_host`),
+    confidence: literal(
+      candidate.confidence,
+      `${path}.confidence`,
+      BOOKMARK_SIMILARITY_CONFIDENCES,
+    ),
+    reasonCodes: candidate.reason_codes.map((reason, index) =>
+      text(reason, `${path}.reason_codes[${index}]`),
+    ),
+    candidateCount: count(candidate.candidate_count, `${path}.candidate_count`),
+    occurrenceCount: count(candidate.occurrence_count, `${path}.occurrence_count`),
+    firstSourceSequence: count(
+      candidate.first_source_sequence,
+      `${path}.first_source_sequence`,
+    ),
+    decision:
+      candidate.decision === null
+        ? null
+        : literal(
+            candidate.decision,
+            `${path}.decision`,
+            BOOKMARK_SIMILARITY_DECISIONS,
+          ),
+    canonical: {
+      candidateId:
+        canonical.candidate_id === null
+          ? null
+          : identifier(canonical.candidate_id, `${path}.canonical.candidate_id`),
+      url: absoluteWebUrl(canonical.url, `${path}.canonical.url`),
+      title: text(canonical.title, `${path}.canonical.title`),
+      source: literal(
+        canonical.source,
+        `${path}.canonical.source`,
+        BOOKMARK_SIMILARITY_CANONICAL_SOURCES,
+      ),
+    },
+    sampleMembers: candidate.sample_members.map((member, index) =>
+      normalizeSimilarityMemberAt(member, `${path}.sample_members[${index}]`),
+    ),
+    hasMoreMembers: boolean(candidate.has_more_members, `${path}.has_more_members`),
+  };
+}
 
 export function normalizeBookmarkImportUpload(value: unknown): BookmarkImportUpload {
   const candidate = record(value, "bookmark_upload");
@@ -147,6 +337,10 @@ export function normalizeBookmarkPreviewSummary(value: unknown): BookmarkPreview
     jobId: text(candidate.job_id, "bookmark_preview.job_id"),
     runId: text(candidate.run_id, "bookmark_preview.run_id"),
     jobVersion: version(candidate.job_version, "bookmark_preview.job_version"),
+    decisionVersion: version(
+      candidate.decision_version,
+      "bookmark_preview.decision_version",
+    ),
     folderCount: count(candidate.folder_count, "bookmark_preview.folder_count"),
     occurrenceCount: count(candidate.occurrence_count, "bookmark_preview.occurrence_count"),
     candidateCount: count(candidate.candidate_count, "bookmark_preview.candidate_count"),
@@ -158,6 +352,26 @@ export function normalizeBookmarkPreviewSummary(value: unknown): BookmarkPreview
       candidate.sensitive_candidate_count,
       "bookmark_preview.sensitive_candidate_count",
     ),
+    similarityClusterCount: count(
+      candidate.similarity_cluster_count,
+      "bookmark_preview.similarity_cluster_count",
+    ),
+    similarityCandidateCount: count(
+      candidate.similarity_candidate_count,
+      "bookmark_preview.similarity_candidate_count",
+    ),
+    similarityDecisions: normalizeSimilarityDecisionCountsAt(
+      candidate.similarity_decision_counts,
+      "bookmark_preview.similarity_decision_counts",
+    ),
+    selectedMergeReductionCount: count(
+      candidate.selected_merge_reduction_count,
+      "bookmark_preview.selected_merge_reduction_count",
+    ),
+    projectedCreateCount: count(
+      candidate.projected_create_count,
+      "bookmark_preview.projected_create_count",
+    ),
     actions: {
       create: count(actions.create, "bookmark_preview.actions.create"),
       skipExisting: count(actions.skip_existing, "bookmark_preview.actions.skip_existing"),
@@ -168,6 +382,99 @@ export function normalizeBookmarkPreviewSummary(value: unknown): BookmarkPreview
       reject: count(actions.reject, "bookmark_preview.actions.reject"),
       needsReview: count(actions.needs_review, "bookmark_preview.actions.needs_review"),
     },
+  };
+}
+
+export function normalizeBookmarkSimilarityClusterPage(
+  value: unknown,
+): BookmarkSimilarityClusterPage {
+  const candidate = record(value, "bookmark_similarity_clusters");
+  if (!Array.isArray(candidate.items)) {
+    throw new BookmarkContractError("bookmark_similarity_clusters.items 必须是数组");
+  }
+  const items = candidate.items.map((item, index) =>
+    normalizeSimilarityClusterAt(item, `bookmark_similarity_clusters.items[${index}]`),
+  );
+  const nextCursor = nullableCursor(
+    candidate.next_cursor,
+    "bookmark_similarity_clusters.next_cursor",
+  );
+  const page = version(candidate.page, "bookmark_similarity_clusters.page");
+  const pageSize = version(candidate.page_size, "bookmark_similarity_clusters.page_size");
+  const totalCount = count(candidate.total_count, "bookmark_similarity_clusters.total_count");
+  const totalPages = count(candidate.total_pages, "bookmark_similarity_clusters.total_pages");
+  const expectedTotalPages = totalCount === 0 ? 0 : Math.ceil(totalCount / pageSize);
+  if (pageSize > 50 || totalPages !== expectedTotalPages || page > Math.max(totalPages, 1)) {
+    throw new BookmarkContractError("bookmark_similarity_clusters 的页码元数据不一致");
+  }
+  if (
+    items.length > pageSize
+    || items.length > totalCount
+    || (totalCount === 0 && nextCursor !== null)
+    || (page === totalPages && nextCursor !== null)
+  ) {
+    throw new BookmarkContractError("bookmark_similarity_clusters 的分页内容超出范围");
+  }
+  return {
+    items,
+    nextCursor,
+    page,
+    pageSize,
+    totalCount,
+    totalPages,
+    decisionVersion: version(
+      candidate.decision_version,
+      "bookmark_similarity_clusters.decision_version",
+    ),
+  };
+}
+
+export function normalizeBookmarkSimilarityMemberPage(
+  value: unknown,
+): BookmarkSimilarityMemberPage {
+  const candidate = record(value, "bookmark_similarity_members");
+  if (!Array.isArray(candidate.items)) {
+    throw new BookmarkContractError("bookmark_similarity_members.items 必须是数组");
+  }
+  return {
+    items: candidate.items.map((item, index) =>
+      normalizeSimilarityMemberAt(item, `bookmark_similarity_members.items[${index}]`),
+    ),
+    nextCursor: nullableCursor(
+      candidate.next_cursor,
+      "bookmark_similarity_members.next_cursor",
+    ),
+    decisionVersion: version(
+      candidate.decision_version,
+      "bookmark_similarity_members.decision_version",
+    ),
+  };
+}
+
+export function normalizeBookmarkSimilarityDecisionResult(
+  value: unknown,
+): BookmarkSimilarityDecisionResult {
+  const candidate = record(value, "bookmark_similarity_decision");
+  return {
+    jobId: text(candidate.job_id, "bookmark_similarity_decision.job_id"),
+    runId: text(candidate.run_id, "bookmark_similarity_decision.run_id"),
+    jobVersion: version(candidate.job_version, "bookmark_similarity_decision.job_version"),
+    decisionVersion: version(
+      candidate.decision_version,
+      "bookmark_similarity_decision.decision_version",
+    ),
+    similarityDecisions: normalizeSimilarityDecisionCountsAt(
+      candidate.similarity_decision_counts,
+      "bookmark_similarity_decision.similarity_decision_counts",
+    ),
+    selectedMergeReductionCount: count(
+      candidate.selected_merge_reduction_count,
+      "bookmark_similarity_decision.selected_merge_reduction_count",
+    ),
+    projectedCreateCount: count(
+      candidate.projected_create_count,
+      "bookmark_similarity_decision.projected_create_count",
+    ),
   };
 }
 
@@ -184,8 +491,44 @@ export function normalizeBookmarkImportResult(value: unknown): BookmarkImportRes
       candidate.skipped_needs_review,
       "bookmark_result.skipped_needs_review",
     ),
+    mergedCandidates: count(candidate.merged_candidates, "bookmark_result.merged_candidates"),
     failed: count(candidate.failed, "bookmark_result.failed"),
   };
+}
+
+const SIMILARITY_REASON_LABELS: Record<string, string> = {
+  same_site_authority: "同一站点",
+  www_alias: "www 地址变体",
+  http_https_variants: "HTTP/HTTPS 地址变体",
+  shared_path_variants: "相同路径的地址变体",
+  existing_library_homepage: "网址库已有推荐主页",
+  homepage_and_subpages: "主页与子页面",
+  common_path_ancestor: "共同页面入口",
+  derived_origin_root: "可归并到站点首页",
+};
+
+export function bookmarkSimilarityReasonLabel(code: string): string {
+  return SIMILARITY_REASON_LABELS[code] ?? "同站点相似页面";
+}
+
+const CANONICAL_SOURCE_LABELS: Record<BookmarkSimilarityCanonicalSource, string> = {
+  imported_homepage: "书签中的推荐主页",
+  derived_origin_root: "根据站点地址推导的推荐主页",
+  existing_library: "网址库中已有的推荐主页",
+};
+
+export function bookmarkCanonicalSourceLabel(
+  source: BookmarkSimilarityCanonicalSource,
+): string {
+  return CANONICAL_SOURCE_LABELS[source];
+}
+
+export function bookmarkSimilarityConfidenceLabel(
+  confidence: BookmarkSimilarityConfidence,
+): string {
+  if (confidence === "high") return "高置信度";
+  if (confidence === "medium") return "中置信度";
+  return "低置信度";
 }
 
 const STATE_LABELS: Record<string, string> = {

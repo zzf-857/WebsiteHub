@@ -8,6 +8,13 @@ export type LibraryDirection = "asc" | "desc";
 const LIBRARY_SITE_SOURCES = ["manual", "agent", "browser_import", "backup"] as const;
 const LIBRARY_SITE_CREATE_SOURCES = ["manual", "agent"] as const;
 const LIBRARY_ANALYSIS_STATUSES = ["not_analyzed", "pending", "complete", "failed", "limited"] as const;
+const LIBRARY_ANALYSIS_PHASES = [
+  "fetching_page",
+  "preparing_evidence",
+  "waiting_model",
+  "calling_model",
+  "saving_result",
+] as const;
 const LIBRARY_SITE_ANALYSIS_OUTCOMES = ["complete", "limited", "failed"] as const;
 const METADATA_BACKFILL_STATUSES = [
   "queued",
@@ -16,12 +23,35 @@ const METADATA_BACKFILL_STATUSES = [
   "completed_with_errors",
   "failed",
 ] as const;
+const METADATA_BACKFILL_MODES = ["metadata", "full"] as const;
+const METADATA_BACKFILL_STOP_REASONS = [
+  "provider_rate_limited",
+  "provider_temporary_failure",
+  "provider_unavailable",
+  "internal_error",
+] as const;
+const SITE_SIMILARITY_RUN_STATUSES = ["ready", "applied", "superseded"] as const;
+const SITE_SIMILARITY_GROUP_KINDS = ["duplicate", "same_site"] as const;
+const SITE_SIMILARITY_GROUP_FILTERS = ["duplicate", "same_site", "all"] as const;
 
 export type LibrarySiteSource = (typeof LIBRARY_SITE_SOURCES)[number];
 export type LibrarySiteCreateSource = (typeof LIBRARY_SITE_CREATE_SOURCES)[number];
 export type LibraryAnalysisStatus = (typeof LIBRARY_ANALYSIS_STATUSES)[number];
+export type LibraryAnalysisPhase = (typeof LIBRARY_ANALYSIS_PHASES)[number];
 export type LibrarySiteAnalysisOutcome = (typeof LIBRARY_SITE_ANALYSIS_OUTCOMES)[number];
 export type MetadataBackfillStatus = (typeof METADATA_BACKFILL_STATUSES)[number];
+export type MetadataBackfillMode = (typeof METADATA_BACKFILL_MODES)[number];
+export type MetadataBackfillStopReason = (typeof METADATA_BACKFILL_STOP_REASONS)[number];
+export type SiteSimilarityRunStatus = (typeof SITE_SIMILARITY_RUN_STATUSES)[number];
+export type SiteSimilarityGroupKind = (typeof SITE_SIMILARITY_GROUP_KINDS)[number];
+
+export const METADATA_BACKFILL_LIMITS = {
+  metadata: { defaultLimit: 200, maxLimit: 500 },
+  full: { defaultLimit: 50, maxLimit: 100 },
+} as const satisfies Record<
+  MetadataBackfillMode,
+  Readonly<{ defaultLimit: number; maxLimit: number }>
+>;
 
 export function isMetadataBackfillTerminalStatus(status: MetadataBackfillStatus): boolean {
   return status !== "queued" && status !== "running";
@@ -84,6 +114,7 @@ export type LibrarySite = {
   pinned: boolean;
   source: LibrarySiteSource;
   analysisStatus: LibraryAnalysisStatus;
+  analysisPhase: LibraryAnalysisPhase | null;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -116,6 +147,20 @@ export type LibrarySiteAnalysisResult = {
   llmApplied: boolean;
 };
 
+export type MetadataBackfillRequest = {
+  mode: MetadataBackfillMode;
+  limit: number;
+};
+
+export type MetadataBackfillPlan = {
+  mode: MetadataBackfillMode;
+  requestedLimit: number;
+  eligibleCount: number;
+  selectedCount: number;
+  llmCount: number;
+  maxLimit: number;
+};
+
 /**
  * A durable, account-scoped metadata backfill run.  `completedCount` is the
  * number that has reached a terminal outcome; its result counters explain the
@@ -125,8 +170,11 @@ export type LibrarySiteAnalysisResult = {
  */
 export type MetadataBackfillProgress = {
   runId: string;
+  mode: MetadataBackfillMode;
   status: MetadataBackfillStatus;
   stoppedEarly: boolean;
+  stopReason: MetadataBackfillStopReason | null;
+  providerRetryAt: string | null;
   totalCount: number;
   queuedCount: number;
   runningCount: number;
@@ -137,6 +185,78 @@ export type MetadataBackfillProgress = {
   skippedCount: number;
   /** POST reports whether it attached to an already running account job. */
   reused?: boolean;
+};
+
+export type SiteSimilarityScan = {
+  runId: string;
+  status: SiteSimilarityRunStatus;
+  rulesetVersion: string;
+  sourceSiteCount: number;
+  groupCount: number;
+  duplicateGroupCount: number;
+  sameSiteGroupCount: number;
+  candidateSiteCount: number;
+  selectedGroupCount: number;
+  selectedDeleteCount: number;
+  version: number;
+  decisionVersion: number;
+  createdAt: string;
+  appliedAt: string | null;
+};
+
+export type SiteSimilarityMember = LibrarySite & {
+  isRecommended: boolean;
+};
+
+export type SiteSimilarityGroup = {
+  id: string;
+  kind: SiteSimilarityGroupKind;
+  siteKey: string;
+  displayHost: string;
+  memberCount: number;
+  recommendedSiteId: string;
+  /** An empty list means every member remains in the library. */
+  keepSiteIds: string[];
+  members: SiteSimilarityMember[];
+};
+
+export type SiteSimilarityGroupPage = {
+  items: SiteSimilarityGroup[];
+  nextCursor: string | null;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  decisionVersion: number;
+};
+
+export type SiteSimilarityDecisionResult = {
+  groupId: string;
+  keepSiteIds: string[];
+  decisionVersion: number;
+  selectedGroupCount: number;
+  selectedDeleteCount: number;
+};
+
+export type SiteSimilarityRecommendedDecisionResult = {
+  kind: SiteSimilarityGroupKind | "all";
+  matchedGroupCount: number;
+  updatedGroupCount: number;
+  decisionVersion: number;
+  selectedGroupCount: number;
+  selectedDeleteCount: number;
+};
+
+export type SiteSimilarityApplyResult = {
+  runId: string;
+  status: "applied";
+  decisionVersion: number;
+  mergedGroupCount: number;
+  deletedSiteCount: number;
+  keptSiteCount: number;
+  deletedSiteIds: string[];
+  keptSiteIds: string[];
+  appliedAt: string;
 };
 
 export type LibraryCategoryDeletePreview = {
@@ -305,6 +425,9 @@ export function normalizeLibrarySite(value: unknown): LibrarySite {
     pinned: boolean(candidate.pinned, "site.pinned"),
     source: literal(candidate.source, "site.source", LIBRARY_SITE_SOURCES),
     analysisStatus: literal(candidate.analysis_status, "site.analysis_status", LIBRARY_ANALYSIS_STATUSES),
+    analysisPhase: candidate.analysis_phase === null
+      ? null
+      : literal(candidate.analysis_phase, "site.analysis_phase", LIBRARY_ANALYSIS_PHASES),
     version: version(candidate.version, "site.version"),
     createdAt: isoDate(candidate.created_at, "site.created_at"),
     updatedAt: isoDate(candidate.updated_at, "site.updated_at"),
@@ -363,11 +486,24 @@ export function normalizeLibraryAnalysisBackfill(value: unknown): LibraryAnalysi
 
 export function normalizeMetadataBackfillProgress(value: unknown): MetadataBackfillProgress {
   const candidate = record(value, "metadata_backfill");
+  const mode = literal(candidate.mode, "metadata_backfill.mode", METADATA_BACKFILL_MODES);
   const status = literal(candidate.status, "metadata_backfill.status", METADATA_BACKFILL_STATUSES);
+  const stopReason = candidate.stop_reason === null
+    ? null
+    : literal(
+      candidate.stop_reason,
+      "metadata_backfill.stop_reason",
+      METADATA_BACKFILL_STOP_REASONS,
+    );
   const progress: MetadataBackfillProgress = {
     runId: identifier(candidate.id, "metadata_backfill.id"),
+    mode,
     status,
     stoppedEarly: boolean(candidate.stopped_early, "metadata_backfill.stopped_early"),
+    stopReason,
+    providerRetryAt: candidate.provider_retry_at === null
+      ? null
+      : isoDate(candidate.provider_retry_at, "metadata_backfill.provider_retry_at"),
     totalCount: count(candidate.total_count, "metadata_backfill.total_count"),
     queuedCount: count(candidate.queued_count, "metadata_backfill.queued_count"),
     runningCount: count(candidate.running_count, "metadata_backfill.running_count"),
@@ -400,6 +536,361 @@ export function normalizeMetadataBackfillProgress(value: unknown): MetadataBackf
     throw new LibraryContractError("已完成的 metadata_backfill 不能保留待处理网站");
   }
   return progress;
+}
+
+function identifierListAt(value: unknown, path: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new LibraryContractError(`${path} 必须是数组`);
+  }
+  const identifiers = value.map((item, index) => identifier(item, `${path}[${index}]`));
+  if (new Set(identifiers).size !== identifiers.length) {
+    throw new LibraryContractError(`${path} 不能包含重复网站`);
+  }
+  return identifiers;
+}
+
+function nullableCursorAt(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || !value.trim()) {
+    throw new LibraryContractError(`${path} 必须是非空字符串或 null`);
+  }
+  return value.trim();
+}
+
+export function normalizeSiteSimilarityScan(value: unknown): SiteSimilarityScan {
+  const candidate = record(value, "site_similarity_scan");
+  const status = literal(
+    candidate.status,
+    "site_similarity_scan.status",
+    SITE_SIMILARITY_RUN_STATUSES,
+  );
+  const duplicateGroupCount = count(
+    candidate.duplicate_group_count,
+    "site_similarity_scan.duplicate_group_count",
+  );
+  const sameSiteGroupCount = count(
+    candidate.same_site_group_count,
+    "site_similarity_scan.same_site_group_count",
+  );
+  const groupCount = count(candidate.group_count, "site_similarity_scan.group_count");
+  if (groupCount !== duplicateGroupCount + sameSiteGroupCount) {
+    throw new LibraryContractError("site_similarity_scan 的分组计数不一致");
+  }
+  const selectedGroupCount = count(
+    candidate.selected_group_count,
+    "site_similarity_scan.selected_group_count",
+  );
+  const candidateSiteCount = count(
+    candidate.candidate_site_count,
+    "site_similarity_scan.candidate_site_count",
+  );
+  const selectedDeleteCount = count(
+    candidate.selected_delete_count,
+    "site_similarity_scan.selected_delete_count",
+  );
+  if (selectedGroupCount > groupCount || selectedDeleteCount > candidateSiteCount) {
+    throw new LibraryContractError("site_similarity_scan 的清理选择计数超出扫描范围");
+  }
+  const appliedAt = candidate.applied_at === null
+    ? null
+    : isoDate(candidate.applied_at, "site_similarity_scan.applied_at");
+  if ((status === "applied") !== (appliedAt !== null)) {
+    throw new LibraryContractError("site_similarity_scan 的应用状态与时间不一致");
+  }
+  return {
+    runId: identifier(candidate.id, "site_similarity_scan.id"),
+    status,
+    rulesetVersion: text(candidate.ruleset_version, "site_similarity_scan.ruleset_version"),
+    sourceSiteCount: count(
+      candidate.source_site_count,
+      "site_similarity_scan.source_site_count",
+    ),
+    groupCount,
+    duplicateGroupCount,
+    sameSiteGroupCount,
+    candidateSiteCount,
+    selectedGroupCount,
+    selectedDeleteCount,
+    version: version(candidate.version, "site_similarity_scan.version"),
+    decisionVersion: version(
+      candidate.decision_version,
+      "site_similarity_scan.decision_version",
+    ),
+    createdAt: isoDate(candidate.created_at, "site_similarity_scan.created_at"),
+    appliedAt,
+  };
+}
+
+function normalizeSiteSimilarityMemberAt(
+  value: unknown,
+  path: string,
+): SiteSimilarityMember {
+  const candidate = record(value, path);
+  return {
+    ...normalizeLibrarySite(candidate),
+    isRecommended: boolean(candidate.is_recommended, `${path}.is_recommended`),
+  };
+}
+
+function normalizeSiteSimilarityGroupAt(value: unknown, path: string): SiteSimilarityGroup {
+  const candidate = record(value, path);
+  if (!Array.isArray(candidate.members)) {
+    throw new LibraryContractError(`${path}.members 必须是数组`);
+  }
+  const members = candidate.members.map((member, index) =>
+    normalizeSiteSimilarityMemberAt(member, `${path}.members[${index}]`));
+  const memberCount = count(candidate.member_count, `${path}.member_count`);
+  if (memberCount < 2 || members.length !== memberCount) {
+    throw new LibraryContractError(`${path}.member_count 必须与完整成员列表一致且至少为 2`);
+  }
+  const memberIds = members.map((member) => member.id);
+  if (new Set(memberIds).size !== memberIds.length) {
+    throw new LibraryContractError(`${path}.members 不能包含重复网站`);
+  }
+  const recommendedSiteId = identifier(
+    candidate.recommended_site_id,
+    `${path}.recommended_site_id`,
+  );
+  const recommendedMembers = members.filter((member) => member.isRecommended);
+  if (
+    !memberIds.includes(recommendedSiteId)
+    || recommendedMembers.length !== 1
+    || recommendedMembers[0]?.id !== recommendedSiteId
+  ) {
+    throw new LibraryContractError(`${path}.recommended_site_id 与推荐成员不一致`);
+  }
+  const keepSiteIds = identifierListAt(candidate.keep_site_ids, `${path}.keep_site_ids`);
+  if (keepSiteIds.some((siteId) => !memberIds.includes(siteId))) {
+    throw new LibraryContractError(`${path}.keep_site_ids 包含当前分组之外的网站`);
+  }
+  if (keepSiteIds.length === memberCount) {
+    throw new LibraryContractError(`${path}.keep_site_ids 全选时必须归一化为全部保留`);
+  }
+  return {
+    id: identifier(candidate.id, `${path}.id`),
+    kind: literal(candidate.kind, `${path}.kind`, SITE_SIMILARITY_GROUP_KINDS),
+    siteKey: text(candidate.site_key, `${path}.site_key`),
+    displayHost: text(candidate.display_host, `${path}.display_host`),
+    memberCount,
+    recommendedSiteId,
+    keepSiteIds,
+    members,
+  };
+}
+
+export function normalizeSiteSimilarityGroupPage(value: unknown): SiteSimilarityGroupPage {
+  const candidate = record(value, "site_similarity_groups");
+  if (!Array.isArray(candidate.items)) {
+    throw new LibraryContractError("site_similarity_groups.items 必须是数组");
+  }
+  const items = candidate.items.map((item, index) =>
+    normalizeSiteSimilarityGroupAt(item, `site_similarity_groups.items[${index}]`));
+  if (new Set(items.map((item) => item.id)).size !== items.length) {
+    throw new LibraryContractError("site_similarity_groups.items 不能包含重复分组");
+  }
+  const nextCursor = nullableCursorAt(
+    candidate.next_cursor,
+    "site_similarity_groups.next_cursor",
+  );
+  const page = version(candidate.page, "site_similarity_groups.page");
+  const pageSize = version(candidate.page_size, "site_similarity_groups.page_size");
+  const totalCount = count(candidate.total_count, "site_similarity_groups.total_count");
+  const totalPages = count(candidate.total_pages, "site_similarity_groups.total_pages");
+  const expectedTotalPages = totalCount === 0 ? 0 : Math.ceil(totalCount / pageSize);
+  if (pageSize > 24 || totalPages !== expectedTotalPages || page > Math.max(totalPages, 1)) {
+    throw new LibraryContractError("site_similarity_groups 的页码元数据不一致");
+  }
+  if (
+    items.length > pageSize
+    || items.length > totalCount
+    || (totalCount === 0 && nextCursor !== null)
+    || (page === totalPages && nextCursor !== null)
+  ) {
+    throw new LibraryContractError("site_similarity_groups 的分页内容超出范围");
+  }
+  return {
+    items,
+    nextCursor,
+    page,
+    pageSize,
+    totalCount,
+    totalPages,
+    decisionVersion: version(
+      candidate.decision_version,
+      "site_similarity_groups.decision_version",
+    ),
+  };
+}
+
+export function normalizeSiteSimilarityDecision(
+  value: unknown,
+): SiteSimilarityDecisionResult {
+  const candidate = record(value, "site_similarity_decision");
+  return {
+    groupId: identifier(candidate.group_id, "site_similarity_decision.group_id"),
+    keepSiteIds: identifierListAt(
+      candidate.keep_site_ids,
+      "site_similarity_decision.keep_site_ids",
+    ),
+    decisionVersion: version(
+      candidate.decision_version,
+      "site_similarity_decision.decision_version",
+    ),
+    selectedGroupCount: count(
+      candidate.selected_group_count,
+      "site_similarity_decision.selected_group_count",
+    ),
+    selectedDeleteCount: count(
+      candidate.selected_delete_count,
+      "site_similarity_decision.selected_delete_count",
+    ),
+  };
+}
+
+export function normalizeSiteSimilarityRecommendedDecision(
+  value: unknown,
+): SiteSimilarityRecommendedDecisionResult {
+  const candidate = record(value, "site_similarity_recommended_decision");
+  const matchedGroupCount = count(
+    candidate.matched_group_count,
+    "site_similarity_recommended_decision.matched_group_count",
+  );
+  const updatedGroupCount = count(
+    candidate.updated_group_count,
+    "site_similarity_recommended_decision.updated_group_count",
+  );
+  if (updatedGroupCount > matchedGroupCount) {
+    throw new LibraryContractError("批量更新分组数不能超过当前分区分组数");
+  }
+  const selectedGroupCount = count(
+    candidate.selected_group_count,
+    "site_similarity_recommended_decision.selected_group_count",
+  );
+  const selectedDeleteCount = count(
+    candidate.selected_delete_count,
+    "site_similarity_recommended_decision.selected_delete_count",
+  );
+  if (
+    selectedGroupCount < matchedGroupCount
+    || selectedDeleteCount < selectedGroupCount
+  ) {
+    throw new LibraryContractError("批量推荐后的清理选择计数不一致");
+  }
+  return {
+    kind: literal(
+      candidate.kind,
+      "site_similarity_recommended_decision.kind",
+      SITE_SIMILARITY_GROUP_FILTERS,
+    ),
+    matchedGroupCount,
+    updatedGroupCount,
+    decisionVersion: version(
+      candidate.decision_version,
+      "site_similarity_recommended_decision.decision_version",
+    ),
+    selectedGroupCount,
+    selectedDeleteCount,
+  };
+}
+
+export function normalizeSiteSimilarityApply(value: unknown): SiteSimilarityApplyResult {
+  const candidate = record(value, "site_similarity_apply");
+  if (candidate.status !== "applied") {
+    throw new LibraryContractError("site_similarity_apply.status 不是 applied");
+  }
+  if (!Array.isArray(candidate.deleted_site_ids) || !Array.isArray(candidate.kept_site_ids)) {
+    throw new LibraryContractError("site_similarity_apply 的网站 ID 必须是数组");
+  }
+  const deletedSiteIds = candidate.deleted_site_ids.map((siteId, index) =>
+    identifier(siteId, `site_similarity_apply.deleted_site_ids[${index}]`));
+  const keptSiteIds = candidate.kept_site_ids.map((siteId, index) =>
+    identifier(siteId, `site_similarity_apply.kept_site_ids[${index}]`));
+  const deletedSiteCount = count(
+    candidate.deleted_site_count,
+    "site_similarity_apply.deleted_site_count",
+  );
+  const keptSiteCount = count(candidate.kept_site_count, "site_similarity_apply.kept_site_count");
+  if (deletedSiteCount !== deletedSiteIds.length || keptSiteCount !== keptSiteIds.length) {
+    throw new LibraryContractError("site_similarity_apply 的网站计数与 ID 列表不一致");
+  }
+  const uniqueDeleted = new Set(deletedSiteIds);
+  if (
+    uniqueDeleted.size !== deletedSiteIds.length
+    || new Set(keptSiteIds).size !== keptSiteIds.length
+    || keptSiteIds.some((siteId) => uniqueDeleted.has(siteId))
+  ) {
+    throw new LibraryContractError("site_similarity_apply 的网站 ID 重复或互相冲突");
+  }
+  return {
+    runId: identifier(candidate.id, "site_similarity_apply.id"),
+    status: "applied",
+    decisionVersion: version(
+      candidate.decision_version,
+      "site_similarity_apply.decision_version",
+    ),
+    mergedGroupCount: count(
+      candidate.merged_group_count,
+      "site_similarity_apply.merged_group_count",
+    ),
+    deletedSiteCount,
+    keptSiteCount,
+    deletedSiteIds,
+    keptSiteIds,
+    appliedAt: isoDate(candidate.applied_at, "site_similarity_apply.applied_at"),
+  };
+}
+
+export function assertMetadataBackfillRequest(
+  value: MetadataBackfillRequest,
+): MetadataBackfillRequest {
+  const mode = literal(value.mode, "metadata_backfill_request.mode", METADATA_BACKFILL_MODES);
+  const limit = version(value.limit, "metadata_backfill_request.limit");
+  const maximum = METADATA_BACKFILL_LIMITS[mode].maxLimit;
+  if (limit > maximum) {
+    throw new LibraryContractError(
+      `metadata_backfill_request.limit 在 ${mode} 模式下不能超过 ${maximum}`,
+    );
+  }
+  return { mode, limit };
+}
+
+export function normalizeMetadataBackfillPlan(value: unknown): MetadataBackfillPlan {
+  const candidate = record(value, "metadata_backfill_plan");
+  const mode = literal(candidate.mode, "metadata_backfill_plan.mode", METADATA_BACKFILL_MODES);
+  const requestedLimit = version(
+    candidate.requested_limit,
+    "metadata_backfill_plan.requested_limit",
+  );
+  const eligibleCount = count(candidate.eligible_count, "metadata_backfill_plan.eligible_count");
+  const selectedCount = count(candidate.selected_count, "metadata_backfill_plan.selected_count");
+  const llmCount = count(candidate.llm_count, "metadata_backfill_plan.llm_count");
+  const maxLimit = version(candidate.max_limit, "metadata_backfill_plan.max_limit");
+  const clientMaximum = METADATA_BACKFILL_LIMITS[mode].maxLimit;
+
+  if (maxLimit > clientMaximum) {
+    throw new LibraryContractError("metadata_backfill_plan.max_limit 超出前端支持范围");
+  }
+  if (requestedLimit > maxLimit) {
+    throw new LibraryContractError("metadata_backfill_plan.requested_limit 不能超过 max_limit");
+  }
+  if (selectedCount > requestedLimit || selectedCount > eligibleCount) {
+    throw new LibraryContractError("metadata_backfill_plan.selected_count 超出可选范围");
+  }
+  if (llmCount > selectedCount) {
+    throw new LibraryContractError("metadata_backfill_plan.llm_count 不能超过 selected_count");
+  }
+  if (mode === "metadata" && llmCount !== 0) {
+    throw new LibraryContractError("metadata 模式不能包含 LLM 调用");
+  }
+
+  return {
+    mode,
+    requestedLimit,
+    eligibleCount,
+    selectedCount,
+    llmCount,
+    maxLimit,
+  };
 }
 
 export function normalizeLibraryBulkDeleteResult(value: unknown): LibraryBulkDeleteResult {

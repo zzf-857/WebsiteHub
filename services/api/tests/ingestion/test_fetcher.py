@@ -16,7 +16,7 @@ from webhub.ingestion.fetcher import (
     MAX_REDIRECTS,
     fetch_site_metadata,
 )
-from webhub.providers.targets import ResolvedConnectionTarget
+from webhub.providers.targets import ProviderTargetError, ResolvedConnectionTarget
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
 _PINNED_ADDRESS = IPv4Address("93.184.216.34")
@@ -102,6 +102,36 @@ def test_a_normal_page_yields_complete_metadata(monkeypatch: pytest.MonkeyPatch)
     assert outcome.metadata.related_urls == ("https://github.com/webhub/webhub",)
 
 
+def test_icon_and_preview_validation_run_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = 0
+    maximum_active = 0
+
+    async def enter() -> None:
+        nonlocal active, maximum_active
+        active += 1
+        maximum_active = max(maximum_active, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+
+    async def icon(**_kwargs: object) -> str:
+        await enter()
+        return "https://example.com/favicon.ico"
+
+    async def preview(_url: str | None, **_kwargs: object) -> str:
+        await enter()
+        return "https://example.com/cover.png"
+
+    monkeypatch.setattr(ingestion_fetcher, "_discover_icon_url", icon)
+    monkeypatch.setattr(ingestion_fetcher, "_validated_public_resource_url", preview)
+
+    _, outcome, _ = _run("https://example.com/", _html(), monkeypatch)
+
+    assert outcome.status == "complete"
+    assert maximum_active == 2
+
+
 def test_every_redirect_hop_is_revalidated_not_just_the_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -177,6 +207,102 @@ def test_a_redirect_into_a_private_address_is_refused_for_real(
     assert len(seen) == 1
 
 
+def test_proxy_fake_ip_uses_independently_verified_public_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_checks: list[str] = []
+    public_dns_checks: list[str] = []
+
+    async def fake_ip(value: str, **_kwargs: object) -> ResolvedConnectionTarget:
+        target_checks.append(value)
+        raise ProviderTargetError(
+            "resource_fake_ip_detected",
+            "system DNS returned proxy Fake-IP",
+        )
+
+    async def public_dns(hostname: str, **_kwargs: object) -> tuple[IPv4Address, ...]:
+        public_dns_checks.append(hostname)
+        return (_PINNED_ADDRESS,)
+
+    monkeypatch.setattr(ingestion_fetcher, "resolve_resource_target", fake_ip)
+    monkeypatch.setattr(ingestion_fetcher, "resolve_public_hostname", public_dns)
+    seen, outcome, _checked = _run(
+        "https://www.example.com/",
+        _html(),
+        monkeypatch,
+        skip_target_check=False,
+    )
+
+    assert outcome.status == "complete"
+    assert seen
+    assert {request.url.host for request in seen} == {str(_PINNED_ADDRESS)}
+    assert {request.headers["host"] for request in seen} == {"www.example.com"}
+    assert public_dns_checks == ["www.example.com"]
+    assert len(target_checks) >= 3
+
+
+def test_proxy_fake_ip_with_private_real_answer_never_reaches_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_ip(_value: str, **_kwargs: object) -> ResolvedConnectionTarget:
+        raise ProviderTargetError(
+            "resource_fake_ip_detected",
+            "system DNS returned proxy Fake-IP",
+        )
+
+    async def unsafe_dns(_hostname: str, **_kwargs: object) -> tuple[IPv4Address, ...]:
+        raise ProviderTargetError(
+            "unsafe_provider_target",
+            "public DNS returned a private address",
+        )
+
+    monkeypatch.setattr(ingestion_fetcher, "resolve_resource_target", fake_ip)
+    monkeypatch.setattr(ingestion_fetcher, "resolve_public_hostname", unsafe_dns)
+    seen, outcome, _checked = _run(
+        "https://rebound.example/",
+        _html(),
+        monkeypatch,
+        skip_target_check=False,
+    )
+
+    assert outcome.status == "failed"
+    assert "不允许访问" in outcome.reason
+    assert seen == []
+
+
+def test_proxy_fake_ip_redirects_are_independently_verified_per_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    public_dns_checks: list[str] = []
+
+    async def fake_ip(_value: str, **_kwargs: object) -> ResolvedConnectionTarget:
+        raise ProviderTargetError(
+            "resource_fake_ip_detected",
+            "system DNS returned proxy Fake-IP",
+        )
+
+    async def public_dns(hostname: str, **_kwargs: object) -> tuple[IPv4Address, ...]:
+        public_dns_checks.append(hostname)
+        return (_PINNED_ADDRESS,)
+
+    def redirect(request: httpx.Request) -> httpx.Response:
+        if request.headers["host"] == "short.example":
+            return httpx.Response(302, headers={"location": "https://final.example/"})
+        return _html()(request)
+
+    monkeypatch.setattr(ingestion_fetcher, "resolve_resource_target", fake_ip)
+    monkeypatch.setattr(ingestion_fetcher, "resolve_public_hostname", public_dns)
+    _seen, outcome, _checked = _run(
+        "https://short.example/",
+        redirect,
+        monkeypatch,
+        skip_target_check=False,
+    )
+
+    assert outcome.status == "complete"
+    assert public_dns_checks == ["short.example", "final.example"]
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -203,6 +329,19 @@ def test_non_http_schemes_are_refused_without_touching_the_network(
         seen, outcome, _checked = _run(url, _html(), monkeypatch, skip_target_check=False)
         assert outcome.status == "failed", url
         assert seen == [], url
+
+
+def test_any_successful_2xx_html_response_can_be_analyzed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seen, outcome, _checked = _run(
+        "https://example.com/accepted",
+        _html(status=202),
+        monkeypatch,
+    )
+
+    assert outcome.status == "complete"
+    assert outcome.metadata.description == "示例站点的描述"
 
 
 def test_a_redirect_loop_stops_at_the_limit(monkeypatch: pytest.MonkeyPatch) -> None:

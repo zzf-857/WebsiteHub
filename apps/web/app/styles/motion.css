@@ -97,6 +97,54 @@
   }
 }
 
+/* 首页顶栏搜索进入网址库时，搜索框本身由 motion layoutId 接力。
+   周边内容只在它下面短促淡入，避免整页滑动与共享元素争夺视觉焦点。 */
+html[data-library-search-transition="active"] .library-page-header,
+html[data-library-search-transition="active"] .library-sidebar,
+html[data-library-search-transition="active"] .library-toolbar > :not(.library-search-field),
+html[data-library-search-transition="active"] .library-results-heading,
+html[data-library-search-transition="active"] .library-selection-toolbar,
+html[data-library-search-transition="active"] .library-notice,
+html[data-library-search-transition="active"] .library-error-banner,
+html[data-library-search-transition="active"] .library-sections,
+html[data-library-search-transition="active"] .library-loading-grid,
+html[data-library-search-transition="active"] .library-empty-state {
+  animation: library-search-content-arrival 180ms var(--ease-standard) 60ms both;
+}
+
+.app-search-entry[data-transitioning],
+.library-search-field[data-search-transition-target] {
+  position: relative;
+  z-index: 60;
+  pointer-events: none;
+  will-change: transform, width, height;
+}
+
+.library-search-field[data-search-transition-target] {
+  box-shadow: 0 8px 26px rgb(0 0 0 / 12%);
+}
+
+html[data-library-search-transition="active"] .site-main.library-workspace[data-layout-ready="true"] {
+  transition: none;
+}
+
+@media (min-width: 1409px) {
+  html[data-library-search-transition="active"][data-library-search-layout="full"]
+    .site-main.library-workspace {
+    width: calc(100% - 48px);
+  }
+}
+
+@keyframes library-search-content-arrival {
+  from {
+    opacity: 0.52;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 /* 系统要求减弱动效时，本文件涉及的动画一律停用（组件层会另行切换到静态形态） */
 @media (prefers-reduced-motion: reduce) {
   .spinner,
@@ -107,6 +155,16 @@
   .count-up {
     animation: none !important;
     transition: none !important;
+  }
+
+  html[data-library-search-transition="active"] .library-workspace * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .app-search-entry[data-transitioning],
+  .library-search-field[data-search-transition-target] {
+    will-change: auto;
   }
 
   .shiny-text {

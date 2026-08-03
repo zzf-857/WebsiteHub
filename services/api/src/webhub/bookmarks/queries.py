@@ -8,11 +8,12 @@ import json
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from sqlalchemy import and_, case, func, select, tuple_
+from sqlalchemy import and_, case, func, select, tuple_, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.bookmarks import persistence
-from webhub.bookmarks.apply import apply_candidates
+from webhub.bookmarks.apply import BookmarkApplyError, apply_candidates
 from webhub.bookmarks.schemas import (
     BookmarkImportApplyResponse,
     BookmarkImportFailureCode,
@@ -34,13 +35,21 @@ from webhub.db.models import (
     BookmarkImportCurrentRun,
     BookmarkImportJob,
     BookmarkImportRun,
+    BookmarkSimilarityCluster,
+    BookmarkSimilarityDecisionState,
     BookmarkStagingCandidate,
     BookmarkStagingFolder,
     BookmarkStagingOccurrence,
     utc_now,
 )
 
-PreviewEndpoint = Literal["folders", "candidates", "occurrences"]
+PreviewEndpoint = Literal[
+    "folders",
+    "candidates",
+    "occurrences",
+    "similarity_clusters",
+    "similarity_members",
+]
 _PUBLIC_FAILURE_CODES: frozenset[BookmarkImportFailureCode] = frozenset(
     {
         "classification_budget_exhausted",
@@ -356,6 +365,14 @@ async def get_preview_summary(
         metadata_only_candidate_count,
         sensitive_candidate_count,
     ) = (int(value or 0) for value in candidate_row)
+    from webhub.bookmarks.similarity_queries import similarity_statistics
+
+    similarity = await similarity_statistics(
+        session,
+        user_id,
+        preview.run.id,
+        base_create_count=create_count,
+    )
     return BookmarkPreviewSummaryResponse(
         job_id=preview.job.id,
         run_id=preview.run.id,
@@ -380,6 +397,12 @@ async def get_preview_summary(
         ),
         metadata_only_candidate_count=metadata_only_candidate_count,
         sensitive_candidate_count=sensitive_candidate_count,
+        decision_version=similarity.decision_version,
+        similarity_cluster_count=similarity.cluster_count,
+        similarity_candidate_count=similarity.candidate_count,
+        similarity_decision_counts=similarity.decision_counts,
+        selected_merge_reduction_count=similarity.selected_merge_reduction_count,
+        projected_create_count=similarity.projected_create_count,
     )
 
 
@@ -615,6 +638,7 @@ async def apply_import(
     job_id: str,
     *,
     expected_job_version: int,
+    expected_decision_version: int,
 ) -> BookmarkImportApplyResponse:
     """Write the job's staged candidates into the account's library.
 
@@ -625,30 +649,128 @@ async def apply_import(
     """
 
     preview = await _current_complete_preview(session, user_id, job_id)
-    if preview.job.version != expected_job_version:
-        raise persistence.BookmarkPersistenceConflictError("导入任务已被更新，请刷新预览后重试")
-    if preview.job.state in {"committing", "cancel_requested"}:
-        raise persistence.BookmarkPersistenceConflictError("该导入任务正在处理中")
-
-    outcome = await apply_candidates(session, user_id, preview.run.id)
-
-    # Re-read: apply_candidates committed, so the in-session copy is stale.
-    job = await session.scalar(
-        select(BookmarkImportJob).where(
-            BookmarkImportJob.user_id == user_id,
-            BookmarkImportJob.id == job_id,
+    if (
+        preview.job.version != expected_job_version
+        or preview.job.state not in {"parse_preview_ready", "final_preview_ready"}
+    ):
+        raise persistence.BookmarkPersistenceConflictError(
+            "导入任务已被更新或处理，请刷新预览后重试"
         )
-    )
-    if job is not None:
-        job.state = "completed_with_errors" if outcome.failed else "completed"
-        job.completed_at = utc_now()
-        job.version += 1
-        await session.commit()
 
-    response = BookmarkImportApplyResponse(
+    from webhub.bookmarks.similarity_queries import similarity_statistics
+
+    base_create_count = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(BookmarkStagingCandidate)
+            .where(
+                BookmarkStagingCandidate.user_id == user_id,
+                BookmarkStagingCandidate.run_id == preview.run.id,
+                BookmarkStagingCandidate.proposed_action == "create",
+            )
+        )
+        or 0
+    )
+    similarity = await similarity_statistics(
+        session,
+        user_id,
+        preview.run.id,
+        base_create_count=base_create_count,
+    )
+    if similarity.decision_version != expected_decision_version:
+        raise persistence.BookmarkPersistenceConflictError(
+            "相似书签选择已发生变化，请刷新后重试"
+        )
+    if similarity.decision_counts.unresolved:
+        raise persistence.BookmarkPersistenceConflictError(
+            f"还有 {similarity.decision_counts.unresolved} 组相似书签尚未选择处理方式"
+        )
+
+    now = utc_now()
+    try:
+        # This is both the state transition and the first lock in the shared
+        # job -> decision state -> account taxonomy order. It remains invisible
+        # until the final commit, so any later failure restores the preview.
+        claimed_job = await session.execute(
+            update(BookmarkImportJob)
+            .where(
+                BookmarkImportJob.user_id == user_id,
+                BookmarkImportJob.id == job_id,
+                BookmarkImportJob.version == expected_job_version,
+                BookmarkImportJob.state.in_(
+                    ("parse_preview_ready", "final_preview_ready")
+                ),
+            )
+            .values(state="committing", updated_at=now)
+        )
+        if claimed_job.rowcount != 1:
+            raise persistence.BookmarkPersistenceConflictError(
+                "导入任务已被其他请求处理，请刷新后重试"
+            )
+
+        state_claim = await session.execute(
+            update(BookmarkSimilarityDecisionState)
+            .where(
+                BookmarkSimilarityDecisionState.user_id == user_id,
+                BookmarkSimilarityDecisionState.run_id == preview.run.id,
+                BookmarkSimilarityDecisionState.version == expected_decision_version,
+            )
+            .values(updated_at=BookmarkSimilarityDecisionState.updated_at)
+        )
+        if state_claim.rowcount != 1:
+            cluster_count = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(BookmarkSimilarityCluster)
+                    .where(
+                        BookmarkSimilarityCluster.user_id == user_id,
+                        BookmarkSimilarityCluster.run_id == preview.run.id,
+                    )
+                )
+                or 0
+            )
+            if cluster_count or expected_decision_version != 1:
+                raise persistence.BookmarkPersistenceConflictError(
+                    "相似书签选择已发生变化，请刷新后重试"
+                )
+
+        outcome = await apply_candidates(session, user_id, preview.run.id)
+        terminal_state = "completed_with_errors" if outcome.failed else "completed"
+        completed = await session.execute(
+            update(BookmarkImportJob)
+            .where(
+                BookmarkImportJob.user_id == user_id,
+                BookmarkImportJob.id == job_id,
+                BookmarkImportJob.version == expected_job_version,
+                BookmarkImportJob.state == "committing",
+            )
+            .values(
+                state=terminal_state,
+                version=BookmarkImportJob.version + 1,
+                completed_at=now,
+                updated_at=now,
+            )
+        )
+        if completed.rowcount != 1:
+            raise persistence.BookmarkPersistenceConflictError(
+                "导入任务在提交期间发生变化，请重新尝试"
+            )
+        await session.commit()
+    except BookmarkApplyError as error:
+        await session.rollback()
+        raise persistence.BookmarkPersistenceConflictError(error.message) from error
+    except IntegrityError as error:
+        await session.rollback()
+        raise persistence.BookmarkPersistenceConflictError(
+            "导入期间网址库发生并发变化，未写入任何网站，请重试"
+        ) from error
+    except BaseException:
+        await session.rollback()
+        raise
+
+    return BookmarkImportApplyResponse(
         job_id=job_id,
-        state=job.state if job is not None else "completed",
-        job_version=job.version if job is not None else expected_job_version,
+        state=terminal_state,
+        job_version=expected_job_version + 1,
         **outcome.as_dict(),
     )
-    return response

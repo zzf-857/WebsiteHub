@@ -17,7 +17,7 @@ type LibraryDialogProps = {
   open: boolean;
   title: string;
   description?: string;
-  size?: "standard" | "wide";
+  size?: "standard" | "wide" | "large";
   closeDisabled?: boolean;
   children: ReactNode;
   onClose: () => void;

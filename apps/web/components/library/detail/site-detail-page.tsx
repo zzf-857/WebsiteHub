@@ -43,6 +43,10 @@ import type {
   LibrarySiteUpdateInput,
   LibraryTag,
 } from "@/lib/library-contract";
+import {
+  siteAnalysisProgressRows,
+  type SiteAnalysisDisplayPhase,
+} from "@/lib/site-analysis-progress";
 
 import { ActivityCard } from "./activity-card";
 import { AgentHelpCard } from "./agent-help-card";
@@ -94,6 +98,49 @@ function isLibraryNotFound(error: unknown): error is LibraryApiError {
   return error instanceof LibraryApiError && (error.code === "not_found" || error.status === 404);
 }
 
+function SiteAnalysisProgress({
+  phase,
+  elapsedSeconds,
+}: Readonly<{
+  phase: SiteAnalysisDisplayPhase;
+  elapsedSeconds: number;
+}>) {
+  const rows = siteAnalysisProgressRows(phase);
+  const current = rows.find((row) => row.state === "current") ?? rows[0];
+  return (
+    <div className="sd-analysis-progress">
+      <div
+        className="sd-analysis-progress-head"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <span>
+          <Spinner size={13} />
+          {current.label}
+        </span>
+        <time>{elapsedSeconds} 秒</time>
+      </div>
+      <ol className="sd-analysis-progress-steps">
+        {rows.map((row) => (
+          <li key={row.phase} data-state={row.state}>
+            <span className="sd-analysis-progress-icon" aria-hidden="true">
+              {row.state === "done" ? (
+                <Check size={11} />
+              ) : row.state === "current" ? (
+                <Spinner size={11} />
+              ) : (
+                <span />
+              )}
+            </span>
+            {row.label}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function DetailStatus({ state, onRetry }: Readonly<{ state: StatusState; onRetry: () => void }>) {
   const loading = state.status === "loading";
 
@@ -136,6 +183,9 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
+  const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
+  const analysisGenerationRef = useRef(0);
   const [failedPreviewUrl, setFailedPreviewUrl] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const previewTriggerRef = useRef<HTMLButtonElement>(null);
@@ -173,7 +223,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
     return () => controller.abort();
   }, [loadAttempt, normalizedSiteId]);
 
-  const analysisRefreshEnabled = state.status === "ready"
+  const analysisRefreshEnabled = !analyzing && state.status === "ready"
     ? hasRefreshableSiteAnalysis([state.site])
     : false;
   const refreshAnalysis = useCallback(async () => {
@@ -197,6 +247,49 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
     enabled: analysisRefreshEnabled,
     refresh: refreshAnalysis,
   });
+
+  useEffect(() => {
+    if (!analyzing || analysisStartedAt === null) return;
+    const update = () => {
+      setAnalysisElapsedSeconds(Math.max(0, Math.floor((Date.now() - analysisStartedAt) / 1_000)));
+    };
+    update();
+    const timer = window.setInterval(update, 1_000);
+    return () => window.clearInterval(timer);
+  }, [analysisStartedAt, analyzing]);
+
+  useEffect(() => {
+    if (!analyzing || !normalizedSiteId) return;
+    const controller = new AbortController();
+    const generation = analysisGenerationRef.current;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const site = await getLibrarySite(normalizedSiteId, controller.signal);
+        if (controller.signal.aborted || analysisGenerationRef.current !== generation) return;
+        setState((current) => (
+          current.status === "ready"
+          && current.site.id === site.id
+          && site.version >= current.site.version
+            ? { status: "ready", site }
+            : current
+        ));
+      } catch {
+        // The result POST remains authoritative. A transient progress read
+        // should neither stop analysis nor replace the usable detail page.
+      }
+      if (!controller.signal.aborted && analysisGenerationRef.current === generation) {
+        timer = window.setTimeout(poll, 800);
+      }
+    };
+
+    timer = window.setTimeout(poll, 200);
+    return () => {
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [analyzing, normalizedSiteId]);
 
   // loading 态在打开弹层/点击重试的事件里同步设置，效果内只负责发请求
   useEffect(() => {
@@ -277,7 +370,11 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
   /** 抓取公开网页，再由账号模型原子补全分类、标签、简介和详细介绍。 */
   const handleAnalyze = async (id: string) => {
     if (analyzing) return;
+    const generation = analysisGenerationRef.current + 1;
+    analysisGenerationRef.current = generation;
     setAnalyzing(true);
+    setAnalysisStartedAt(Date.now());
+    setAnalysisElapsedSeconds(0);
     setNotice(null);
     try {
       const result = await analyzeLibrarySite(id);
@@ -303,7 +400,11 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
         message: error instanceof Error ? error.message : "AI 分析入库失败，请稍后重试。",
       });
     } finally {
-      setAnalyzing(false);
+      if (analysisGenerationRef.current === generation) {
+        analysisGenerationRef.current += 1;
+        setAnalyzing(false);
+        setAnalysisStartedAt(null);
+      }
     }
   };
 
@@ -552,6 +653,12 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
                 </div>
               </div>
             </div>
+            {analyzing && (
+              <SiteAnalysisProgress
+                phase={site.analysisPhase ?? "queued"}
+                elapsedSeconds={analysisElapsedSeconds}
+              />
+            )}
           </section>
 
           <section className="sd-card sd-section" aria-labelledby="sd-desc-title">

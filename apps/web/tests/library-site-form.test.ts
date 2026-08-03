@@ -21,6 +21,7 @@ const site: LibrarySite = {
   pinned: false,
   source: "manual",
   analysisStatus: "complete",
+  analysisPhase: null,
   version: 4,
   createdAt: "2026-07-27T00:00:00Z",
   updatedAt: "2026-07-27T00:00:00Z",

@@ -222,7 +222,11 @@ async def resolve_optional_binding(
         return None
 
 
-def build_chat_model(binding: ProviderBinding):  # noqa: ANN201 - langchain type
+def build_chat_model(
+    binding: ProviderBinding,
+    *,
+    max_retries: int = 1,
+):  # noqa: ANN201 - langchain type
     """Build a streaming chat client for an OpenAI-compatible endpoint.
 
     Imported lazily so that importing ``webhub.agent`` stays cheap for the
@@ -233,12 +237,14 @@ def build_chat_model(binding: ProviderBinding):  # noqa: ANN201 - langchain type
 
     if binding.model_name is None:
         raise AgentProviderConfigurationInvalidError
+    if isinstance(max_retries, bool) or max_retries < 0:
+        raise ValueError("max_retries must be a non-negative integer")
     return ReasoningCompatibleChatOpenAI(
         model=binding.model_name,
         api_key=binding.client_api_key,
         base_url=binding.base_url,
         timeout=binding.timeout_seconds,
-        max_retries=1,
+        max_retries=max_retries,
         streaming=True,
         # These first-party endpoints implement the standard
         # stream_options.include_usage contract.  Generic compatible endpoints

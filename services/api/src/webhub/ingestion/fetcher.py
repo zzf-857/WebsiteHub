@@ -31,13 +31,21 @@ import re
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from ipaddress import IPv4Address, IPv6Address
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import parse_qs, urljoin, urlsplit
 
-from webhub.providers.targets import ProviderTargetError, resolve_resource_target
+from webhub.providers.targets import (
+    ProviderTargetError,
+    ResolvedConnectionTarget,
+    resolve_resource_target,
+    resource_target_from_addresses,
+)
 
 from .metadata import parse_metadata
+from .public_dns import resolve_public_hostname
 
 if TYPE_CHECKING:
     import httpx
@@ -149,12 +157,16 @@ _FAVICON_CACHE: OrderedDict[_FaviconCacheKey, _FaviconCacheEntry] = OrderedDict(
 _DECLARED_FAVICON_CACHE: OrderedDict[_DeclaredFaviconCacheKey, _FaviconCacheEntry] = (
     OrderedDict()
 )
+_FAKE_IP_RESOLUTION_CACHE: ContextVar[
+    dict[str, tuple[IPv4Address | IPv6Address, ...]] | None
+] = ContextVar("webhub_fake_ip_resolution_cache", default=None)
 
 
 # Every failure the user can see, in Chinese, composed here rather than taken
 # from the remote server.  A fetched page's own error text is untrusted content.
 _REASONS: dict[str, str] = {
     "unsafe_target": "该地址指向本机、内网或其他不允许访问的目标，已拒绝访问",
+    "proxy_dns_unavailable": "检测到代理 Fake-IP，但无法验证其真实公网地址，请稍后重试",
     "unreachable": "无法连接到该网站",
     "timeout": "访问该网站超时",
     "too_many_redirects": "跳转次数过多，已停止跟随",
@@ -385,6 +397,51 @@ def _log_origin(url: str) -> str:
     return f"{scheme}://{host}" if default_port else f"{scheme}://{host}:{port}"
 
 
+async def _resolve_fetch_target(
+    url: str,
+    *,
+    timeout_seconds: int,
+    allow_private: bool,
+) -> ResolvedConnectionTarget:
+    """Resolve normally, recovering only a proxy-generated Fake-IP answer."""
+
+    try:
+        return await resolve_resource_target(
+            url,
+            allow_private=allow_private,
+            timeout_seconds=timeout_seconds,
+        )
+    except ProviderTargetError as error:
+        if error.code != "resource_fake_ip_detected":
+            raise
+
+    try:
+        hostname = (urlsplit(url).hostname or "").rstrip(".").encode("idna").decode("ascii")
+    except (UnicodeError, ValueError) as error:
+        raise ProviderTargetError(
+            "invalid_resource_url",
+            "资源 URL 主机名无效",
+        ) from error
+    hostname = hostname.casefold()
+    if not hostname:
+        raise ProviderTargetError("invalid_resource_url", "资源 URL 主机名无效")
+
+    cache = _FAKE_IP_RESOLUTION_CACHE.get()
+    addresses = cache.get(hostname) if cache is not None else None
+    if addresses is None:
+        addresses = await resolve_public_hostname(
+            hostname,
+            timeout_seconds=timeout_seconds,
+        )
+        if cache is not None:
+            cache[hostname] = addresses
+    return resource_target_from_addresses(
+        url,
+        addresses,
+        allow_private=allow_private,
+    )
+
+
 @asynccontextmanager
 async def _pinned_stream(
     url: str,
@@ -397,7 +454,7 @@ async def _pinned_stream(
 
     import httpx
 
-    target = await resolve_resource_target(
+    target = await _resolve_fetch_target(
         url,
         allow_private=allow_private,
         timeout_seconds=timeout_seconds,
@@ -469,7 +526,7 @@ async def _validated_public_resource_url(url: str | None, *, timeout_seconds: in
     if not url:
         return None
     try:
-        target = await resolve_resource_target(
+        target = await _resolve_fetch_target(
             url,
             allow_private=False,
             timeout_seconds=timeout_seconds,
@@ -769,7 +826,7 @@ async def _fetch_site_metadata(
                         if not current.lower().startswith(("http://", "https://")):
                             return _outcome("failed", "unsafe_target")
                         continue
-                    if response.status_code != 200:
+                    if not 200 <= response.status_code < 300:
                         return await _attach_root_icon(
                             _outcome("failed", "http_error"),
                             page_url=request_url,
@@ -797,8 +854,13 @@ async def _fetch_site_metadata(
                         if len(body) >= MAX_BODY_BYTES:
                             truncated = True
                             break
-            except ProviderTargetError:
-                return _outcome("failed", "unsafe_target")
+            except ProviderTargetError as error:
+                code = (
+                    "proxy_dns_unavailable"
+                    if error.code == "resource_public_dns_unreachable"
+                    else "unsafe_target"
+                )
+                return _outcome("failed", code)
 
             final_url = request_url
             html = await _decoded(bytes(body), content_type)
@@ -808,15 +870,17 @@ async def _fetch_site_metadata(
             # bounded first chance; otherwise one slow og:image DNS lookup can
             # consume the whole analysis deadline and erase already-parsed page
             # metadata from the outcome.
-            icon_url = await _discover_icon_url(
-                page_url=final_url,
-                declared_urls=tuple(parsed.icon_hrefs),
-                timeout_seconds=min(timeout_seconds, MAX_ICON_DISCOVERY_SECONDS),
-                allow_private=allow_private,
-            )
-            image_url = await _validated_public_resource_url(
-                parsed.image_url,
-                timeout_seconds=min(timeout_seconds, MAX_PREVIEW_VALIDATION_SECONDS),
+            icon_url, image_url = await asyncio.gather(
+                _discover_icon_url(
+                    page_url=final_url,
+                    declared_urls=tuple(parsed.icon_hrefs),
+                    timeout_seconds=min(timeout_seconds, MAX_ICON_DISCOVERY_SECONDS),
+                    allow_private=allow_private,
+                ),
+                _validated_public_resource_url(
+                    parsed.image_url,
+                    timeout_seconds=min(timeout_seconds, MAX_PREVIEW_VALIDATION_SECONDS),
+                ),
             )
             preview_checked = (
                 not truncated
@@ -904,15 +968,19 @@ async def fetch_site_metadata(
         else total_timeout_seconds
     )
     platform_fallback = _trusted_platform_metadata(url)
+    resolution_cache_token = _FAKE_IP_RESOLUTION_CACHE.set({})
     try:
-        async with asyncio.timeout(total_timeout):
-            outcome = await _fetch_site_metadata(
-                url,
-                timeout_seconds=timeout_seconds,
-                allow_private=allow_private,
-            )
-    except TimeoutError:
-        outcome = _outcome("failed", "timeout")
+        try:
+            async with asyncio.timeout(total_timeout):
+                outcome = await _fetch_site_metadata(
+                    url,
+                    timeout_seconds=timeout_seconds,
+                    allow_private=allow_private,
+                )
+        except TimeoutError:
+            outcome = _outcome("failed", "timeout")
+    finally:
+        _FAKE_IP_RESOLUTION_CACHE.reset(resolution_cache_token)
     return _merge_trusted_platform_metadata(
         outcome,
         platform_fallback,

@@ -1,0 +1,266 @@
+/* Shared themed controls. Native select popovers are platform-owned and cannot
+   reliably follow WebHub's light/dark tokens, so ThemedSelect owns its DOM menu. */
+
+.themed-select {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.themed-select[data-variant="field"] {
+  width: 100%;
+}
+
+.themed-select-trigger {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px 0 11px;
+  gap: 8px;
+  color: var(--text);
+  background: var(--surface-input);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    color var(--duration-hover) var(--ease-standard),
+    background-color var(--duration-hover) var(--ease-standard),
+    border-color var(--duration-hover) var(--ease-standard),
+    box-shadow var(--duration-focus) var(--ease-standard);
+}
+
+.themed-select[data-variant="toolbar"] .themed-select-trigger {
+  min-width: 132px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.themed-select[data-variant="plain"] .themed-select-trigger {
+  width: auto;
+  min-height: 32px;
+  padding: 0 4px;
+  color: var(--text-subtle);
+  background: transparent;
+  border-color: transparent;
+}
+
+.themed-select-trigger:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: color-mix(in srgb, var(--line-strong) 72%, var(--text));
+}
+
+.themed-select[data-variant="plain"] .themed-select-trigger:hover:not(:disabled) {
+  color: var(--text-muted);
+  background: var(--surface-subtle);
+  border-color: transparent;
+}
+
+.themed-select-trigger:focus-visible,
+.themed-select[data-open] .themed-select-trigger {
+  border-color: var(--focus);
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 15%, transparent);
+}
+
+.themed-select[data-variant="plain"] .themed-select-trigger:focus-visible,
+.themed-select[data-variant="plain"][data-open] .themed-select-trigger {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 18%, transparent);
+}
+
+.themed-select[data-invalid] .themed-select-trigger {
+  border-color: var(--danger);
+}
+
+.themed-select-trigger:disabled {
+  color: var(--text-disabled);
+  background: var(--surface-subtle);
+  border-color: var(--line);
+  cursor: not-allowed;
+}
+
+.themed-select-value {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.themed-select-chevron {
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  stroke-width: 1.8;
+  transition: transform var(--duration-panel) var(--ease-standard);
+}
+
+.themed-select[data-open] .themed-select-chevron {
+  transform: rotate(180deg);
+}
+
+.themed-select-popover {
+  position: fixed;
+  z-index: 110;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  visibility: hidden;
+}
+
+.themed-select-popover[data-positioned] {
+  visibility: visible;
+}
+
+.themed-select-search {
+  display: flex;
+  flex: 0 0 42px;
+  min-width: 0;
+  align-items: center;
+  padding: 0 10px;
+  gap: 8px;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--line);
+}
+
+.themed-select-search > svg {
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
+}
+
+.themed-select-search input {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 13px;
+}
+
+.themed-select-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.themed-select-listbox {
+  min-height: 0;
+  padding: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.themed-select-option {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px 7px 10px;
+  gap: 10px;
+  color: var(--text-secondary);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.themed-select-option + .themed-select-option {
+  margin-top: 2px;
+}
+
+.themed-select-option[data-active] {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.themed-select-option[data-selected] {
+  color: var(--accent-strong);
+  background: var(--accent-tint);
+  font-weight: 620;
+}
+
+.themed-select-option[data-active][data-selected] {
+  background: var(--accent-soft);
+}
+
+.themed-select-option:disabled {
+  color: var(--text-disabled);
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.themed-select-option-label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.themed-select-option-check {
+  display: inline-grid;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: var(--accent-strong);
+  opacity: 0;
+}
+
+.themed-select-option-check[data-visible] {
+  opacity: 1;
+}
+
+.themed-select-option-check svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
+}
+
+.themed-select-empty {
+  display: grid;
+  min-height: 72px;
+  place-items: center;
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (pointer: coarse) {
+  .themed-select[data-variant="plain"] .themed-select-trigger,
+  .themed-select-option {
+    min-height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .themed-select-trigger,
+  .themed-select-chevron {
+    transition: none;
+  }
+}

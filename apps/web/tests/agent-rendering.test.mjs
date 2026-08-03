@@ -66,6 +66,20 @@ test("saved tool links navigate to WebHub detail pages", async () => {
   assert.match(thread, /<SiteFavicon url=\{item\.faviconUrl\}/u);
 });
 
+test("reasoning disclosure follows streaming transitions without overriding later user toggles", async () => {
+  const thread = await readFile(THREAD, "utf8");
+
+  assert.match(thread, /const detailsRef = useRef<HTMLDetailsElement \| null>\(null\)/u);
+  assert.match(thread, /const previousStreamingRef = useRef<boolean \| null>\(null\)/u);
+  assert.match(thread, /if \(streaming && previousStreaming !== true\) \{\s*details\.open = true;/u);
+  assert.match(
+    thread,
+    /else if \(!streaming && previousStreaming === true\) \{\s*details\.open = false;/u,
+  );
+  assert.match(thread, /ref=\{detailsRef\}/u);
+  assert.doesNotMatch(thread, /if \(element && streaming\) element\.open = true/u);
+});
+
 test("complete Agent results use numbered pagination with icon navigation", async () => {
   const pagination = await readFile(RESULT_PAGINATION, "utf8");
 

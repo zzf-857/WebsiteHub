@@ -193,8 +193,20 @@ function ReasoningDisclosure({
   reducedMotion: boolean;
 }>) {
   const [liveDurationMs, setLiveDurationMs] = useState(0);
-  const initializeDetails = useCallback((element: HTMLDetailsElement | null) => {
-    if (element && streaming) element.open = true;
+  const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  const previousStreamingRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    const previousStreaming = previousStreamingRef.current;
+    previousStreamingRef.current = streaming;
+    const details = detailsRef.current;
+    if (!details) return;
+
+    if (streaming && previousStreaming !== true) {
+      details.open = true;
+    } else if (!streaming && previousStreaming === true) {
+      details.open = false;
+    }
   }, [streaming]);
 
   useEffect(() => {
@@ -209,7 +221,7 @@ function ReasoningDisclosure({
   return (
     <details
       className="chat-reasoning"
-      ref={initializeDetails}
+      ref={detailsRef}
     >
       <summary>
         <Brain aria-hidden="true" />

@@ -2,12 +2,14 @@ import {
   assertLibraryBulkDeleteItems,
   assertLibraryCategoryName,
   assertLibraryExpectedVersion,
+  assertMetadataBackfillRequest,
   assertLibrarySiteCreateInput,
   assertLibrarySiteCreateSource,
   assertLibrarySiteUpdateInput,
   assertLibraryTagName,
   libraryTagNameKey,
   libraryErrorDetails,
+  METADATA_BACKFILL_LIMITS,
   normalizeLibraryAnalysisBackfill,
   normalizeLibraryBulkDeleteResult,
   normalizeCategoryDeletePreview,
@@ -20,7 +22,13 @@ import {
   normalizeLibraryTag,
   normalizeLibraryTags,
   normalizeLibraryTagName,
+  normalizeMetadataBackfillPlan,
   normalizeMetadataBackfillProgress,
+  normalizeSiteSimilarityApply,
+  normalizeSiteSimilarityDecision,
+  normalizeSiteSimilarityGroupPage,
+  normalizeSiteSimilarityRecommendedDecision,
+  normalizeSiteSimilarityScan,
   type LibraryCategory,
   type LibraryAnalysisBackfill,
   type LibraryBulkDeleteItem,
@@ -35,13 +43,29 @@ import {
   type LibrarySiteSelectionItem,
   type LibrarySiteUpdateInput,
   type LibraryTag,
+  type MetadataBackfillPlan,
   type MetadataBackfillProgress,
+  type MetadataBackfillRequest,
+  type SiteSimilarityApplyResult,
+  type SiteSimilarityDecisionResult,
+  type SiteSimilarityGroupKind,
+  type SiteSimilarityGroupPage,
+  type SiteSimilarityRecommendedDecisionResult,
+  type SiteSimilarityScan,
 } from "./library-contract.ts";
 
 const LIBRARY_BASE = "/api/backend/library";
 export const DEFAULT_LIBRARY_PAGE_SIZE = 24;
 export const MAX_LIBRARY_PAGE_SIZE = 100;
 export const MAX_LIBRARY_ANALYSIS_BACKFILL = 5_000;
+export const DEFAULT_SITE_SIMILARITY_GROUP_PAGE_SIZE = 12;
+export const MAX_SITE_SIMILARITY_GROUP_PAGE_SIZE = 24;
+
+function isSiteSimilarityGroupFilter(
+  value: unknown,
+): value is SiteSimilarityGroupKind | "all" {
+  return value === "all" || value === "duplicate" || value === "same_site";
+}
 
 export class LibraryApiError extends Error {
   status: number;
@@ -273,6 +297,132 @@ export async function deleteLibrarySites(
   }));
 }
 
+export async function startSiteSimilarityScan(
+  signal?: AbortSignal,
+): Promise<SiteSimilarityScan> {
+  return normalizeSiteSimilarityScan(await request("/site-similarity-scans", {
+    method: "POST",
+    signal,
+  }));
+}
+
+export async function getActiveSiteSimilarityScan(
+  signal?: AbortSignal,
+): Promise<SiteSimilarityScan | null> {
+  const payload = await request("/site-similarity-scans/active", { signal });
+  return payload === null ? null : normalizeSiteSimilarityScan(payload);
+}
+
+export async function listSiteSimilarityGroups(
+  runId: string,
+  query: {
+    kind?: SiteSimilarityGroupKind | "all";
+    cursor?: string;
+    page?: number;
+    limit?: number;
+  } = {},
+  signal?: AbortSignal,
+): Promise<SiteSimilarityGroupPage> {
+  const requestedKind = query.kind ?? "all";
+  if (!isSiteSimilarityGroupFilter(requestedKind)) {
+    throw new TypeError("相似网站分区无效");
+  }
+  const requestedLimit = query.limit ?? DEFAULT_SITE_SIMILARITY_GROUP_PAGE_SIZE;
+  if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1) {
+    throw new TypeError("相似网站分组页大小必须是正整数");
+  }
+  const requestedPage = query.page ?? 1;
+  if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) {
+    throw new TypeError("相似网站页码必须是正整数");
+  }
+  const cursor = query.cursor?.trim();
+  if (cursor && query.page !== undefined) {
+    throw new TypeError("相似网站页码和游标不能同时使用");
+  }
+  const params = new URLSearchParams({
+    kind: requestedKind,
+    limit: String(Math.min(requestedLimit, MAX_SITE_SIMILARITY_GROUP_PAGE_SIZE)),
+  });
+  if (cursor) params.set("cursor", cursor);
+  else params.set("page", String(requestedPage));
+  return normalizeSiteSimilarityGroupPage(await request(
+    `/site-similarity-scans/${encodeId(runId)}/groups?${params.toString()}`,
+    { signal },
+  ));
+}
+
+export async function selectRecommendedSiteSimilarityDecisions(
+  runId: string,
+  input: {
+    kind: SiteSimilarityGroupKind | "all";
+    expectedVersion: number;
+  },
+  signal?: AbortSignal,
+): Promise<SiteSimilarityRecommendedDecisionResult> {
+  if (!isSiteSimilarityGroupFilter(input.kind)) {
+    throw new TypeError("相似网站分区无效");
+  }
+  const decision = normalizeSiteSimilarityRecommendedDecision(await request(
+    `/site-similarity-scans/${encodeId(runId)}/decisions/recommended`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        kind: input.kind,
+        expected_version: assertLibraryExpectedVersion(input.expectedVersion),
+      }),
+      signal,
+    },
+  ));
+  if (decision.kind !== input.kind) {
+    throw new TypeError("相似网站批量选择响应分区不一致");
+  }
+  return decision;
+}
+
+export async function saveSiteSimilarityDecision(
+  runId: string,
+  groupId: string,
+  input: { keepSiteIds: string[]; expectedVersion: number },
+  signal?: AbortSignal,
+): Promise<SiteSimilarityDecisionResult> {
+  if (!Array.isArray(input.keepSiteIds) || input.keepSiteIds.length > 10_000) {
+    throw new TypeError("保留网站列表无效");
+  }
+  const keepSiteIds = input.keepSiteIds.map((siteId) => siteId.trim());
+  if (keepSiteIds.some((siteId) => !siteId)) throw new TypeError("保留网站 ID 不能为空");
+  if (new Set(keepSiteIds).size !== keepSiteIds.length) {
+    throw new TypeError("保留网站不能重复");
+  }
+  return normalizeSiteSimilarityDecision(await request(
+    `/site-similarity-scans/${encodeId(runId)}/groups/${encodeId(groupId)}/decision`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        keep_site_ids: keepSiteIds,
+        expected_version: assertLibraryExpectedVersion(input.expectedVersion),
+      }),
+      signal,
+    },
+  ));
+}
+
+export async function applySiteSimilarityScan(
+  runId: string,
+  expectedVersion: number,
+  signal?: AbortSignal,
+): Promise<SiteSimilarityApplyResult> {
+  return normalizeSiteSimilarityApply(await request(
+    `/site-similarity-scans/${encodeId(runId)}/apply`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        expected_version: assertLibraryExpectedVersion(expectedVersion),
+      }),
+      signal,
+    },
+  ));
+}
+
 /**
  * Fetch public page evidence, run the account's model through the three
  * constrained enrichment tools, then atomically store allowed derived fields.
@@ -295,10 +445,34 @@ export async function backfillLibrarySiteMetadata(
   }));
 }
 
+/** Preview the immutable target snapshot before spending network or model capacity. */
+export async function getMetadataBackfillPlan(
+  input: MetadataBackfillRequest,
+  signal?: AbortSignal,
+): Promise<MetadataBackfillPlan> {
+  const normalized = assertMetadataBackfillRequest(input);
+  const params = new URLSearchParams({
+    mode: normalized.mode,
+    limit: String(normalized.limit),
+  });
+  return normalizeMetadataBackfillPlan(await request(
+    `/metadata-backfills/plan?${params.toString()}`,
+    { signal },
+  ));
+}
+
 /** Start (or join) the account's durable metadata backfill job. */
-export async function startMetadataBackfill(signal?: AbortSignal): Promise<MetadataBackfillProgress> {
+export async function startMetadataBackfill(
+  input: MetadataBackfillRequest = {
+    mode: "metadata",
+    limit: METADATA_BACKFILL_LIMITS.metadata.defaultLimit,
+  },
+  signal?: AbortSignal,
+): Promise<MetadataBackfillProgress> {
+  const normalized = assertMetadataBackfillRequest(input);
   return normalizeMetadataBackfillProgress(await request("/metadata-backfills", {
     method: "POST",
+    body: JSON.stringify(normalized),
     signal,
   }));
 }

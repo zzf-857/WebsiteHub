@@ -1,11 +1,17 @@
 "use client";
 
 import { Compass, Database, FileUp, LogOut, Search, Settings, Sparkles } from "lucide-react";
+import { motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { useAuth } from "@/components/auth/auth-context";
+import {
+  LIBRARY_SEARCH_LAYOUT_ID,
+  LIBRARY_SEARCH_LAYOUT_TRANSITION,
+  useLibrarySearchTransition,
+} from "@/components/library-search-transition";
 import { Spinner } from "@/components/react-bits/spinner";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -47,12 +53,18 @@ export function SiteHeader() {
   const router = useRouter();
   const auth = useAuth();
   const accountRef = useRef<HTMLDetailsElement | null>(null);
+  const searchEntryRef = useRef<HTMLButtonElement | null>(null);
+  const {
+    active: searchTransitionActive,
+    start: startSearchTransition,
+  } = useLibrarySearchTransition();
   const [health, setHealth] = useState<HealthState>("checking");
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   /* 设计稿 1c：首页滚过 Agent 模块后 Header 收紧（64px → 56px），
      搜索框让位给「回到 Agent」。仅首页启用，其他路由永远保持常规形态。 */
   const isHome = pathname === "/";
+  const isLibrarySection = pathname === "/library" || pathname.startsWith("/library/");
   const [compact, setCompact] = useState(false);
   const searchKeyLabel = useSyncExternalStore(
     subscribeNoop,
@@ -146,9 +158,13 @@ export function SiteHeader() {
     });
   }, []);
 
-  const openSearch = useCallback(() => {
-    router.push("/library?focus=search");
-  }, [router]);
+  const openSearch = useCallback((trigger: "pointer" | "keyboard") => {
+    startSearchTransition({
+      // 键盘用户已经准备输入，优先立即聚焦；鼠标点击才播放完整的长距离转场。
+      animate: trigger === "pointer" && searchEntryRef.current !== null,
+      trigger,
+    });
+  }, [startSearchTransition]);
 
   /* 全局 ⌘K/Ctrl+K 唤起搜索；输入场景不抢占，卸载时清理监听。 */
   useEffect(() => {
@@ -156,7 +172,7 @@ export function SiteHeader() {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
       if (isTypingTarget(event.target)) return;
       event.preventDefault();
-      openSearch();
+      openSearch("keyboard");
     };
 
     window.addEventListener("keydown", handleKeydown);
@@ -168,7 +184,7 @@ export function SiteHeader() {
     accountRef.current?.removeAttribute("open");
   }, [pathname]);
 
-  /* details/summary 原生不支持点击外部关闭，这里补上以符合浮层的常规预期。 */
+  /* details/summary 原生不支持点击外部或 Escape 关闭，这里补齐浮层的常规预期。 */
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
       const details = accountRef.current;
@@ -176,9 +192,20 @@ export function SiteHeader() {
       if (event.target instanceof Node && details.contains(event.target)) return;
       details.removeAttribute("open");
     };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const details = accountRef.current;
+      if (event.key !== "Escape" || !details?.open) return;
+      event.preventDefault();
+      details.removeAttribute("open");
+      details.querySelector<HTMLElement>("summary")?.focus();
+    };
 
     window.addEventListener("pointerdown", handlePointerDown);
-    return () => window.removeEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, []);
 
   const handleLogout = async () => {
@@ -229,16 +256,20 @@ export function SiteHeader() {
 
       {/* 紧凑态下搜索框被「回到 Agent」取代，但上面的 ⌘K/Ctrl+K 全局监听
           与渲染无关，快捷键依旧能唤起搜索，能力不因吸顶而消失。 */}
-      {compact ? (
+      {isLibrarySection ? null : compact ? (
         <button className="app-back-to-agent" type="button" onClick={handleBackToAgent}>
           <Sparkles aria-hidden="true" />
           <span>回到 Agent</span>
         </button>
       ) : (
-        <button
+        <motion.button
+          ref={searchEntryRef}
           className="app-search-entry"
           type="button"
-          onClick={openSearch}
+          layoutId={searchTransitionActive ? LIBRARY_SEARCH_LAYOUT_ID : undefined}
+          transition={LIBRARY_SEARCH_LAYOUT_TRANSITION}
+          data-transitioning={searchTransitionActive || undefined}
+          onClick={(event) => openSearch(event.detail === 0 ? "keyboard" : "pointer")}
           aria-label={`精确搜索站内网址（快捷键 ${searchKeyLabel}）`}
         >
           <Search aria-hidden="true" />
@@ -246,7 +277,7 @@ export function SiteHeader() {
           <kbd className="app-search-kbd" aria-hidden="true">
             {searchKeyLabel}
           </kbd>
-        </button>
+        </motion.button>
       )}
 
       <ThemeToggle className="header-icon-btn" />

@@ -14,12 +14,14 @@ import {
   Pin,
   Plus,
   RefreshCw,
+  ScanSearch,
   Search,
   Tags,
   Trash2,
   WandSparkles,
   X,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import {
   LibraryDialog,
@@ -40,15 +42,29 @@ import {
   siteHost,
 } from "@/components/library/library-workspace-parts";
 import { useLibraryWorkspace } from "@/components/library/use-library-workspace";
+import {
+  LIBRARY_LAYOUT_STORAGE_KEY,
+  LIBRARY_SEARCH_LAYOUT_ID,
+  LIBRARY_SEARCH_LAYOUT_TRANSITION,
+  useLibrarySearchTransition,
+} from "@/components/library-search-transition";
+import { SiteSimilarityReview } from "@/components/library/site-similarity-review";
+import { ThemedSelect } from "@/components/ui/themed-select";
 import { MAX_LIBRARY_BULK_DELETE_SITES } from "@/lib/library-contract";
+import type { LibrarySort } from "@/lib/library-contract";
 
 type LibraryLayoutMode = "centered" | "full";
-
-const LIBRARY_LAYOUT_STORAGE_KEY = "webhub:library-layout-mode";
 
 export function LibraryWorkspace() {
   const [layoutMode, setLayoutMode] = useState<LibraryLayoutMode>("centered");
   const [layoutReady, setLayoutReady] = useState(false);
+  const [similarityOpen, setSimilarityOpen] = useState(false);
+  const [similarityBusy, setSimilarityBusy] = useState(false);
+  const {
+    active: searchTransitionActive,
+    finish: finishSearchTransition,
+    registerTarget: registerSearchTarget,
+  } = useLibrarySearchTransition();
   const {
     allLoadedSelected,
     allMatchingSelected,
@@ -59,6 +75,7 @@ export function LibraryWorkspace() {
     categories,
     categoryId,
     closeDialog,
+    clearFilters,
     clearSelection,
     collectionProps,
     dialog,
@@ -86,6 +103,7 @@ export function LibraryWorkspace() {
     regularPage,
     searchInput,
     searchInputRef,
+    searchQuery,
     selectedSites,
     selectionMode,
     setCategoryId,
@@ -93,7 +111,6 @@ export function LibraryWorkspace() {
     setNotice,
     setPinnedOnly,
     setSearchInput,
-    setSearchQuery,
     setSelectionMode,
     setTagId,
     setViewMode,
@@ -111,6 +128,16 @@ export function LibraryWorkspace() {
     viewMode,
   } = useLibraryWorkspace();
 
+  // 相关度排序要求后端实际收到搜索词；输入框刚开始防抖时也保持禁用，
+  // 避免用户快速选择后先发出 relevance + 空查询的请求。
+  const relevanceSortAvailable = Boolean(searchInput.trim() && searchQuery);
+
+  useEffect(() => {
+    const target = searchInputRef.current;
+    registerSearchTarget(target);
+    return () => registerSearchTarget(null);
+  }, [registerSearchTarget, searchInputRef]);
+
   useEffect(() => {
     let readyFrame = 0;
     let storedMode: LibraryLayoutMode | null = null;
@@ -120,10 +147,11 @@ export function LibraryWorkspace() {
     } catch {
       // 隐私模式或浏览器策略禁用存储时，保留默认的居中阅读布局。
     }
-    // 先无动画应用持久化宽度，下一帧再允许后续的用户触发动画。
+    // 转场首帧由根属性先锁定最终宽度；随后分两帧让 React 状态接管，
+    // 再开启用户主动切换宽度时的动画，避免目标搜索框在飞行中二次位移。
     readyFrame = window.requestAnimationFrame(() => {
       if (storedMode !== null) setLayoutMode(storedMode);
-      setLayoutReady(true);
+      readyFrame = window.requestAnimationFrame(() => setLayoutReady(true));
     });
     return () => window.cancelAnimationFrame(readyFrame);
   }, []);
@@ -187,6 +215,15 @@ export function LibraryWorkspace() {
               <WandSparkles aria-hidden="true" />
             )}
             {analysisBackfillBusy ? "正在启动" : "补全网站信息"}
+          </button>
+          <button
+            className="library-button secondary"
+            type="button"
+            onClick={() => setSimilarityOpen(true)}
+            disabled={totalLibrarySites === 0}
+          >
+            <ScanSearch aria-hidden="true" />
+            排查相似网站
           </button>
           <button
             className="library-button secondary"
@@ -268,50 +305,75 @@ export function LibraryWorkspace() {
 
         <div className="library-content">
           <div className="library-toolbar">
-            <label className="library-search-field">
+            <motion.label
+              className="library-search-field"
+              layoutId={searchTransitionActive ? LIBRARY_SEARCH_LAYOUT_ID : undefined}
+              transition={LIBRARY_SEARCH_LAYOUT_TRANSITION}
+              data-search-transition-target={searchTransitionActive || undefined}
+              onLayoutAnimationComplete={() => {
+                if (searchTransitionActive) finishSearchTransition();
+              }}
+            >
               <Search aria-hidden="true" />
               <span className="sr-only">搜索网址库</span>
               <input
                 ref={searchInputRef}
+                data-library-search-input
                 type="search"
                 placeholder="搜索名称、网址或描述"
                 value={searchInput}
                 onChange={(event) => {
+                  const nextSearchInput = event.target.value;
                   clearSelection();
-                  setSearchInput(event.target.value);
+                  setSearchInput(nextSearchInput);
+                  if (!nextSearchInput.trim() && sort === "relevance") {
+                    handleSortChange("updated");
+                  }
                 }}
               />
-            </label>
-            <label className="library-filter-select">
+            </motion.label>
+            <div className="library-filter-select">
               <Tags aria-hidden="true" />
-              <span className="sr-only">按标签筛选</span>
-              <select
-                value={tagId}
-                onChange={(event) => {
-                  clearSelection();
-                  setTagId(event.target.value);
-                }}
+              <ThemedSelect<string>
+                ariaLabel="按标签筛选"
+                className="library-toolbar-select"
                 disabled={taxonomyLoading}
-              >
-                <option value="">全部标签</option>
-                {tags.map((tag) => (
-                  <option key={tag.id} value={tag.id}>{tag.name} ({tag.siteCount})</option>
-                ))}
-              </select>
-            </label>
-            <label className="library-filter-select">
-              <span className="sr-only">排序字段</span>
-              <select value={sort} onChange={handleSortChange}>
-                <option value="updated">最近更新</option>
-                <option value="created">创建时间</option>
-                <option value="name">网站名称</option>
-                <option value="custom">自定义顺序</option>
-                {/* 没有搜索词时后端会 422，所以直接禁用而不是让用户选了才报错 */}
-                <option value="relevance" disabled={!searchInput.trim()}>
-                  相关度{searchInput.trim() ? "" : "（需先输入搜索词）"}
-                </option>
-              </select>
-            </label>
+                options={[
+                  { value: "", label: "全部标签" },
+                  ...tags.map((tag) => ({
+                    value: tag.id,
+                    label: `${tag.name} (${tag.siteCount})`,
+                  })),
+                ]}
+                variant="toolbar"
+                value={tagId}
+                onValueChange={(nextTagId) => {
+                  clearSelection();
+                  setTagId(nextTagId);
+                }}
+              />
+            </div>
+            <div className="library-filter-select">
+              <ThemedSelect<LibrarySort>
+                ariaLabel="排序字段"
+                className="library-toolbar-select"
+                options={[
+                  { value: "updated", label: "最近更新" },
+                  { value: "created", label: "创建时间" },
+                  { value: "name", label: "网站名称" },
+                  { value: "custom", label: "自定义顺序" },
+                  {
+                    value: "relevance",
+                    label: `相关度${relevanceSortAvailable ? "" : "（需先输入搜索词）"}`,
+                    // 没有搜索词时后端会 422，所以直接禁用而不是让用户选了才报错。
+                    disabled: !relevanceSortAvailable,
+                  },
+                ]}
+                variant="toolbar"
+                value={sort}
+                onValueChange={handleSortChange}
+              />
+            </div>
             <button
               className="icon-button library-direction-button"
               type="button"
@@ -354,14 +416,7 @@ export function LibraryWorkspace() {
               {hasActiveFilters && (
                 <button
                   type="button"
-                  onClick={() => {
-                    clearSelection();
-                    setSearchInput("");
-                    setSearchQuery("");
-                    setCategoryId("");
-                    setTagId("");
-                    setPinnedOnly(false);
-                  }}
+                  onClick={clearFilters}
                 >
                   清除筛选
                 </button>
@@ -468,14 +523,7 @@ export function LibraryWorkspace() {
                 <button
                   className="library-button secondary"
                   type="button"
-                  onClick={() => {
-                    clearSelection();
-                    setSearchInput("");
-                    setSearchQuery("");
-                    setCategoryId("");
-                    setTagId("");
-                    setPinnedOnly(false);
-                  }}
+                  onClick={clearFilters}
                 >
                   清除筛选
                 </button>
@@ -660,6 +708,27 @@ export function LibraryWorkspace() {
               </button>
             </footer>
           </div>
+        )}
+      </LibraryDialog>
+
+      <LibraryDialog
+        open={similarityOpen}
+        title="排查相似网站"
+        description="审阅当前账号网址库中的高度相似网址和同站页面。"
+        size="large"
+        closeDisabled={similarityBusy}
+        onClose={() => setSimilarityOpen(false)}
+      >
+        {similarityOpen && (
+          <SiteSimilarityReview
+            onBusyChange={setSimilarityBusy}
+            onApplied={async (result) => {
+              clearSelection();
+              refreshSites();
+              await loadTaxonomies().catch(() => undefined);
+              setNotice(`清理完成：保留 ${result.keptSiteCount} 个主网站，移除 ${result.deletedSiteCount} 个网站。`);
+            }}
+          />
         )}
       </LibraryDialog>
     </main>

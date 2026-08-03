@@ -44,10 +44,13 @@ type AgentPanelProps = {
 export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
   const {
     activeToolCalls,
+    activeCommandOptionId,
     answerStreaming,
     applyPrompt,
     busy,
     commandPanel,
+    commandPanelId,
+    commandPanelOpen,
     conversationId,
     conversationStarted,
     draftStates,
@@ -61,9 +64,12 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
     headerTime,
     headerTitle,
     historyGroups,
+    handleHistoryMenuKeyDown,
+    handleHistoryTriggerKeyDown,
     historyOpen,
     historyRef,
     historyStatus,
+    historyTriggerRef,
     input,
     messages,
     openConversation,
@@ -126,18 +132,25 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
           </div>
           <div className="agent-history" ref={historyRef}>
             <button
+              ref={historyTriggerRef}
               type="button"
               className="agent-head-button"
               aria-haspopup="menu"
               aria-expanded={historyOpen}
               disabled={interactionLocked}
               onClick={toggleHistory}
+              onKeyDown={handleHistoryTriggerKeyDown}
             >
               <History aria-hidden="true" />
               历史
             </button>
             {historyOpen && (
-              <div className="agent-history-menu" role="menu" aria-label="历史会话">
+              <div
+                className="agent-history-menu"
+                role="menu"
+                aria-label="历史会话"
+                onKeyDown={handleHistoryMenuKeyDown}
+              >
                 {historyStatus === "loading" && (
                   <p className="agent-history-note">正在读取历史会话…</p>
                 )}
@@ -292,6 +305,11 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
                 rows={1}
                 value={input}
                 disabled={draftWorkflowBusy}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={commandPanelOpen}
+                aria-controls={commandPanelOpen ? commandPanelId : undefined}
+                aria-activedescendant={activeCommandOptionId}
                 placeholder="继续追问，或让我把结果加入某个 Space…"
                 onChange={handleInputChange}
                 onKeyDown={handleInputKeyDown}
@@ -332,6 +350,11 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
               rows={1}
               value={input}
               disabled={draftWorkflowBusy}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={commandPanelOpen}
+              aria-controls={commandPanelOpen ? commandPanelId : undefined}
+              aria-activedescendant={activeCommandOptionId}
               placeholder="描述你要找的网站，或粘贴一个/多个 URL 直接入库…"
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}

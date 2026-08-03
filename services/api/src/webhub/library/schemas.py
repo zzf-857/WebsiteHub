@@ -165,6 +165,13 @@ class SiteResponse(BaseModel):
     pinned: bool
     source: Literal["manual", "agent", "browser_import", "backup"]
     analysis_status: Literal["not_analyzed", "pending", "complete", "failed", "limited"]
+    analysis_phase: Literal[
+        "fetching_page",
+        "preparing_evidence",
+        "waiting_model",
+        "calling_model",
+        "saving_result",
+    ] | None
     version: int
     created_at: datetime
     updated_at: datetime
@@ -210,10 +217,38 @@ class SiteAnalysisBackfillResponse(BaseModel):
     remaining_count: int
 
 
+MetadataBackfillMode = Literal["metadata", "full"]
+MetadataBackfillStopReason = Literal[
+    "provider_rate_limited",
+    "provider_temporary_failure",
+    "provider_unavailable",
+    "internal_error",
+]
+
+
+class MetadataBackfillStartRequest(StrictRequest):
+    """Bound one user-triggered run before any outbound work starts."""
+
+    mode: MetadataBackfillMode = "metadata"
+    limit: int = Field(default=200, ge=1, le=500)
+
+
+class MetadataBackfillPlanResponse(BaseModel):
+    """Exact database selection preview for a proposed bounded run."""
+
+    mode: MetadataBackfillMode
+    requested_limit: int = Field(ge=1)
+    max_limit: int = Field(ge=1)
+    eligible_count: int = Field(ge=0)
+    selected_count: int = Field(ge=0)
+    llm_count: int = Field(ge=0)
+
+
 class MetadataBackfillProgressResponse(BaseModel):
     """A fixed-denominator snapshot for the homepage metadata command."""
 
     id: str
+    mode: MetadataBackfillMode
     status: Literal[
         "queued",
         "running",
@@ -222,6 +257,8 @@ class MetadataBackfillProgressResponse(BaseModel):
         "failed",
     ]
     stopped_early: bool
+    stop_reason: MetadataBackfillStopReason | None
+    provider_retry_at: datetime | None
     total_count: int = Field(ge=0)
     queued_count: int = Field(ge=0)
     running_count: int = Field(ge=0)
@@ -300,3 +337,106 @@ class SiteReorderRequest(StrictRequest):
     # 移动块落在这个网站之前；None 表示放到末尾。用锚点而不是绝对下标：
     # 下标在用户看着的那份列表之外一变就失效，「放在它前面」不会。
     before_site_id: str | None = None
+
+
+SiteSimilarityKind = Literal["duplicate", "same_site"]
+SiteSimilarityKindFilter = Literal["duplicate", "same_site", "all"]
+SiteSimilarityRunStatus = Literal["ready", "applied", "superseded"]
+SiteSimilarityKeepSiteId = Annotated[str, Field(min_length=1, max_length=64)]
+
+
+class SiteSimilarityScanResponse(BaseModel):
+    id: str
+    status: SiteSimilarityRunStatus
+    ruleset_version: str
+    source_site_count: int = Field(ge=0)
+    group_count: int = Field(ge=0)
+    duplicate_group_count: int = Field(ge=0)
+    same_site_group_count: int = Field(ge=0)
+    candidate_site_count: int = Field(ge=0)
+    selected_group_count: int = Field(ge=0)
+    selected_delete_count: int = Field(ge=0)
+    version: int = Field(ge=1)
+    decision_version: int = Field(ge=1)
+    created_at: datetime
+    applied_at: datetime | None
+
+
+class SiteSimilarityMemberResponse(SiteResponse):
+    """A full site card frozen at scan time, not a live library row."""
+
+    is_recommended: bool
+
+
+class SiteSimilarityGroupResponse(BaseModel):
+    id: str
+    kind: SiteSimilarityKind
+    site_key: str
+    display_host: str
+    member_count: int = Field(ge=2)
+    recommended_site_id: str
+    keep_site_ids: list[str]
+    members: list[SiteSimilarityMemberResponse]
+
+
+class SiteSimilarityGroupPageResponse(BaseModel):
+    items: list[SiteSimilarityGroupResponse]
+    next_cursor: str | None
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=24)
+    total_count: int = Field(ge=0)
+    total_pages: int = Field(ge=0)
+    decision_version: int = Field(ge=1)
+
+
+class SiteSimilarityDecisionRequest(StrictRequest):
+    keep_site_ids: list[SiteSimilarityKeepSiteId] = Field(
+        default_factory=list,
+        max_length=10_000,
+    )
+    expected_version: int = Field(ge=1)
+
+    @field_validator("keep_site_ids")
+    @classmethod
+    def unique_keep_site_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("keep_site_ids 不能包含重复网站")
+        return value
+
+
+class SiteSimilarityDecisionResponse(BaseModel):
+    group_id: str
+    keep_site_ids: list[str]
+    decision_version: int = Field(ge=1)
+    selected_group_count: int = Field(ge=0)
+    selected_delete_count: int = Field(ge=0)
+
+
+class SiteSimilarityRecommendedDecisionRequest(StrictRequest):
+    kind: SiteSimilarityKindFilter
+    expected_version: int = Field(ge=1)
+
+
+class SiteSimilarityRecommendedDecisionResponse(BaseModel):
+    kind: SiteSimilarityKindFilter
+    matched_group_count: int = Field(ge=0)
+    updated_group_count: int = Field(ge=0)
+    decision_version: int = Field(ge=1)
+    selected_group_count: int = Field(ge=0)
+    selected_delete_count: int = Field(ge=0)
+
+
+class SiteSimilarityApplyRequest(StrictRequest):
+    expected_version: int = Field(ge=1)
+
+
+class SiteSimilarityApplyResponse(BaseModel):
+    id: str
+    status: Literal["applied"]
+    decision_version: int = Field(ge=1)
+    merged_group_count: int = Field(ge=0)
+    deleted_site_count: int = Field(ge=0)
+    kept_site_count: int = Field(ge=0)
+    deleted_site_ids: list[str]
+    kept_site_ids: list[str]
+    applied_at: datetime

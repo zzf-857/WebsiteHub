@@ -13,7 +13,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Literal, Protocol
 
 from webhub.bookmarks.privacy import agent_safe_label
 
@@ -27,6 +27,22 @@ MAX_SITE_DESCRIPTION_CHARS = 300
 MIN_META_DESCRIPTION_EVIDENCE_CHARS = 24
 MIN_PAGE_TEXT_EVIDENCE_CHARS = 80
 MAX_BLOCK_PAGE_EVIDENCE_CHARS = 1_500
+MAX_PROVIDER_RETRY_AFTER_SECONDS = 300
+
+type SiteEnrichmentFailureReason = Literal[
+    "provider_rate_limited",
+    "provider_temporary_failure",
+    "provider_unavailable",
+    "internal_error",
+]
+_SITE_ENRICHMENT_FAILURE_REASONS = frozenset(
+    {
+        "provider_rate_limited",
+        "provider_temporary_failure",
+        "provider_unavailable",
+        "internal_error",
+    }
+)
 
 _BLOCK_PAGE_MARKERS = (
     "access denied",
@@ -211,10 +227,25 @@ class SiteEnrichmentUnavailableError(RuntimeError):
         *,
         stop_batch: bool = False,
         provider_failure: bool = False,
+        failure_reason: SiteEnrichmentFailureReason | None = None,
+        retry_after_seconds: int | None = None,
     ) -> None:
+        if (
+            failure_reason is not None
+            and failure_reason not in _SITE_ENRICHMENT_FAILURE_REASONS
+        ):
+            raise ValueError("unsupported site enrichment failure reason")
         self.safe_message = safe_message
         self.stop_batch = stop_batch
         self.provider_failure = provider_failure
+        self.failure_reason = failure_reason
+        self.retry_after_seconds = (
+            min(retry_after_seconds, MAX_PROVIDER_RETRY_AFTER_SECONDS)
+            if isinstance(retry_after_seconds, int)
+            and not isinstance(retry_after_seconds, bool)
+            and retry_after_seconds > 0
+            else None
+        )
         super().__init__(safe_message)
 
 
@@ -226,6 +257,7 @@ class SiteEnricher(Protocol):
 __all__ = [
     "AnalysisIntent",
     "MAX_NEW_SITE_TAGS",
+    "MAX_PROVIDER_RETRY_AFTER_SECONDS",
     "MAX_SITE_DESCRIPTION_CHARS",
     "MAX_SITE_SUMMARY_CHARS",
     "MAX_SITE_TAGS",
@@ -236,6 +268,7 @@ __all__ = [
     "SiteEnricher",
     "SiteEnrichmentRequest",
     "SiteEnrichmentResult",
+    "SiteEnrichmentFailureReason",
     "SiteEnrichmentUnavailableError",
     "SiteTagOption",
     "normalize_site_description",

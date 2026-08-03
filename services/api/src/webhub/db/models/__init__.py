@@ -29,6 +29,12 @@ from webhub.db.models.bookmark_jobs import (
     BookmarkImportRun,
     BookmarkImportSnapshot,
 )
+from webhub.db.models.bookmark_similarity import (
+    BookmarkSimilarityCluster,
+    BookmarkSimilarityClusterMember,
+    BookmarkSimilarityDecision,
+    BookmarkSimilarityDecisionState,
+)
 from webhub.db.models.bookmark_source import (
     BookmarkSourceFolder,
     BookmarkSourceOccurrence,
@@ -54,6 +60,13 @@ from webhub.db.models.metadata_backfill import (
     SiteMetadataBackfillRun,
 )
 from webhub.db.models.site_metadata_preferences import SiteMetadataPreference
+from webhub.db.models.site_similarity import (
+    SiteSimilarityDecision,
+    SiteSimilarityDecisionMember,
+    SiteSimilarityGroup,
+    SiteSimilarityGroupMember,
+    SiteSimilarityScanRun,
+)
 from webhub.db.models.spaces import (
     Space,
     SpaceBatchOperationReceipt,
@@ -70,6 +83,10 @@ __all__ = [
     "BookmarkImportSnapshot",
     "BookmarkSourceFolder",
     "BookmarkSourceOccurrence",
+    "BookmarkSimilarityCluster",
+    "BookmarkSimilarityClusterMember",
+    "BookmarkSimilarityDecision",
+    "BookmarkSimilarityDecisionState",
     "BookmarkStagingCandidate",
     "BookmarkStagingCandidateFolder",
     "BookmarkStagingCandidateOccurrence",
@@ -86,6 +103,11 @@ __all__ = [
     "SiteMetadataBackfillItem",
     "SiteMetadataBackfillRun",
     "SiteMetadataPreference",
+    "SiteSimilarityDecision",
+    "SiteSimilarityDecisionMember",
+    "SiteSimilarityGroup",
+    "SiteSimilarityGroupMember",
+    "SiteSimilarityScanRun",
     "SiteTag",
     "Space",
     "SpaceBatchOperationReceipt",

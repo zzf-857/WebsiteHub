@@ -18,6 +18,7 @@ from webhub.ingestion import service as ingestion_service
 from webhub.ingestion import worker as ingestion_worker
 from webhub.ingestion.enrichment import AnalysisIntent
 from webhub.library import batch, service
+from webhub.library import similarity as site_similarity
 from webhub.library.schemas import (
     CategoryCreateRequest,
     CategoryDeletePreviewResponse,
@@ -25,7 +26,9 @@ from webhub.library.schemas import (
     CategoryListResponse,
     CategoryResponse,
     CategoryUpdateRequest,
+    MetadataBackfillPlanResponse,
     MetadataBackfillProgressResponse,
+    MetadataBackfillStartRequest,
     MetadataBackfillStartResponse,
     SiteAnalysisBackfillResponse,
     SiteAnalysisResponse,
@@ -40,6 +43,14 @@ from webhub.library.schemas import (
     SiteReorderRequest,
     SiteResponse,
     SiteSelectionResponse,
+    SiteSimilarityApplyRequest,
+    SiteSimilarityApplyResponse,
+    SiteSimilarityDecisionRequest,
+    SiteSimilarityDecisionResponse,
+    SiteSimilarityGroupPageResponse,
+    SiteSimilarityRecommendedDecisionRequest,
+    SiteSimilarityRecommendedDecisionResponse,
+    SiteSimilarityScanResponse,
     SiteUpdateRequest,
     TagCreateRequest,
     TagDeleteResponse,
@@ -118,8 +129,11 @@ def _metadata_backfill_response(
 ) -> MetadataBackfillProgressResponse:
     return MetadataBackfillProgressResponse(
         id=progress.id,
+        mode=progress.mode,  # type: ignore[arg-type]
         status=progress.status,  # type: ignore[arg-type]
         stopped_early=progress.stopped_early,
+        stop_reason=progress.stop_reason,  # type: ignore[arg-type]
+        provider_retry_at=progress.provider_retry_at,
         total_count=progress.total_count,
         queued_count=progress.queued_count,
         running_count=progress.running_count,
@@ -129,6 +143,19 @@ def _metadata_backfill_response(
         failed_count=progress.failed_count,
         skipped_count=progress.skipped_count,
     )
+
+
+def _validate_metadata_backfill_limit(*, mode: str, requested_limit: int) -> int:
+    max_limit = ingestion_backfill.metadata_backfill_limit(mode)
+    if requested_limit > max_limit:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "metadata_backfill_limit_exceeded",
+                "message": f"{mode} 模式每批最多处理 {max_limit} 个网站。",
+            },
+        )
+    return max_limit
 
 
 def _metadata_backfill_start_response(
@@ -343,6 +370,123 @@ async def bulk_delete_sites(
     _: WriteOriginDependency,
 ) -> SiteBulkDeleteResponse:
     return await _call(service.bulk_delete_sites(session, identity.user.id, payload))
+
+
+@router.post(
+    "/site-similarity-scans",
+    response_model=SiteSimilarityScanResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_site_similarity_scan(
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> SiteSimilarityScanResponse:
+    return await _call(site_similarity.start_scan(session, user_id=identity.user.id))
+
+
+@router.get(
+    "/site-similarity-scans/active",
+    response_model=SiteSimilarityScanResponse | None,
+)
+async def active_site_similarity_scan(
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+) -> SiteSimilarityScanResponse | None:
+    return await _call(site_similarity.active_scan(session, user_id=identity.user.id))
+
+
+@router.get(
+    "/site-similarity-scans/{run_id}/groups",
+    response_model=SiteSimilarityGroupPageResponse,
+)
+async def site_similarity_groups(
+    run_id: str,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    kind: Annotated[Literal["duplicate", "same_site", "all"], Query()] = "all",
+    limit: Annotated[int, Query(ge=1, le=24)] = 12,
+    cursor: str | None = None,
+    page: Annotated[int | None, Query(ge=1)] = None,
+) -> SiteSimilarityGroupPageResponse:
+    return await _call(
+        site_similarity.list_groups(
+            session,
+            user_id=identity.user.id,
+            run_id=run_id,
+            kind=kind,
+            limit=limit,
+            cursor=cursor,
+            page=page,
+        )
+    )
+
+
+@router.put(
+    "/site-similarity-scans/{run_id}/decisions/recommended",
+    response_model=SiteSimilarityRecommendedDecisionResponse,
+)
+async def select_recommended_site_similarity_decisions(
+    run_id: str,
+    payload: SiteSimilarityRecommendedDecisionRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> SiteSimilarityRecommendedDecisionResponse:
+    return await _call(
+        site_similarity.select_recommended_decisions(
+            session,
+            user_id=identity.user.id,
+            run_id=run_id,
+            kind=payload.kind,
+            expected_version=payload.expected_version,
+        )
+    )
+
+
+@router.put(
+    "/site-similarity-scans/{run_id}/groups/{group_id}/decision",
+    response_model=SiteSimilarityDecisionResponse,
+)
+async def save_site_similarity_decision(
+    run_id: str,
+    group_id: str,
+    payload: SiteSimilarityDecisionRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> SiteSimilarityDecisionResponse:
+    return await _call(
+        site_similarity.save_decision(
+            session,
+            user_id=identity.user.id,
+            run_id=run_id,
+            group_id=group_id,
+            keep_site_ids=payload.keep_site_ids,
+            expected_version=payload.expected_version,
+        )
+    )
+
+
+@router.post(
+    "/site-similarity-scans/{run_id}/apply",
+    response_model=SiteSimilarityApplyResponse,
+)
+async def apply_site_similarity_scan(
+    run_id: str,
+    payload: SiteSimilarityApplyRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> SiteSimilarityApplyResponse:
+    return await _call(
+        site_similarity.apply_scan(
+            session,
+            user_id=identity.user.id,
+            run_id=run_id,
+            expected_version=payload.expected_version,
+        )
+    )
 
 
 @router.get("/sites/{site_id}", response_model=SiteResponse)
@@ -606,6 +750,35 @@ async def analyze_missing_sites(
     )
 
 
+@router.get(
+    "/metadata-backfills/plan",
+    response_model=MetadataBackfillPlanResponse,
+)
+async def metadata_backfill_plan(
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    mode: Literal["metadata", "full"] = Query(default="metadata"),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> MetadataBackfillPlanResponse:
+    """Preview the exact bounded selection without starting outbound work."""
+
+    max_limit = _validate_metadata_backfill_limit(mode=mode, requested_limit=limit)
+    plan = await ingestion_backfill.plan_metadata_backfill(
+        session,
+        user_id=str(identity.user.id),
+        mode=mode,
+        limit=limit,
+    )
+    return MetadataBackfillPlanResponse(
+        mode=plan.mode,  # type: ignore[arg-type]
+        requested_limit=plan.requested_limit,
+        max_limit=max_limit,
+        eligible_count=plan.eligible_count,
+        selected_count=plan.selected_count,
+        llm_count=plan.llm_count,
+    )
+
+
 @router.post(
     "/metadata-backfills",
     response_model=MetadataBackfillStartResponse,
@@ -616,12 +789,21 @@ async def start_metadata_backfill(
     identity: CurrentIdentityDependency,
     session: DatabaseSessionDependency,
     _: WriteOriginDependency,
+    payload: MetadataBackfillStartRequest | None = None,
 ) -> MetadataBackfillStartResponse:
-    """Start (or join) the account's durable LLM website-enrichment run."""
+    """Start (or join) one bounded durable website-enrichment run."""
 
     user_id = str(identity.user.id)
-    await _require_model_provider(request, user_id=user_id)
-    started = await ingestion_backfill.start_metadata_backfill(session, user_id=user_id)
+    options = payload or MetadataBackfillStartRequest()
+    _validate_metadata_backfill_limit(mode=options.mode, requested_limit=options.limit)
+    if options.mode == "full":
+        await _require_model_provider(request, user_id=user_id)
+    started = await ingestion_backfill.start_metadata_backfill(
+        session,
+        user_id=user_id,
+        mode=options.mode,
+        limit=options.limit,
+    )
     if started.progress.is_active:
         ingestion_worker.ensure_metadata_backfill(
             request.app.state.database,

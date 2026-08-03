@@ -90,6 +90,7 @@ async def _site_response(
         pinned=site.pinned,
         source=site.source,  # type: ignore[arg-type]
         analysis_status=site.analysis_status,  # type: ignore[arg-type]
+        analysis_phase=site.analysis_phase,  # type: ignore[arg-type]
         version=site.version,
         created_at=site.created_at,
         updated_at=site.updated_at,
@@ -369,6 +370,7 @@ async def update_site(
             site.summary = ""
             site.description = ""
             site.analysis_status = "not_analyzed"
+            site.analysis_phase = None
             site.analysis_updated_at = None
         if "summary" in fields and (not url_changed or manual_summary):
             site.summary = summary_update or ""
