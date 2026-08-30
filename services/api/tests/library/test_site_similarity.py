@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -8,9 +9,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.config import Settings
 from webhub.db.migrations import upgrade_database
+from webhub.db.models import SiteSimilarityScanRun
 from webhub.library import similarity as site_similarity
 from webhub.main import create_app
 
@@ -304,16 +307,34 @@ def test_apply_and_decision_update_use_one_atomic_version_reservation(
     assert initial.status_code == 200, initial.text
 
     apply_reserved = threading.Event()
+    decision_loaded = threading.Event()
     release_apply = threading.Event()
-    original_fingerprint = site_similarity.library_fingerprint
+    original_merge = site_similarity._merge_group_relationships
+    original_owned_run = site_similarity._owned_run
 
-    def blocked_fingerprint(sites: object) -> str:
+    async def blocked_merge(*args: object, **kwargs: object) -> None:
         apply_reserved.set()
-        if not release_apply.wait(timeout=5):
-            raise AssertionError("timed out waiting to release apply")
-        return original_fingerprint(sites)  # type: ignore[arg-type]
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5
+        while not release_apply.is_set():
+            if loop.time() >= deadline:
+                raise AssertionError("timed out waiting to release apply")
+            await asyncio.sleep(0.01)
+        await original_merge(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(site_similarity, "library_fingerprint", blocked_fingerprint)
+    async def observed_owned_run(
+        session: AsyncSession,
+        *,
+        user_id: str,
+        run_id: str,
+    ) -> SiteSimilarityScanRun:
+        run = await original_owned_run(session, user_id=user_id, run_id=run_id)
+        if apply_reserved.is_set():
+            decision_loaded.set()
+        return run
+
+    monkeypatch.setattr(site_similarity, "_merge_group_relationships", blocked_merge)
+    monkeypatch.setattr(site_similarity, "_owned_run", observed_owned_run)
     apply_url = f"/api/library/site-similarity-scans/{scan['id']}/apply"
     decision_url = (
         f"/api/library/site-similarity-scans/{scan['id']}/groups/{group['id']}/decision"
@@ -338,6 +359,7 @@ def test_apply_and_decision_update_use_one_atomic_version_reservation(
             headers=ORIGIN,
         )
         try:
+            assert decision_loaded.wait(timeout=5)
             with pytest.raises(TimeoutError):
                 decision_future.result(timeout=0.3)
         finally:
@@ -351,6 +373,14 @@ def test_apply_and_decision_update_use_one_atomic_version_reservation(
     assert raced_decision.json()["detail"]["code"] == "site_similarity_version_conflict"
     assert client.get(f"/api/library/sites/{first['id']}").status_code == 200
     assert client.get(f"/api/library/sites/{second['id']}").status_code == 404
+
+    finished_decision = client.put(
+        decision_url,
+        json={"keep_site_ids": [first["id"]], "expected_version": expected_version},
+        headers=ORIGIN,
+    )
+    assert finished_decision.status_code == 409, finished_decision.text
+    assert finished_decision.json()["detail"]["code"] == "site_similarity_scan_not_active"
 
 
 def test_similarity_writes_require_authentication_and_trusted_origin(

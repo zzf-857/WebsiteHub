@@ -50,7 +50,10 @@ import {
   MAX_AGENT_MESSAGE_LENGTH,
   agentToolLabel,
   confirmedAgentDraftToolCallIds,
+  consumeAgentOnlineSearchOffer,
   describeAgentToolResult,
+  hasStrictRecommendationSourcePolicy,
+  isSafeLegacyAgentExternalUrl,
   normalizeAgentMessageMetadata,
   normalizeAgentStreamError,
   normalizeAgentToolCall,
@@ -58,6 +61,7 @@ import {
   toAgentUIMessages,
   type AgentConversationGroup,
   type AgentDraftAction,
+  type AgentOnlineSearchOffer,
   type AgentStreamError,
   type AgentStoredMessage,
   type AgentToolCall,
@@ -185,6 +189,8 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
   const [activeToolCalls, setActiveToolCalls] = useState<readonly AgentToolCall[]>([]);
   const [stages, setStages] = useState<readonly AgentStage[]>([]);
   const [streamError, setStreamError] = useState<AgentStreamError | null>(null);
+  const [retryableOnlineSearchOffer, setRetryableOnlineSearchOffer] =
+    useState<AgentOnlineSearchOffer | null>(null);
   const [draftStates, setDraftStates] = useState<Record<string, AgentDraftState>>({});
   // 「+ 收录」按网址记状态：同一个站点在后续轮次再出现时仍显示"已收录"
   const [webSaves, setWebSaves] = useState<Record<string, WebSaveState>>({});
@@ -197,6 +203,8 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
   const openRequestRef = useRef(0);
   // 业务写入成功、会话 marker 失败时保留第二阶段；重试只补 marker，绝不重放业务写入。
   const pendingDraftConfirmationsRef = useRef(new Map<string, PendingDraftConfirmation>());
+  const usedOnlineSearchOffersRef = useRef(new Set<string>());
+  const pendingOnlineSearchOfferRef = useRef<AgentOnlineSearchOffer | null>(null);
 
   // transport 只构建一次，闭包里读这两个 ref 拿到每次发送时的最新值
   const conversationIdRef = useRef<string | null>(null);
@@ -286,14 +294,35 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     });
   }, []);
 
-  const handleStreamError = useCallback<AgentOnError>(() => {
-    settleTransientToolState();
-  }, [settleTransientToolState]);
+  const restorePendingOnlineSearchOffer = useCallback(() => {
+    const pendingOnlineSearchOffer = pendingOnlineSearchOfferRef.current;
+    if (pendingOnlineSearchOffer === null) return;
+    usedOnlineSearchOffersRef.current.delete(pendingOnlineSearchOffer.toolCallId);
+    setRetryableOnlineSearchOffer(pendingOnlineSearchOffer);
+    pendingOnlineSearchOfferRef.current = null;
+  }, []);
 
-  const handleStreamFinish = useCallback<AgentOnFinish>(() => {
+  const handleStreamError = useCallback<AgentOnError>(() => {
+    restorePendingOnlineSearchOffer();
+    settleTransientToolState();
+  }, [restorePendingOnlineSearchOffer, settleTransientToolState]);
+
+  const handleStreamFinish = useCallback<AgentOnFinish>(({
+    isAbort,
+    isDisconnect,
+    isError,
+  }) => {
+    const pendingOnlineSearchOffer = pendingOnlineSearchOfferRef.current;
+    if (
+      pendingOnlineSearchOffer !== null &&
+      (isAbort || isDisconnect || isError)
+    ) {
+      restorePendingOnlineSearchOffer();
+    }
+    pendingOnlineSearchOfferRef.current = null;
     settleTransientToolState();
     void refreshHistory();
-  }, [refreshHistory, settleTransientToolState]);
+  }, [refreshHistory, restorePendingOnlineSearchOffer, settleTransientToolState]);
 
   const {
     messages,
@@ -317,6 +346,7 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
   // later turn or contradict the visible transport error.
   useEffect(() => {
     if (!error) return;
+    restorePendingOnlineSearchOffer();
     setMessages((current) => {
       for (let index = current.length - 1; index >= 0; index -= 1) {
         const message = current[index];
@@ -336,9 +366,10 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
       }
       return current;
     });
-  }, [error, setMessages]);
+  }, [error, restorePendingOnlineSearchOffer, setMessages]);
 
   const stop = useCallback(async () => {
+    restorePendingOnlineSearchOffer();
     await stopChat();
     settleTransientToolState();
     // Aborting the browser stream prevents a terminal metadata chunk from
@@ -383,7 +414,7 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
           }
         : message);
     });
-  }, [setMessages, settleTransientToolState, stopChat]);
+  }, [restorePendingOnlineSearchOffer, setMessages, settleTransientToolState, stopChat]);
 
   // 首次加载历史：既供「历史」下拉使用，也用来把会话 id 解析成后端派生的标题
   useEffect(() => {
@@ -538,9 +569,9 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
-  const submit = useCallback(() => {
-    const text = input.trim();
-    if (!text || busy || draftWorkflowBusy) return;
+  const submitText = useCallback(async (text: string): Promise<boolean> => {
+    if (!text || busy || draftWorkflowBusy) return false;
+    setRetryableOnlineSearchOffer(null);
     // 用户已经选择继续当前画面，任何尚未完成的历史会话读取都不得再覆盖它。
     openRequestRef.current += 1;
     clearError();
@@ -550,8 +581,40 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     setInput("");
     setCommandIndex(0);
     setHistoryOpen(false);
-    void sendMessage({ text });
-  }, [busy, clearError, draftWorkflowBusy, input, sendMessage]);
+    try {
+      await sendMessage({ text });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [busy, clearError, draftWorkflowBusy, sendMessage]);
+
+  const submit = useCallback(() => {
+    void submitText(input.trim());
+  }, [input, submitText]);
+
+  const handleEnableOnlineSearch = useCallback((toolCallId: string, text: string) => {
+    if (busy || draftWorkflowBusy || !text || usedOnlineSearchOffersRef.current.has(toolCallId)) {
+      return;
+    }
+    scopeRef.current = "online";
+    setScope("online");
+    const offer = { toolCallId, userText: text };
+    pendingOnlineSearchOfferRef.current = offer;
+    void consumeAgentOnlineSearchOffer(
+      usedOnlineSearchOffersRef.current,
+      toolCallId,
+      () => submitText(text),
+    ).then((submitted) => {
+      if (
+        !submitted &&
+        pendingOnlineSearchOfferRef.current?.toolCallId === toolCallId
+      ) {
+        setRetryableOnlineSearchOffer(offer);
+        pendingOnlineSearchOfferRef.current = null;
+      }
+    });
+  }, [busy, draftWorkflowBusy, submitText]);
 
   const handleInputChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     setInput(event.target.value);
@@ -824,6 +887,8 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
       setStages([]);
       setDraftStates({});
       setWebSaves({});
+      setRetryableOnlineSearchOffer(null);
+      pendingOnlineSearchOfferRef.current = null;
       const request = ++openRequestRef.current;
       loadAgentConversation(id)
         .then((detail) => {
@@ -863,6 +928,8 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     setStreamError(null);
     setDraftStates({});
     setWebSaves({});
+    setRetryableOnlineSearchOffer(null);
+    pendingOnlineSearchOfferRef.current = null;
     setInput("");
     setCommandIndex(0);
     setHistoryOpen(false);
@@ -948,6 +1015,8 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
         }
       : undefined;
     const metadata = normalizeAgentMessageMetadata(message.metadata);
+    const strictSourcePolicy = hasStrictRecommendationSourcePolicy(metadata);
+    const collectionOnly = metadata.webSearch === false && strictSourcePolicy;
     const collectionDisabled =
       (metadata.messageStatus !== undefined && metadata.messageStatus !== "complete") ||
       metadata.turnPersisted === false;
@@ -958,18 +1027,19 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
       return null;
     }
     const visibleResults = finalPresentation
-      ? [finalPresentation]
+      ? [finalPresentation].filter(({ view }) => !collectionOnly || view.source === AGENT_SOURCE_LIBRARY)
       : normalizedResults.filter(
           (entry): entry is (typeof normalizedResults)[number] & {
             view: Extract<(typeof normalizedResults)[number]["view"], { kind: "links" }>;
           } => entry.view.kind === "links",
-        );
+        ).filter(({ view }) => !collectionOnly || view.source === AGENT_SOURCE_LIBRARY);
     const resultKey = visibleResults.map(({ result }) => result.toolCallId).join(":");
     const seen = new Set<string>();
     const library: AgentToolLink[] = [];
     let libraryTotal = 0;
     const web: AgentToolLink[] = [];
     let provider: string | null = null;
+    let webSource: typeof AGENT_SOURCE_WEB | typeof AGENT_SOURCE_MODEL | null = null;
     for (const { result, view } of visibleResults) {
       if (
         view.source !== AGENT_SOURCE_LIBRARY &&
@@ -977,20 +1047,33 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
         view.source !== AGENT_SOURCE_MODEL
       ) continue;
       if (view.source === AGENT_SOURCE_WEB || view.source === AGENT_SOURCE_MODEL) {
+        webSource ??= view.source;
         provider =
           provider ??
           readWebProvider(result.result) ??
           (view.source === AGENT_SOURCE_MODEL ? AGENT_SOURCE_MODEL : null);
       }
       for (const item of view.items) {
-        const key = item.siteId ?? item.url ?? item.name;
+        const visibleItem =
+          item.siteId === null &&
+          (view.source === AGENT_SOURCE_MODEL ||
+            (!strictSourcePolicy && view.source === AGENT_SOURCE_WEB))
+            ? {
+                ...item,
+                url: isSafeLegacyAgentExternalUrl(item.url) ? item.url : null,
+                faviconUrl: isSafeLegacyAgentExternalUrl(item.faviconUrl)
+                  ? item.faviconUrl
+                  : null,
+              }
+            : item;
+        const key = visibleItem.siteId ?? visibleItem.url ?? visibleItem.name;
         if (seen.has(key)) continue;
         seen.add(key);
-        if (item.siteId) {
-          library.push(item);
+        if (visibleItem.siteId) {
+          library.push(visibleItem);
           libraryTotal += 1;
         } else {
-          web.push(item);
+          web.push(visibleItem);
         }
       }
       if (view.source === AGENT_SOURCE_LIBRARY) {
@@ -1001,7 +1084,13 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     return library.length > 0 || web.length > 0
       ? {
           library: { key: `library:${resultKey}`, items: library, total: libraryTotal },
-          web: { key: `web:${resultKey}`, items: web, provider, collectionDisabled },
+          web: {
+            key: `web:${resultKey}`,
+            items: web,
+            provider,
+            source: webSource,
+            collectionDisabled,
+          },
         }
       : null;
   }, [messages, status]);
@@ -1104,6 +1193,7 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     errorText,
     handleCollect,
     handleConfirmDraft,
+    handleEnableOnlineSearch,
     handleInputChange,
     handleInputKeyDown,
     handleSubmit,
@@ -1120,6 +1210,7 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     messages,
     openConversation,
     resultGroups,
+    retryableOnlineSearchOffer,
     savedCount,
     scope,
     setScope,

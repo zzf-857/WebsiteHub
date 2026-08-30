@@ -73,6 +73,10 @@ def test_urls_are_extracted_by_code_not_by_the_model() -> None:
         "https://example.com/d",
     ]
 
+    assert extract_urls("`https://example.com/from-markdown`") == [
+        "https://example.com/from-markdown"
+    ]
+
 
 def test_extraction_is_capped() -> None:
     text = " ".join(f"https://example.com/{index}" for index in range(MAX_BATCH_URLS + 20))

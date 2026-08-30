@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const THREAD = new URL("../components/agent/conversation-thread.tsx", import.meta.url);
+const PANEL = new URL("../components/agent/agent-panel.tsx", import.meta.url);
 const PANEL_HOOK = new URL("../components/agent/use-agent-panel.tsx", import.meta.url);
 const RESULT_CARDS = new URL("../components/agent/agent-result-cards.tsx", import.meta.url);
 const RESULT_PAGINATION = new URL("../components/agent/agent-result-pagination.tsx", import.meta.url);
@@ -10,8 +11,9 @@ const LAYOUT = new URL("../app/layout.tsx", import.meta.url);
 const GLOBALS = new URL("../app/globals.css", import.meta.url);
 
 test("assistant prose uses streaming Markdown without exposing raw tool JSON", async () => {
-  const [thread, panelHook, resultCards, layout, globals] = await Promise.all([
+  const [thread, panel, panelHook, resultCards, layout, globals] = await Promise.all([
     readFile(THREAD, "utf8"),
+    readFile(PANEL, "utf8"),
     readFile(PANEL_HOOK, "utf8"),
     readFile(RESULT_CARDS, "utf8"),
     readFile(LAYOUT, "utf8"),
@@ -24,12 +26,21 @@ test("assistant prose uses streaming Markdown without exposing raw tool JSON", a
   assert.match(thread, /className="chat-link-card"/u);
   assert.match(thread, /className="chat-reasoning"/u);
   assert.match(thread, /part\.type === "source-url"/u);
+  assert.match(thread, /isSafeLegacyAgentExternalUrl\(source\.url\)/u);
   assert.match(thread, /使用 \{unique\.length\} 个来源/u);
   assert.match(thread, /<SiteFavicon url=\{null\} name=\{title\} size=\{18\} \/>/u);
   assert.doesNotMatch(thread, /sourceFaviconUrl|\/favicon\.ico/u);
   assert.match(thread, /messageStatus !== "complete" \|\| metadata\.turnPersisted === false/u);
   assert.match(thread, /draftDisabled=\{draftDisabled\}/u);
   assert.match(thread, /result\.name === "present_website_recommendations"/u);
+  assert.match(thread, /className="tool-online-button"/u);
+  assert.match(thread, /onEnableOnlineSearch/u);
+  assert.match(thread, /activeAgentOnlineSearchOffer\(messages, retryableOnlineSearchOffer\)/u);
+  assert.match(panel, /retryableOnlineSearchOffer=\{retryableOnlineSearchOffer\}/u);
+  assert.match(thread, /result\.toolCallId === activeOnlineOffer\?\.toolCallId/u);
+  assert.match(thread, /allowExternalLinks=\{metadata\.webSearch !== false\}/u);
+  assert.match(thread, /hasStrictRecommendationSourcePolicy\(metadata\)/u);
+  assert.match(thread, /allowedExternalUrlKeys=\{allowedExternalUrlKeys\}/u);
   assert.match(thread, /followOutputRef\.current = atBottom/u);
   assert.match(thread, /className="chat-return-bottom"/u);
   assert.match(thread, /scrollToBottom\("auto"\)/u);
@@ -49,8 +60,21 @@ test("assistant prose uses streaming Markdown without exposing raw tool JSON", a
   assert.match(panelHook, /return \[\.\.\.stages\.values\(\)\]/u);
   assert.match(panelHook, /current\.filter\(\(stage\) => stage\.status === "done"\)/u);
   assert.match(panelHook, /onError: handleStreamError/u);
+  assert.match(
+    panelHook,
+    /const handleStreamError[\s\S]*?restorePendingOnlineSearchOffer\(\);[\s\S]*?settleTransientToolState\(\);/u,
+  );
   assert.match(panelHook, /assistant-aborted-\$\{userMessage\.id\}/u);
   assert.match(panelHook, /collectionDisabled/u);
+  assert.match(panelHook, /scopeRef\.current = "online"/u);
+  assert.match(panelHook, /usedOnlineSearchOffersRef\.current\.has\(toolCallId\)/u);
+  assert.match(panelHook, /isAbort \|\| isDisconnect \|\| isError/u);
+  assert.match(panelHook, /usedOnlineSearchOffersRef\.current\.delete\(pendingOnlineSearchOffer\.toolCallId\)/u);
+  assert.match(panelHook, /setRetryableOnlineSearchOffer\(pendingOnlineSearchOffer\)/u);
+  assert.match(panelHook, /isSafeLegacyAgentExternalUrl\(item\.url\)/u);
+  assert.match(panelHook, /!strictSourcePolicy && view\.source === AGENT_SOURCE_WEB/u);
+  assert.match(panelHook, /hasStrictRecommendationSourcePolicy\(metadata\)/u);
+  assert.match(panelHook, /source: webSource/u);
   assert.match(resultCards, /disabled=\{collectionDisabled \|\| saved/u);
   assert.match(thread, /if \(!followOutputRef\.current\) return;/u);
   assert.match(thread, /durationMs \?\? liveDurationMs/u);

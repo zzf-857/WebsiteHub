@@ -21,6 +21,8 @@ import {
   SiteFavicon,
 } from "@/components/site-favicon";
 import {
+  AGENT_SOURCE_MODEL,
+  AGENT_SOURCE_WEB,
   type AgentToolLink,
 } from "@/lib/agent-contract";
 
@@ -48,6 +50,7 @@ export type ResultGroups = {
     key: string;
     items: AgentToolLink[];
     provider: string | null;
+    source: typeof AGENT_SOURCE_WEB | typeof AGENT_SOURCE_MODEL | null;
     collectionDisabled: boolean;
   };
 };

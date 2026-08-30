@@ -14,6 +14,7 @@ import {
   ExternalLink,
   FolderInput,
   FolderPlus,
+  Globe,
   Hash,
   Link2,
   PencilLine,
@@ -36,9 +37,12 @@ import { buildAgentConversationLink } from "@/lib/agent-client";
 import { agentErrorAction } from "@/lib/agent-error";
 import {
   AGENT_SOURCE_MODEL,
+  activeAgentOnlineSearchOffer,
   agentSourceLabels,
   agentToolLabel,
   describeAgentToolResult,
+  hasStrictRecommendationSourcePolicy,
+  isSafeLegacyAgentExternalUrl,
   normalizeAgentMarkdownLink,
   normalizeAgentMessageMetadata,
   normalizeAgentSourceUrlKey,
@@ -54,6 +58,7 @@ import {
   type AgentToolLink,
   type AgentToolResult,
   type AgentMessageMetadata,
+  type AgentOnlineSearchOffer,
   type AgentUIMessage,
 } from "@/lib/agent-contract";
 
@@ -74,7 +79,9 @@ type ConversationThreadProps = {
   status: "submitted" | "streaming" | "ready" | "error";
   activeToolCalls: readonly AgentToolCall[];
   draftStates: Readonly<Record<string, AgentDraftState>>;
+  retryableOnlineSearchOffer: AgentOnlineSearchOffer | null;
   onConfirmDraft: (toolCallId: string, action: AgentDraftAction) => void;
+  onEnableOnlineSearch: (toolCallId: string, userText: string) => void;
   errorText: string | null;
   errorCode: string | null;
 };
@@ -112,8 +119,21 @@ function formatDuration(milliseconds: number): string {
   return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} 秒`;
 }
 
-function MarkdownAnchor({ href, children, title }: React.ComponentProps<"a"> & { node?: unknown }) {
-  const link = normalizeAgentMarkdownLink(href);
+function MarkdownAnchor({
+  href,
+  children,
+  title,
+  allowExternalLinks = true,
+  allowedExternalUrlKeys,
+}: React.ComponentProps<"a"> & {
+  node?: unknown;
+  allowExternalLinks?: boolean;
+  allowedExternalUrlKeys?: ReadonlySet<string>;
+}) {
+  const link = normalizeAgentMarkdownLink(href, {
+    allowExternal: allowExternalLinks,
+    allowedExternalUrlKeys,
+  });
   if (link === null) return <span>{children}</span>;
   if (link.kind === "internal") {
     return (
@@ -140,6 +160,11 @@ function MarkdownAnchor({ href, children, title }: React.ComponentProps<"a"> & {
 }
 
 const MARKDOWN_COMPONENTS = { a: MarkdownAnchor } as Components;
+const COLLECTION_MARKDOWN_COMPONENTS = {
+  a: (props: React.ComponentProps<"a"> & { node?: unknown }) => (
+    <MarkdownAnchor {...props} allowExternalLinks={false} />
+  ),
+} as Components;
 const STREAM_DISALLOWED_ELEMENTS = ["img"];
 const STREAM_ANIMATION = { animation: "fadeIn", duration: 140 } as const;
 const STREAM_CONTROLS = {
@@ -158,12 +183,30 @@ function AgentMarkdown({
   streaming,
   reducedMotion,
   className,
+  allowExternalLinks = true,
+  allowedExternalUrlKeys,
 }: Readonly<{
   text: string;
   streaming: boolean;
   reducedMotion: boolean;
   className: string;
+  allowExternalLinks?: boolean;
+  allowedExternalUrlKeys?: ReadonlySet<string>;
 }>) {
+  const components = useMemo<Components>(() => {
+    if (allowedExternalUrlKeys === undefined) {
+      return allowExternalLinks ? MARKDOWN_COMPONENTS : COLLECTION_MARKDOWN_COMPONENTS;
+    }
+    return {
+      a: (props: React.ComponentProps<"a"> & { node?: unknown }) => (
+        <MarkdownAnchor
+          {...props}
+          allowExternalLinks={allowExternalLinks}
+          allowedExternalUrlKeys={allowedExternalUrlKeys}
+        />
+      ),
+    } as Components;
+  }, [allowExternalLinks, allowedExternalUrlKeys]);
   return (
     <Streamdown
       className={className}
@@ -171,7 +214,7 @@ function AgentMarkdown({
       isAnimating={streaming && !reducedMotion}
       animated={streaming && !reducedMotion ? STREAM_ANIMATION : false}
       caret={streaming ? "block" : undefined}
-      components={MARKDOWN_COMPONENTS}
+      components={components}
       disallowedElements={STREAM_DISALLOWED_ELEMENTS}
       controls={STREAM_CONTROLS}
       translations={STREAM_TRANSLATIONS}
@@ -186,11 +229,15 @@ function ReasoningDisclosure({
   streaming,
   durationMs,
   reducedMotion,
+  allowExternalLinks,
+  allowedExternalUrlKeys,
 }: Readonly<{
   text: string;
   streaming: boolean;
   durationMs?: number;
   reducedMotion: boolean;
+  allowExternalLinks: boolean;
+  allowedExternalUrlKeys?: ReadonlySet<string>;
 }>) {
   const [liveDurationMs, setLiveDurationMs] = useState(0);
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
@@ -238,6 +285,8 @@ function ReasoningDisclosure({
         text={text}
         streaming={streaming}
         reducedMotion={reducedMotion}
+        allowExternalLinks={allowExternalLinks}
+        allowedExternalUrlKeys={allowedExternalUrlKeys}
       />
     </details>
   );
@@ -285,6 +334,7 @@ function SourceList({ sources }: Readonly<{ sources: readonly SourceUrlUIPart[] 
   const unique = useMemo(() => {
     const seen = new Set<string>();
     return sources.filter((source) => {
+      if (!isSafeLegacyAgentExternalUrl(source.url)) return false;
       const key = normalizeAgentSourceUrlKey(source.url);
       if (key === null || seen.has(key)) return false;
       seen.add(key);
@@ -1041,6 +1091,9 @@ function ToolCard({
   draftDisabled,
   draftDisabledLabel,
   agentWaiting,
+  onlineOfferActive,
+  onlineSearchQuery,
+  onEnableOnlineSearch,
   onConfirmDraft,
 }: Readonly<{
   storageScope: string;
@@ -1048,6 +1101,9 @@ function ToolCard({
   draftState: AgentDraftState;
   spaceBatchSuperseded: boolean;
   agentWaiting: boolean;
+  onlineOfferActive: boolean;
+  onlineSearchQuery: string;
+  onEnableOnlineSearch: (toolCallId: string, userText: string) => void;
   onConfirmDraft: (toolCallId: string, action: AgentDraftAction) => void;
 } & DraftGuardProps>) {
   const view = describeAgentToolResult(result.name, result.result);
@@ -1073,6 +1129,22 @@ function ToolCard({
         ) : (
           <p className="tool-card-note">没有命中任何结果。</p>
         ))}
+      {view.kind === "online-offer" && (
+        <>
+          <p className="tool-card-note">{view.message}</p>
+          {onlineOfferActive && (
+            <button
+              type="button"
+              className="tool-online-button"
+              disabled={agentWaiting}
+              onClick={() => onEnableOnlineSearch(result.toolCallId, onlineSearchQuery)}
+            >
+              <Globe aria-hidden="true" />
+              开启联网搜索
+            </button>
+          )}
+        </>
+      )}
       {view.kind === "facets" &&
         (view.items.length > 0 ? (
           <div className="tool-chip-row">
@@ -1184,7 +1256,9 @@ export function ConversationThread({
   status,
   activeToolCalls,
   draftStates,
+  retryableOnlineSearchOffer,
   onConfirmDraft,
+  onEnableOnlineSearch,
   errorText,
   errorCode,
 }: Readonly<ConversationThreadProps>) {
@@ -1255,6 +1329,10 @@ export function ConversationThread({
     }
     return latest;
   }, [messages]);
+  const activeOnlineOffer = useMemo(
+    () => activeAgentOnlineSearchOffer(messages, retryableOnlineSearchOffer),
+    [messages, retryableOnlineSearchOffer],
+  );
 
   return (
     <div className="chat-conversation">
@@ -1285,6 +1363,13 @@ export function ConversationThread({
         const sourceParts = message.parts.filter(
           (part): part is SourceUrlUIPart => part.type === "source-url",
         );
+        const allowedExternalUrlKeys = hasStrictRecommendationSourcePolicy(metadata)
+          ? new Set(
+              sourceParts
+                .map((part) => normalizeAgentSourceUrlKey(part.url))
+                .filter((key): key is string => key !== null),
+            )
+          : undefined;
         const reasoningParts = message.parts.filter((part) => part.type === "reasoning");
         const reasoningText = reasoningParts.map((part) => part.text).join("");
         const firstReasoningIndex = message.parts.findIndex((part) => part.type === "reasoning");
@@ -1326,6 +1411,8 @@ export function ConversationThread({
                       text={part.text}
                       streaming={messageStreaming}
                       reducedMotion={Boolean(reducedMotion)}
+                      allowExternalLinks={metadata.webSearch !== false}
+                      allowedExternalUrlKeys={allowedExternalUrlKeys}
                     />
                   ) : (
                     <p className="chat-text" key={`text-${index}`}>{part.text}</p>
@@ -1340,6 +1427,8 @@ export function ConversationThread({
                       streaming={reasoningStreaming}
                       durationMs={metadata.reasoningMs}
                       reducedMotion={Boolean(reducedMotion)}
+                      allowExternalLinks={metadata.webSearch !== false}
+                      allowedExternalUrlKeys={allowedExternalUrlKeys}
                     />
                   );
                 }
@@ -1366,6 +1455,12 @@ export function ConversationThread({
                       draftDisabled={draftDisabled}
                       draftDisabledLabel={draftDisabledLabel}
                       agentWaiting={waiting}
+                      onlineOfferActive={
+                        messageStatus === "complete" &&
+                        result.toolCallId === activeOnlineOffer?.toolCallId
+                      }
+                      onlineSearchQuery={activeOnlineOffer?.userText ?? ""}
+                      onEnableOnlineSearch={onEnableOnlineSearch}
                       onConfirmDraft={onConfirmDraft}
                     />
                   );

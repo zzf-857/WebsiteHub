@@ -36,6 +36,7 @@ import {
   cardKey,
 } from "@/components/agent/agent-result-cards";
 import { QUICK_PROMPTS, useAgentPanel } from "@/components/agent/use-agent-panel";
+import { AGENT_SOURCE_MODEL } from "@/lib/agent-contract";
 
 type AgentPanelProps = {
   onLibraryChanged?: () => void;
@@ -58,6 +59,7 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
     errorText,
     handleCollect,
     handleConfirmDraft,
+    handleEnableOnlineSearch,
     handleInputChange,
     handleInputKeyDown,
     handleSubmit,
@@ -74,6 +76,7 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
     messages,
     openConversation,
     resultGroups,
+    retryableOnlineSearchOffer,
     savedCount,
     scope,
     setScope,
@@ -87,6 +90,7 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
     webSaves,
   } = useAgentPanel({ onLibraryChanged });
   const interactionLocked = busy || draftWorkflowBusy;
+  const resultIsModelKnowledge = resultGroups?.web.source === AGENT_SOURCE_MODEL;
 
   return (
     <section
@@ -116,6 +120,8 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
               type="button"
               data-active={scope === "collection" || undefined}
               aria-pressed={scope === "collection"}
+              title="只从当前网址库查找"
+              disabled={interactionLocked}
               onClick={() => setScope("collection")}
             >
               仅网址库
@@ -124,6 +130,8 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
               type="button"
               data-active={scope === "online" || undefined}
               aria-pressed={scope === "online"}
+              title="先查网址库，结果不足时调用搜索服务"
+              disabled={interactionLocked}
               onClick={() => setScope("online")}
             >
               <Globe aria-hidden="true" />
@@ -207,7 +215,9 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
               status={status}
               activeToolCalls={activeToolCalls}
               draftStates={draftStates}
+              retryableOnlineSearchOffer={retryableOnlineSearchOffer}
               onConfirmDraft={handleConfirmDraft}
+              onEnableOnlineSearch={handleEnableOnlineSearch}
               errorText={errorText}
               errorCode={streamError?.code ?? null}
             />
@@ -257,11 +267,18 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
                   </section>
                 )}
                 {resultGroups.web.items.length > 0 && (
-                  <section className="agent-result-group" aria-label="来自网络的结果">
+                  <section
+                    className="agent-result-group"
+                    aria-label={
+                      resultIsModelKnowledge
+                        ? "模型知识推荐"
+                        : "来自网络的结果"
+                    }
+                  >
                     <h3 className="agent-result-label">
                       <span>
-                        来自网络
-                        {resultGroups.web.provider
+                        {resultIsModelKnowledge ? "模型知识（未实时验证）" : "来自网络"}
+                        {resultGroups.web.provider && !resultIsModelKnowledge
                           ? ` · ${resultGroups.web.provider.toUpperCase()}`
                           : ""}{" "}
                         · {resultGroups.web.items.length}
@@ -275,12 +292,16 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
                     <AgentResultPagination
                       key={resultGroups.web.key}
                       items={resultGroups.web.items}
-                      ariaLabel="联网结果分页"
+                      ariaLabel={resultIsModelKnowledge ? "模型知识结果分页" : "联网结果分页"}
                       renderItem={(link, index) => (
                         <WebResultCard
                           key={cardKey(link, index)}
                           link={link}
-                          providerLabel={resultGroups.web.provider ?? "联网搜索"}
+                          providerLabel={
+                            resultIsModelKnowledge
+                              ? "模型知识（未实时验证）"
+                              : resultGroups.web.provider ?? "联网搜索"
+                          }
                           state={link.url ? (webSaves[link.url] ?? IDLE_SAVE) : IDLE_SAVE}
                           collectionDisabled={resultGroups.web.collectionDisabled}
                           onCollect={handleCollect}

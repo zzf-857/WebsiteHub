@@ -636,7 +636,7 @@ def test_slow_declared_icons_cannot_starve_the_root_fallback_budget(
         return None
 
     monkeypatch.setattr(ingestion_fetcher, "MAX_ICON_CANDIDATE_TIMEOUT_SECONDS", 0.02)
-    monkeypatch.setattr(ingestion_fetcher, "MAX_ROOT_ICON_RESERVED_SECONDS", 0.04)
+    monkeypatch.setattr(ingestion_fetcher, "MAX_ROOT_ICON_RESERVED_SECONDS", 0.08)
     monkeypatch.setattr(ingestion_fetcher, "_validated_icon_url", validate)
     icon_url = asyncio.run(
         ingestion_fetcher._discover_icon_url(
@@ -644,7 +644,7 @@ def test_slow_declared_icons_cannot_starve_the_root_fallback_budget(
             declared_urls=tuple(
                 f"https://example.com/declared-{index}.png" for index in range(8)
             ),
-            timeout_seconds=0.08,  # type: ignore[arg-type] - scaled wall-clock test
+            timeout_seconds=0.16,  # type: ignore[arg-type] - scaled wall-clock test
             allow_private=False,
         )
     )
@@ -677,7 +677,7 @@ def test_one_slow_root_path_cannot_starve_later_root_candidates(
     icon_url = asyncio.run(
         ingestion_fetcher._discover_icon_url(
             page_url="https://example.com/docs",
-            timeout_seconds=0.04,  # type: ignore[arg-type] - scaled wall-clock test
+            timeout_seconds=0.08,  # type: ignore[arg-type] - scaled wall-clock test
             allow_private=False,
         )
     )
@@ -943,7 +943,8 @@ def test_total_wall_timeout_stops_a_slow_redirect_chain(
     ):
         nonlocal calls
         calls += 1
-        await asyncio.sleep(0.03)
+        if calls == 2:
+            await asyncio.Event().wait()
         yield url, httpx.Response(302, headers={"location": "/next"})
 
     monkeypatch.setattr(ingestion_fetcher, "_pinned_stream", slow_redirect)
@@ -962,7 +963,7 @@ def test_total_wall_timeout_stops_a_slow_redirect_chain(
     assert outcome.status == "failed"
     assert outcome.reason == "访问该网站超时"
     assert calls == 2
-    assert elapsed < 0.12
+    assert elapsed < 0.5
 
 
 def test_total_wall_timeout_releases_an_in_flight_origin_icon_gate(

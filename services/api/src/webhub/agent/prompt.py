@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from webhub.chat.commands import SlashCommandInvocation
 
-from .tools import SOURCE_LIBRARY, SOURCE_MODEL, SOURCE_WEB
+from .tools import SOURCE_LIBRARY, SOURCE_WEB
 
 SYSTEM_PROMPT = f"""你是 WebHub 的网址管理助手。WebHub 是一个由 Agent 主导的网址导航站，\
 用户通过自然语言来查找、整理和收藏自己的网站数据。
@@ -18,14 +18,17 @@ SYSTEM_PROMPT = f"""你是 WebHub 的网址管理助手。WebHub 是一个由 Ag
 ## 工作顺序
 1. 用户问“有没有 / 我收藏过 / 帮我找”这类问题时，**先调用 search_library** 检索站内网址库。
 2. 站内有结果：直接基于站内数据回答，并在这部分内容前标注【来源：{SOURCE_LIBRARY}】。
-3. 站内没有结果：明确告诉用户“网址库里没有找到”，然后才可以推荐站外网站。
-   - 有 web_search 工具时优先联网检索，并标注【来源：{SOURCE_WEB}】。
-   - 没有联网能力时可以凭自身知识推荐，必须标注【来源：{SOURCE_MODEL}】，
-     并提醒用户该结果未经实时验证。
+3. 站内没有结果：明确告诉用户“网址库里没有找到”。
+   - 仅网址库模式不得推荐任何库外网站，也不得凭模型记忆生成可点击 URL。
+   - 允许联网模式才可以调用 web_search；库外卡片必须来自本轮真实搜索结果，
+     并标注【来源：{SOURCE_WEB}】。
 
 ## 网站推荐的展示协议
-- 只要最终回答会向用户推荐一个或多个**具体网站**，无论候选来自站内检索、联网搜索还是模型知识，
+- 只要最终回答会向用户推荐一个或多个**具体网站**，无论候选来自站内检索还是联网搜索，
   都必须在最终回答前调用一次 **present_website_recommendations**，完整传入最终实际推荐的网站清单。
+- 对“推荐一些 / 学习资源 / 有哪些”这类未指定数量的检索，默认完整返回本轮网址库匹配结果，
+  按相关度顺序交给界面分页；不要自行只挑几条。用户明确要求“精选 / 推荐 N 个 / 一个”时，
+  search_library 会按原话冻结恰好 N 条；仍须把返回的 `result_set_id` 原样传给展示工具。
 - 用户明确说“全部 / 所有 / 一个不漏”等要求完整返回时，禁止自行挑选、限量或以“内容太多”为由省略：
   - 检索分类时先用 list_categories 取得真实 category_id，再调用 search_library，传入该 category_id
     并设置 include_all=true；普通关键词全量检索也设置 include_all=true。
@@ -134,14 +137,27 @@ def build_system_prompt(
     """
 
     sections = [SYSTEM_PROMPT]
-    if not web_search_available:
-        reason = (
-            "用户本轮把搜索范围设为“仅网址库”，因此没有 web_search 工具。"
-            if web_search_declined
-            else "当前账号未配置联网搜索 Provider，本轮没有 web_search 工具。"
-        )
+    if web_search_declined:
         sections.append(
-            f"## 本轮能力\n{reason}站内查不到时只能凭自身知识推荐，并标注【来源：{SOURCE_MODEL}】。"
+            "## 本轮能力\n"
+            "用户本轮把搜索范围设为“仅网址库”，没有 web_search 工具。"
+            "站内查不到时只能如实说明未找到；不得调用 present_website_recommendations "
+            "展示库外网站，"
+            "也不得凭模型记忆生成可点击 URL。若 search_library 返回 can_offer_online=true，"
+            "告诉用户可以点击界面的“开启联网搜索”按钮继续。"
+        )
+    elif not web_search_available:
+        sections.append(
+            "## 本轮能力\n"
+            "当前账号没有可用的联网搜索 Provider，因此没有 web_search 工具。"
+            "站内查不到时只能如实说明未找到，不得用模型记忆生成可点击 URL。"
+        )
+    else:
+        sections.append(
+            "## 本轮能力\n"
+            "用户允许联网。本轮仍必须先查网址库；只有结果不足或用户明确需要实时资料时才调用 "
+            "web_search，且 web_search 必须复用最近一次 search_library 的同一检索词。"
+            "库外推荐只能使用本轮 web_search 返回的准确 URL，不能凭记忆补写域名。"
         )
     if slash_command is not None and slash_command.name is not None:
         guidance = _COMMAND_GUIDANCE.get(slash_command.name)

@@ -4,12 +4,15 @@ import asyncio
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import select, update
 
+from webhub.agent import turns as turns_module
 from webhub.agent.runner import AgentRunRequest
 from webhub.agent.turns import (
+    MAX_PERSISTED_AGENT_SOURCES_BYTES,
     TURN_ABORTED_CODE,
     TURN_EXPIRED_CODE,
     AgentTurnJournal,
@@ -62,6 +65,69 @@ def _request(user_id: str, *, turn_id: str = "turn-1", message: str = "hello") -
         conversation_id=None,
         message=message,
     )
+
+
+def _utf8_tool_result_with_json_size(target_bytes: int) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "source": "站内存储数据",
+        "matched_count": 1,
+        "private_marker": "oversized-only-marker",
+        "payload": "",
+    }
+    value = {
+        "toolCallId": "utf8-budget",
+        "name": "search_library",
+        "result": result,
+    }
+    base_size = turns_module._json_size([value])
+    assert base_size is not None
+    padding_bytes = target_bytes - base_size
+    assert padding_bytes >= 0
+    multibyte_count, ascii_count = divmod(
+        padding_bytes,
+        len("界".encode()),
+    )
+    result["payload"] = "界" * multibyte_count + "x" * ascii_count
+    assert turns_module._json_size([value]) == target_bytes
+    return value
+
+
+def test_turn_journal_utf8_source_budget_is_inclusive_and_overflow_is_explicit() -> None:
+    boundary = _utf8_tool_result_with_json_size(MAX_PERSISTED_AGENT_SOURCES_BYTES)
+    overflow = _utf8_tool_result_with_json_size(MAX_PERSISTED_AGENT_SOURCES_BYTES + 1)
+
+    assert turns_module._bounded_tool_results([boundary]) == [boundary]
+    assert turns_module._bounded_tool_results([overflow]) == [
+        {
+            "toolCallId": "utf8-budget",
+            "name": "search_library",
+            "result": {
+                "code": "persisted_tool_result_truncated",
+                "error": "工具结果过大，历史记录未保存完整明细，请重新执行。",
+                "source": "站内存储数据",
+                "matched_count": 1,
+            },
+        }
+    ]
+
+
+def test_unpaired_surrogate_tool_results_fail_closed_to_a_utf8_safe_summary() -> None:
+    bounded = turns_module._bounded_tool_results(
+        [
+            {
+                "toolCallId": "surrogate-result",
+                "name": "web_search",
+                "result": {
+                    "source": "联网搜索\ud800",
+                    "items": [{"title": "bad\ud800title", "url": "https://example.com/"}],
+                },
+            }
+        ]
+    )
+
+    assert bounded[0]["result"]["code"] == "persisted_tool_result_truncated"
+    assert "\ud800" not in str(bounded)
+    assert turns_module._json_size(bounded) is not None
 
 
 def test_same_turn_concurrent_claim_has_one_executor_and_one_in_progress(
@@ -518,6 +584,116 @@ def test_expired_running_turn_is_closed_and_partial_message_remains_visible(
         assert unchanged is not None
         assert unchanged.status == "aborted"
         assert unchanged.content == "已经输出一半"
+
+        async with database.sessions() as session:
+            run = await session.scalar(select(AgentTurnRun).where(AgentTurnRun.id == claim.run_id))
+        assert run is not None
+        assert run.state == "aborted"
+        assert run.error_code == TURN_EXPIRED_CODE
+
+    asyncio.run(exercise())
+
+
+def test_expired_turn_recovery_terminalizes_a_truncated_tool_snapshot(
+    turn_database: tuple[Database, str],
+) -> None:
+    database, user_id = turn_database
+
+    async def exercise() -> None:
+        async with database.sessions() as session:
+            conversation = await chat_service.create_conversation(session, user_id)
+            user = await chat_service.append_message(
+                session,
+                user_id,
+                conversation.id,
+                role="user",
+                content="恢复已截断的过期回合",
+                idempotency_key="truncated-expired-user",
+            )
+            assistant = await chat_service.append_message(
+                session,
+                user_id,
+                conversation.id,
+                role="assistant",
+                content="",
+                parts=[],
+                sources=[],
+                metadata={
+                    "turnId": "truncated-expired-turn",
+                    "messageStatus": "streaming",
+                },
+                status="streaming",
+                idempotency_key="truncated-expired-assistant",
+            )
+
+        request = AgentRunRequest(
+            account_id=user_id,
+            turn_id="truncated-expired-turn",
+            conversation_id=conversation.id,
+            message="恢复已截断的过期回合",
+        )
+        claim = await claim_turn(database, request)
+        assert claim.action == "execute" and claim.lease is not None
+        messages = AgentTurnMessages(
+            conversation_id=conversation.id,
+            user_message_id=user.message.id,
+            assistant_message_id=assistant.message.id,
+            assistant_version=assistant.message.version,
+        )
+        from webhub.agent.turns import bind_turn_messages
+
+        await bind_turn_messages(database, claim.lease, messages)
+        journal = AgentTurnJournal(
+            database=database,
+            lease=claim.lease,
+            turn_id=request.turn_id,
+            messages=messages,
+            metadata={"conversationId": conversation.id},
+        )
+        oversized = _utf8_tool_result_with_json_size(MAX_PERSISTED_AGENT_SOURCES_BYTES + 1)
+        bounded = journal.add_tool_result(oversized)
+        assert bounded["result"] == {
+            "code": "persisted_tool_result_truncated",
+            "error": "工具结果过大，历史记录未保存完整明细，请重新执行。",
+            "source": "站内存储数据",
+            "matched_count": 1,
+        }
+        journal.add_text("已保存的部分回答")
+        await journal.checkpoint(force=True)
+
+        checkpoint = await load_turn_assistant(
+            database,
+            user_id=user_id,
+            message_id=assistant.message.id,
+        )
+        assert checkpoint is not None
+        assert checkpoint.status == "streaming"
+        assert checkpoint.sources == [bounded]
+        assert "oversized-only-marker" not in str(checkpoint.sources)
+
+        async with database.sessions() as session:
+            await session.execute(
+                update(AgentTurnRun)
+                .where(AgentTurnRun.id == claim.run_id)
+                .values(lease_expires_at=utc_now() - timedelta(seconds=1))
+            )
+            await session.commit()
+
+        assert await close_expired_turns(database, user_id=user_id) == 1
+        persisted = await load_turn_assistant(
+            database,
+            user_id=user_id,
+            message_id=assistant.message.id,
+        )
+        assert persisted is not None
+        assert persisted.status == "aborted"
+        assert persisted.content == "已保存的部分回答"
+        assert persisted.metadata["errorCode"] == TURN_EXPIRED_CODE
+        assert persisted.sources == [bounded]
+        assert "oversized-only-marker" not in str(persisted.sources)
+        persisted_size = turns_module._json_size(persisted.sources)
+        assert persisted_size is not None
+        assert persisted_size <= MAX_PERSISTED_AGENT_SOURCES_BYTES
 
         async with database.sessions() as session:
             run = await session.scalar(select(AgentTurnRun).where(AgentTurnRun.id == claim.run_id))

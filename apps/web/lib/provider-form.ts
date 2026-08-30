@@ -47,7 +47,7 @@ export const PROVIDER_KIND_SECTIONS: readonly ProviderKindSection[] = [
   {
     kind: "search",
     title: "搜索服务",
-    description: "Agent 联网搜索使用的服务。不配置时 Agent 只检索站内资料，不会访问外网。",
+    description: "Agent 联网搜索使用的服务。不配置时不会调用外部搜索服务，Agent 仍可使用网址库和模型 Provider。",
   },
   {
     kind: "embedding",

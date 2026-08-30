@@ -18,6 +18,7 @@ import type { SourceUrlUIPart, UIMessage } from "ai";
 export const AGENT_SOURCE_LIBRARY = "站内存储数据";
 export const AGENT_SOURCE_WEB = "联网搜索";
 export const AGENT_SOURCE_MODEL = "llm推荐";
+export const AGENT_RECOMMENDATION_MANIFEST_VERSION = 3;
 
 export const MAX_AGENT_MESSAGE_LENGTH = 64_000;
 
@@ -162,6 +163,123 @@ function asWebUrl(value: unknown): string | null {
   }
 }
 
+const LEGACY_LOCAL_HOST_SUFFIXES = [
+  ".home.arpa",
+  ".localhost",
+  ".local",
+  ".internal",
+  ".lan",
+  ".home",
+  ".corp",
+  ".onion",
+  ".test",
+  ".invalid",
+  ".example",
+];
+const LEGACY_SENSITIVE_URL_KEYS = new Set([
+  "access_token",
+  "api_key",
+  "apikey",
+  "auth",
+  "authorization",
+  "auth_token",
+  "awsaccesskeyid",
+  "client_secret",
+  "cookie",
+  "credential",
+  "googleaccessid",
+  "id_token",
+  "jwt",
+  "password",
+  "passwd",
+  "private_token",
+  "refresh_token",
+  "samlresponse",
+  "secret",
+  "security_token",
+  "session",
+  "session_id",
+  "sessionid",
+  "session_token",
+  "sig",
+  "signature",
+  "token",
+]);
+const LEGACY_SENSITIVE_URL_KEY_FAMILY =
+  /(?:^|_)(?:(?:access|refresh|id|auth|session|security|private)_?token|api_?key|client_?secret|credential|signature|sig|password|passwd|jwt)$/u;
+
+function isLegacyNonPublicHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[/u, "").replace(/\]$/u, "").replace(/\.$/u, "").toLowerCase();
+  if (!host) return true;
+  if (
+    host === "localhost" ||
+    host === "home.arpa" ||
+    LEGACY_LOCAL_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))
+  ) return true;
+
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(host);
+  if (ipv4 !== null) {
+    const octets = ipv4.slice(1).map(Number);
+    if (octets.some((octet) => octet > 255)) return true;
+    const [first, second, third] = octets;
+    if (first === 0 || first === 10 || first === 127 || first >= 224) return true;
+    if (first === 100 && second >= 64 && second <= 127) return true;
+    if (first === 169 && second === 254) return true;
+    if (first === 172 && second >= 16 && second <= 31) return true;
+    if (
+      first === 192 &&
+      (second === 168 || (second === 0 && (third === 0 || third === 2)))
+    ) {
+      return true;
+    }
+    if (first === 198 && (second === 18 || second === 19 || (second === 51 && third === 100))) {
+      return true;
+    }
+    if (first === 203 && second === 0 && third === 113) return true;
+    return false;
+  }
+
+  if (host.includes(":")) {
+    if (host === "::" || host === "::1" || host.startsWith("::ffff:")) return true;
+    const firstHextet = host.split(":", 1)[0] ?? "";
+    if (/^f[cd]/u.test(firstHextet) || /^fe[89ab]/u.test(firstHextet)) return true;
+    if (/^ff/u.test(firstHextet)) return true;
+    return false;
+  }
+  return !host.includes(".");
+}
+
+function hasLegacySensitiveUrlKey(parsed: URL): boolean {
+  const fragment = parsed.hash.slice(1);
+  const fragmentQueryStart = fragment.indexOf("?");
+  const payloads = [
+    parsed.search.slice(1),
+    fragment,
+    ...(fragmentQueryStart >= 0 ? [fragment.slice(fragmentQueryStart + 1)] : []),
+  ];
+  for (const payload of payloads) {
+    for (const [key] of new URLSearchParams(payload)) {
+      const normalized = key.toLowerCase().replace(/[-_.[\]]+/gu, "_").replace(/^_+|_+$/gu, "");
+      if (
+        LEGACY_SENSITIVE_URL_KEYS.has(normalized) ||
+        LEGACY_SENSITIVE_URL_KEY_FAMILY.test(normalized)
+      ) return true;
+    }
+  }
+  return false;
+}
+
+/** Apply a conservative click policy to pre-v3 model-authored recommendation URLs. */
+export function isSafeLegacyAgentExternalUrl(value: unknown): boolean {
+  const candidate = asWebUrl(value);
+  if (candidate === null || candidate.length > 2_048) return false;
+  const parsed = new URL(candidate);
+  return !parsed.username &&
+    !parsed.password &&
+    !isLegacyNonPublicHostname(parsed.hostname) &&
+    !hasLegacySensitiveUrlKey(parsed);
+}
+
 /**
  * Produce the comparison key used when one trusted source is restored from
  * both the message `parts` checkpoint and the legacy `sources` sidecar.
@@ -270,6 +388,11 @@ export function normalizeAgentMessageMetadata(value: unknown): AgentMessageMetad
     ...(usage && Object.keys(usage).length > 0 ? { usage } : {}),
     ...(draftConfirmation ? { draftConfirmation } : {}),
   };
+}
+
+export function hasStrictRecommendationSourcePolicy(metadata: AgentMessageMetadata): boolean {
+  return (metadata.recommendationManifestVersion ?? 0) >=
+    AGENT_RECOMMENDATION_MANIFEST_VERSION;
 }
 
 export type AgentToolLink = {
@@ -386,6 +509,7 @@ export type AgentToolFacet = {
 /** A render-ready projection of one tool result. */
 export type AgentToolView =
   | { kind: "links"; source: string | null; items: AgentToolLink[]; matchedCount: number | null }
+  | { kind: "online-offer"; message: string }
   | { kind: "facets"; source: string | null; items: AgentToolFacet[] }
   | { kind: "draft"; draft: AgentSiteDraft; duplicate: AgentToolLink | null }
   | { kind: "site-update"; draft: AgentSiteUpdateDraft }
@@ -679,6 +803,13 @@ export function describeAgentToolResult(name: string, result: unknown): AgentToo
 
   const status = asTrimmed(payload.status);
 
+  if (name === "search_library" && payload.can_offer_online === true) {
+    return {
+      kind: "online-offer",
+      message: "网址库中没有找到足够匹配的网站，可以切换联网搜索继续查找。",
+    };
+  }
+
   if (name === "propose_reclassify") {
     if (status === "rejected") {
       return { kind: "rejected", reason: asTrimmed(payload.reason) ?? "无法生成重分类提案" };
@@ -806,8 +937,14 @@ export type AgentMarkdownLink =
   | { kind: "external"; href: string; hostname: string }
   | { kind: "internal"; href: string };
 
-/** Allow only explicit web links, local routes, and in-page anchors from Markdown. */
-export function normalizeAgentMarkdownLink(value: unknown): AgentMarkdownLink | null {
+/** Allow only policy-approved web links, local routes, and in-page anchors from Markdown. */
+export function normalizeAgentMarkdownLink(
+  value: unknown,
+  options: Readonly<{
+    allowExternal?: boolean;
+    allowedExternalUrlKeys?: ReadonlySet<string>;
+  }> = {},
+): AgentMarkdownLink | null {
   const href = asTrimmed(value);
   if (href === null) return null;
   if (/[\\\u0000-\u001f\u007f]/u.test(href)) return null;
@@ -817,6 +954,13 @@ export function normalizeAgentMarkdownLink(value: unknown): AgentMarkdownLink | 
   try {
     const parsed = new URL(href);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (!isSafeLegacyAgentExternalUrl(href)) return null;
+    if (options.allowExternal === false) return null;
+    const sourceKey = normalizeAgentSourceUrlKey(href);
+    if (
+      options.allowedExternalUrlKeys !== undefined &&
+      (sourceKey === null || !options.allowedExternalUrlKeys.has(sourceKey))
+    ) return null;
     return { kind: "external", href, hostname: parsed.hostname };
   } catch {
     return null;
@@ -849,6 +993,16 @@ export type AgentChatRequestInput = {
 
 type TextualMessage = { role: string; parts?: readonly unknown[] };
 
+function textualMessageText(message: TextualMessage | undefined): string {
+  return (message?.parts ?? [])
+    .map((part) => {
+      const candidate = asRecord(part);
+      return candidate?.type === "text" && typeof candidate.text === "string" ? candidate.text : "";
+    })
+    .join("")
+    .trim();
+}
+
 /**
  * The text of the newest user turn.
  *
@@ -859,15 +1013,69 @@ export function latestAgentUserText(messages: readonly TextualMessage[]): string
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role !== "user") continue;
-    const text = (message.parts ?? [])
-      .map((part) => {
-        const candidate = asRecord(part);
-        return candidate?.type === "text" && typeof candidate.text === "string" ? candidate.text : "";
-      })
-      .join("");
-    if (text.trim()) return text.trim();
+    const text = textualMessageText(message);
+    if (text) return text;
   }
   return "";
+}
+
+export type AgentOnlineSearchOffer = { toolCallId: string; userText: string };
+
+/** Claim one online-search offer and release it when submission does not start. */
+export async function consumeAgentOnlineSearchOffer(
+  consumed: Set<string>,
+  toolCallId: string,
+  submit: () => Promise<boolean>,
+): Promise<boolean> {
+  if (!toolCallId || consumed.has(toolCallId)) return false;
+  consumed.add(toolCallId);
+  try {
+    const submitted = await submit();
+    if (!submitted) consumed.delete(toolCallId);
+    return submitted;
+  } catch {
+    consumed.delete(toolCallId);
+    return false;
+  }
+}
+
+/** Return the one collection miss that is still actionable in the latest completed turn. */
+export function latestAgentOnlineSearchOffer(
+  messages: readonly TextualMessage[],
+): AgentOnlineSearchOffer | null {
+  const assistantIndex = messages.length - 1;
+  const assistant = messages[assistantIndex];
+  if (assistant?.role !== "assistant") return null;
+
+  const userText = latestAgentUserText(messages.slice(0, assistantIndex));
+  if (!userText) return null;
+
+  let toolCallId: string | null = null;
+  for (const part of assistant.parts ?? []) {
+    const candidate = asRecord(part);
+    if (candidate?.type !== "data-agent-tool-result") continue;
+    const result = normalizeAgentToolResult(candidate.data);
+    if (result === null) continue;
+    const view = describeAgentToolResult(result.name, result.result);
+    if (result.name === "search_library") {
+      toolCallId = view.kind === "online-offer" ? result.toolCallId : null;
+    } else if (
+      result.name === "present_website_recommendations" &&
+      view.kind === "links" &&
+      view.items.length > 0
+    ) {
+      toolCallId = null;
+    }
+  }
+  return toolCallId === null ? null : { toolCallId, userText };
+}
+
+/** Keep a failed retry actionable even though its attempted turn is now newest. */
+export function activeAgentOnlineSearchOffer(
+  messages: readonly TextualMessage[],
+  retryableOffer: AgentOnlineSearchOffer | null,
+): AgentOnlineSearchOffer | null {
+  return retryableOffer ?? latestAgentOnlineSearchOffer(messages);
 }
 
 export class AgentContractError extends Error {

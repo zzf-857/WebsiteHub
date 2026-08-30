@@ -2,7 +2,8 @@
 
 Web search remains opt-in at the account level.  The user can bring a Tavily /
 Jina / Exa key, or explicitly enable the official low-frequency keyless Exa
-MCP adapter; otherwise the Agent works from the library plus its own knowledge.
+MCP adapter; otherwise the Agent can only return verified library results and
+must not turn model memory into clickable external recommendations.
 WebHub itself never ships or silently selects a vendor key.
 
 Every adapter normalizes to the same ``WebSearchResult`` shape so the Agent
@@ -31,6 +32,13 @@ MAX_RESULTS = 6
 MAX_SNIPPET_LENGTH = 400
 MAX_SEARCH_RESPONSE_BYTES = 512 * 1024
 MAX_RESULT_URL_LENGTH = 2_048
+_NON_PUBLIC_SOURCE_SUFFIXES = (
+    ".corp",
+    ".example",
+    ".invalid",
+    ".onion",
+    ".test",
+)
 _EXA_FREE_CACHE_SECONDS = 300
 _EXA_FREE_CACHE_SIZE = 128
 _EXA_FREE_COOLDOWN_SECONDS = 60
@@ -107,14 +115,26 @@ def trusted_source_url(value: Any) -> str | None:
     """
 
     candidate = _http_url(value)
-    if candidate is None or sensitive_url_keys(candidate):
+    if candidate is None:
+        return None
+    try:
+        candidate.encode("utf-8")
+    except UnicodeError:
         return None
     normalized = normalize_bookmark_url(candidate)
     if (
         normalized.status is not NormalizationStatus.ACCEPTED
         or normalized.normalized_url is None
+        or normalized.host is None
         or normalized.fetch_policy is not FetchPolicy.PUBLIC_REVALIDATION_REQUIRED
     ):
+        return None
+    if (
+        ("." not in normalized.host and ":" not in normalized.host)
+        or normalized.host.endswith(_NON_PUBLIC_SOURCE_SUFFIXES)
+    ):
+        return None
+    if sensitive_url_keys(normalized.normalized_url):
         return None
     parts = urlsplit(normalized.normalized_url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))

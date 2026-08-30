@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.chat import service as chat_service
-from webhub.chat.models import ConversationMessage
+from webhub.chat.models import MAX_MESSAGE_JSON_BYTES, ConversationMessage
 from webhub.chat.schemas import ConversationMessageResponse
 from webhub.db.database import Database
 from webhub.db.models import AgentTurnRun
@@ -35,7 +35,13 @@ TURN_ABORTED_CODE = "turn_aborted"
 TURN_RUNNER_ERROR_CODE = "runner_unavailable"
 MAX_PERSISTED_AGENT_TEXT = 32_000
 MAX_PERSISTED_AGENT_REASONING = 32_000
+MAX_PERSISTED_AGENT_SOURCES_BYTES = MAX_MESSAGE_JSON_BYTES * 3 // 4
+MAX_PERSISTED_AGENT_SOURCE_PARTS_BYTES = MAX_MESSAGE_JSON_BYTES // 8
 MAX_STALE_TURN_CLEANUP_BATCH = 500
+_LATEST_ONLY_TOOL_RESULTS = {
+    "present_website_recommendations",
+    "propose_space_batch",
+}
 logger = logging.getLogger(__name__)
 
 TurnState = Literal["running", "complete", "error", "aborted"]
@@ -93,6 +99,106 @@ def _lease_token_hash() -> str:
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _json_size(value: Any) -> int | None:
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, UnicodeError, ValueError):
+        return None
+    return len(encoded)
+
+
+def _utf8_safe_text(value: str, *, limit: int) -> str:
+    return value.encode("utf-8", errors="replace").decode("utf-8")[:limit]
+
+
+def _truncated_tool_result(value: Mapping[str, Any]) -> dict[str, Any]:
+    raw_result = value.get("result")
+    summary: dict[str, Any] = {
+        "code": "persisted_tool_result_truncated",
+        "error": "工具结果过大，历史记录未保存完整明细，请重新执行。",
+    }
+    if isinstance(raw_result, Mapping):
+        source = raw_result.get("source")
+        if isinstance(source, str) and source.strip():
+            summary["source"] = _utf8_safe_text(source.strip(), limit=160)
+        matched_count = raw_result.get("matched_count")
+        if (
+            isinstance(matched_count, int)
+            and not isinstance(matched_count, bool)
+            and matched_count >= 0
+        ):
+            summary["matched_count"] = matched_count
+
+    compact: dict[str, Any] = {}
+    tool_call_id = value.get("toolCallId")
+    if isinstance(tool_call_id, str) and tool_call_id:
+        compact["toolCallId"] = _utf8_safe_text(tool_call_id, limit=200)
+    name = value.get("name")
+    if isinstance(name, str) and name:
+        compact["name"] = _utf8_safe_text(name, limit=100)
+    compact["result"] = summary
+    return compact
+
+
+def _tool_result_persistence_priority(value: Mapping[str, Any]) -> int:
+    name = value.get("name")
+    if name == "present_website_recommendations":
+        return 1
+    if not isinstance(name, str) or not name.startswith("propose_"):
+        return 0
+    result = value.get("result")
+    if isinstance(result, Mapping) and result.get("status") == "awaiting_confirmation":
+        return 2
+    return 0
+
+
+def _bounded_tool_results(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep replayable tool state below the message sources sidecar ceiling."""
+
+    bounded: list[dict[str, Any]] = []
+    for value in values:
+        candidate = dict(value)
+        size = _json_size([candidate])
+        bounded.append(
+            candidate
+            if size is not None and size <= MAX_PERSISTED_AGENT_SOURCES_BYTES
+            else _truncated_tool_result(candidate)
+        )
+
+    size = _json_size(bounded)
+    if size is not None and size <= MAX_PERSISTED_AGENT_SOURCES_BYTES:
+        return bounded
+
+    # Read-only intermediate results are reconstructible. Preserve final
+    # recommendations and actionable drafts until every other result has been
+    # reduced to an explicit history-only summary.
+    compact_order = sorted(
+        range(len(bounded)),
+        key=lambda index: (_tool_result_persistence_priority(bounded[index]), index),
+    )
+    for index in compact_order:
+        value = bounded[index]
+        compact = _truncated_tool_result(value)
+        if compact == value:
+            continue
+        bounded[index] = compact
+        size = _json_size(bounded)
+        if size is not None and size <= MAX_PERSISTED_AGENT_SOURCES_BYTES:
+            return bounded
+
+    while bounded:
+        size = _json_size(bounded)
+        if size is not None and size <= MAX_PERSISTED_AGENT_SOURCES_BYTES:
+            break
+        bounded.pop(0)
+    return bounded
 
 
 def _request_hash(request: AgentRunRequest) -> str:
@@ -567,7 +673,7 @@ class AgentTurnJournal:
         remaining = MAX_PERSISTED_AGENT_TEXT - self._text_length
         if remaining <= 0:
             return
-        fragment = value[:remaining]
+        fragment = _utf8_safe_text(value, limit=remaining)
         self.text_fragments.append(fragment)
         self._text_length += len(fragment)
         self._mark_content_dirty()
@@ -578,21 +684,38 @@ class AgentTurnJournal:
         remaining = MAX_PERSISTED_AGENT_REASONING - self._reasoning_length
         if remaining <= 0:
             return
-        fragment = value[:remaining]
+        fragment = _utf8_safe_text(value, limit=remaining)
         self.reasoning_fragments.append(fragment)
         self._reasoning_length += len(fragment)
         self._mark_content_dirty()
 
-    def add_tool_result(self, value: Mapping[str, Any]) -> None:
-        self.tool_results.append(dict(value))
+    def add_tool_result(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(value)
+        result_name = result.get("name")
+        if isinstance(result_name, str) and result_name in _LATEST_ONLY_TOOL_RESULTS:
+            # UI/history treat the newest recommendation and Space batch plan
+            # as authoritative. Superseded attempts need not consume the
+            # durable sidecar budget.
+            self.tool_results = [
+                item
+                for item in self.tool_results
+                if item.get("name") != result_name
+            ]
+        self.tool_results = _bounded_tool_results([*self.tool_results, result])
+        return dict(self.tool_results[-1])
 
-    def add_source(self, value: Mapping[str, Any]) -> None:
+    def add_source(self, value: Mapping[str, Any]) -> bool:
         source_id = value.get("sourceId")
         if isinstance(source_id, str) and any(
             part.get("sourceId") == source_id for part in self.source_parts
         ):
-            return
-        self.source_parts.append(dict(value))
+            return False
+        candidate = [*self.source_parts, dict(value)]
+        size = _json_size(candidate)
+        if size is not None and size <= MAX_PERSISTED_AGENT_SOURCE_PARTS_BYTES:
+            self.source_parts = candidate
+            return True
+        return False
 
     def update_metadata(self, value: Mapping[str, Any]) -> None:
         changed = {key: item for key, item in value.items() if self.metadata.get(key) != item}
@@ -955,6 +1078,8 @@ __all__ = [
     "TURN_LEASE_DURATION",
     "TURN_RUNNER_ERROR_CODE",
     "MAX_PERSISTED_AGENT_REASONING",
+    "MAX_PERSISTED_AGENT_SOURCE_PARTS_BYTES",
+    "MAX_PERSISTED_AGENT_SOURCES_BYTES",
     "MAX_PERSISTED_AGENT_TEXT",
     "AgentTurnClaim",
     "AgentTurnJournal",

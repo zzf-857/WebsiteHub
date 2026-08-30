@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from webhub.bookmarks.models import (
@@ -10,7 +11,15 @@ from webhub.bookmarks.models import (
 )
 
 _SUPPORTED_SCHEMES = {"http", "https"}
-_LOCAL_HOST_SUFFIXES = (".internal", ".lan", ".local", ".localhost", ".home")
+_LOCAL_HOST_SUFFIXES = (
+    ".internal",
+    ".lan",
+    ".local",
+    ".localhost",
+    ".home",
+    ".home.arpa",
+)
+_IPV4_NUMBER_COMPONENT = re.compile(r"(?:0[xX][0-9a-fA-F]+|[0-9]+)")
 NORMALIZER_VERSION = "conservative-url.v1"
 
 
@@ -31,19 +40,33 @@ def _result(
     )
 
 
+def _looks_like_noncanonical_ipv4(host: str) -> bool:
+    """Recognize browser/DNS numeric IPv4 spellings that ipaddress rejects."""
+
+    components = host.split(".")
+    return 1 <= len(components) <= 4 and all(
+        _IPV4_NUMBER_COMPONENT.fullmatch(component) is not None
+        for component in components
+    )
+
+
 def _fetch_policy(host: str) -> FetchPolicy:
     comparable = host.casefold().rstrip(".")
-    if comparable == "localhost" or comparable.endswith(_LOCAL_HOST_SUFFIXES):
+    if comparable in {"localhost", "home.arpa"} or comparable.endswith(
+        _LOCAL_HOST_SUFFIXES
+    ):
         return FetchPolicy.EXPORT_METADATA_ONLY
 
     address_text = comparable.partition("%")[0]
     try:
         address = ipaddress.ip_address(address_text)
     except ValueError:
+        if _looks_like_noncanonical_ipv4(address_text):
+            return FetchPolicy.EXPORT_METADATA_ONLY
         return FetchPolicy.PUBLIC_REVALIDATION_REQUIRED
     return (
         FetchPolicy.PUBLIC_REVALIDATION_REQUIRED
-        if address.is_global
+        if address.is_global and not address.is_multicast
         else FetchPolicy.EXPORT_METADATA_ONLY
     )
 
@@ -60,6 +83,12 @@ def normalize_bookmark_url(raw_url: str) -> NormalizedUrl:
     candidate = raw_url.strip()
     if not candidate:
         return _result(NormalizationStatus.INVALID, reason="missing_url")
+    if "\\" in candidate:
+        # Browsers treat backslashes as path separators for special schemes,
+        # while urllib may leave them in the authority. Reject the parser
+        # differential instead of allowing a public-looking host to become a
+        # private navigation target at click or fetch time.
+        return _result(NormalizationStatus.INVALID, reason="backslash_in_url")
     if any(
         character.isspace() or ord(character) < 32 or ord(character) == 127
         for character in candidate
@@ -70,6 +99,11 @@ def normalize_bookmark_url(raw_url: str) -> NormalizedUrl:
         parts = urlsplit(candidate)
     except ValueError:
         return _result(NormalizationStatus.INVALID, reason="malformed_url")
+    if "%" in parts.netloc:
+        # WHATWG parsers percent-decode special-scheme hostnames before
+        # navigation. urllib does not, which can hide localhost or an IP
+        # literal from the fetch policy.
+        return _result(NormalizationStatus.INVALID, reason="encoded_authority")
 
     scheme = parts.scheme.casefold()
     if scheme not in _SUPPORTED_SCHEMES:

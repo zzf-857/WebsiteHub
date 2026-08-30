@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 from collections import deque
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -70,6 +71,7 @@ from .tools import (
     propose_sites_from_text,
 )
 from .turns import (
+    MAX_PERSISTED_AGENT_SOURCE_PARTS_BYTES,
     TURN_ABORTED_CODE,
     TURN_EXPIRED_CODE,
     TURN_RUNNER_ERROR_CODE,
@@ -96,6 +98,17 @@ _TOOL_EXECUTION_ERROR = {
     "code": "tool_execution_error",
     "error": "工具执行失败，请调整请求后重试。",
 }
+
+
+def _safe_tool_text(value: Any, *, limit: int) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    collapsed = " ".join(value.split())
+    return _utf8_safe_text(collapsed)[:limit]
+
+
+def _utf8_safe_text(value: str) -> str:
+    return value.encode("utf-8", errors="replace").decode("utf-8")
 
 
 def _message_text(message: Any) -> str:
@@ -200,13 +213,20 @@ def _json_safe(value: Any, *, depth: int = 0) -> Any:
 
     if depth > 6:
         return None
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, (bool, int)):
         return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return _utf8_safe_text(value)
     if isinstance(value, Mapping):
-        return {str(key): _json_safe(item, depth=depth + 1) for key, item in value.items()}
+        return {
+            _utf8_safe_text(str(key)): _json_safe(item, depth=depth + 1)
+            for key, item in value.items()
+        }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_json_safe(item, depth=depth + 1) for item in value]
-    return str(value)
+    return _utf8_safe_text(str(value))
 
 
 def _tool_payload(content: Any) -> Any:
@@ -219,7 +239,7 @@ def _tool_payload(content: Any) -> Any:
 
 
 def _recommendation_artifact(value: Any) -> dict[str, Any] | None:
-    """Accept only the server-owned v2 card manifest carried outside model content."""
+    """Accept current manifests plus the read-safe v2 history contract."""
 
     if not isinstance(value, Mapping):
         return None
@@ -236,7 +256,7 @@ def _recommendation_artifact(value: Any) -> dict[str, Any] | None:
             "error": error.strip(),
         }
     if (
-        safe.get("manifest_version") != RECOMMENDATION_MANIFEST_VERSION
+        safe.get("manifest_version") not in {2, RECOMMENDATION_MANIFEST_VERSION}
         or safe.get("complete") is not True
     ):
         return None
@@ -331,7 +351,54 @@ def _tool_result_payload(message: Any) -> Any:
             "code": "invalid_recommendation_artifact",
             "error": "推荐结果生成失败，请重新执行。",
         }
-    return _tool_payload(getattr(message, "content", ""))
+    payload = _tool_payload(getattr(message, "content", ""))
+    if name == "web_search":
+        return _safe_web_search_payload(payload)
+    return payload
+
+
+def _safe_web_search_payload(value: Any) -> dict[str, Any]:
+    """Project search events to the same public-URL contract as the tool."""
+
+    if not isinstance(value, Mapping):
+        return {
+            "source": SOURCE_WEB,
+            "error": "联网搜索结果格式无效，请重新执行。",
+            "items": [],
+        }
+
+    safe: dict[str, Any] = {"source": SOURCE_WEB}
+    provider_id = value.get("provider_id")
+    if isinstance(provider_id, str) and provider_id in _TRUSTED_SEARCH_PROVIDERS:
+        safe["provider_id"] = provider_id
+    provider = value.get("provider")
+    if provider_text := _safe_tool_text(provider, limit=160):
+        safe["provider"] = provider_text
+    error = value.get("error")
+    if error_text := _safe_tool_text(error, limit=2_000):
+        safe["error"] = error_text
+
+    items: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    candidates = value.get("items")
+    if isinstance(candidates, Sequence) and not isinstance(
+        candidates,
+        (str, bytes, bytearray),
+    ):
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                continue
+            url = trusted_source_url(candidate.get("url"))
+            if url is None or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            item = {"url": url}
+            for field, limit in (("title", 500), ("snippet", 4_000)):
+                if text := _safe_tool_text(candidate.get(field), limit=limit):
+                    item[field] = text
+            items.append(item)
+    safe["items"] = items
+    return safe
 
 
 def _namespaced_tool_call_id(
@@ -348,7 +415,7 @@ def _namespaced_tool_call_id(
         readable = f"{prefix}{normalized}"
         if len(readable) <= 200:
             return readable
-    digest_input = f"{tool_name}\x1f{raw_id}".encode()
+    digest_input = f"{tool_name}\x1f{raw_id}".encode(errors="replace")
     digest = hashlib.sha256(digest_input).hexdigest()
     return f"{prefix}sha256:{digest}"
 
@@ -404,6 +471,76 @@ def _source_url_chunks(
             )
         )
     return chunks
+
+
+def _safe_replayed_tool_result(value: Any) -> dict[str, Any] | None:
+    """Re-apply current trust boundaries to tool state loaded from history."""
+
+    safe = _json_safe(value)
+    if not isinstance(safe, dict):
+        return None
+    if safe.get("name") != "web_search":
+        return safe
+
+    projected: dict[str, Any] = {
+        "name": "web_search",
+        "result": _safe_web_search_payload(safe.get("result")),
+    }
+    tool_call_id = safe.get("toolCallId")
+    if isinstance(tool_call_id, str) and tool_call_id:
+        projected["toolCallId"] = tool_call_id[:200]
+    return projected
+
+
+def _append_bounded_source_part(
+    target: list[dict[str, object]],
+    value: dict[str, object],
+) -> bool:
+    candidate = [*target, value]
+    try:
+        size = len(
+            json.dumps(
+                candidate,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+    except (TypeError, UnicodeError, ValueError):
+        return False
+    if size > MAX_PERSISTED_AGENT_SOURCE_PARTS_BYTES:
+        return False
+    target.append(value)
+    return True
+
+
+def _safe_stored_source_url_part(
+    value: Any,
+    seen_urls: set[str],
+) -> dict[str, object] | None:
+    if not isinstance(value, Mapping) or value.get("type") != "source-url":
+        return None
+    provider_metadata = value.get("providerMetadata")
+    if not isinstance(provider_metadata, Mapping):
+        return None
+    webhub_metadata = provider_metadata.get("webhub")
+    if not isinstance(webhub_metadata, Mapping):
+        return None
+    provider_id = webhub_metadata.get("searchProvider")
+    if provider_id not in _TRUSTED_SEARCH_PROVIDERS:
+        return None
+    url = trusted_source_url(value.get("url"))
+    if url is None or url in seen_urls:
+        return None
+    seen_urls.add(url)
+    title = _safe_tool_text(value.get("title"), limit=160)
+    source_id = f"web:{hashlib.sha256(url.encode()).hexdigest()[:24]}"
+    return source_url_chunk(
+        source_id,
+        url,
+        title=title,
+        provider_metadata={"webhub": {"searchProvider": provider_id}},
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -530,16 +667,26 @@ async def _replay_turn(
             part_type = part.get("type")
             text = part.get("text")
             if part_type == "reasoning" and isinstance(text, str) and text:
+                text = _utf8_safe_text(text)
                 part_id = f"replay-reasoning-{index}"
                 yield reasoning_start_chunk(part_id)
                 yield reasoning_delta_chunk(part_id, text)
                 yield reasoning_end_chunk(part_id)
-        for source in message.sources:
-            if isinstance(source, Mapping):
-                yield data_chunk("agent-tool-result", dict(source))
+        replay_source_parts: list[dict[str, object]] = []
+        seen_source_urls: set[str] = set()
         for part in message.parts:
-            if isinstance(part, Mapping) and part.get("type") == "source-url":
-                yield dict(part)
+            safe_part = _safe_stored_source_url_part(part, seen_source_urls)
+            if safe_part is not None:
+                _append_bounded_source_part(replay_source_parts, safe_part)
+        for source in message.sources:
+            safe_source = _safe_replayed_tool_result(source)
+            if safe_source is None:
+                continue
+            yield data_chunk("agent-tool-result", safe_source)
+            for source_part in _source_url_chunks(safe_source, seen_source_urls):
+                _append_bounded_source_part(replay_source_parts, source_part)
+        for part in replay_source_parts:
+            yield part
         emitted_text = False
         for index, part in enumerate(message.parts):
             if not isinstance(part, Mapping) or part.get("type") != "text":
@@ -547,14 +694,16 @@ async def _replay_turn(
             text = part.get("text")
             if not isinstance(text, str) or not text:
                 continue
+            text = _utf8_safe_text(text)
             part_id = f"replay-text-{index}"
             yield text_start_chunk(part_id)
             yield text_delta_chunk(part_id, text)
             yield text_end_chunk(part_id)
             emitted_text = True
         if not emitted_text and message.content:
+            replay_content = _utf8_safe_text(message.content)
             yield text_start_chunk("replay-text")
-            yield text_delta_chunk("replay-text", message.content)
+            yield text_delta_chunk("replay-text", replay_content)
             yield text_end_chunk("replay-text")
 
     if claim.state == "complete":
@@ -777,7 +926,7 @@ class LangGraphAgentRunner:
                     "name": "propose_sites",
                     "result": result,
                 }
-                journal.add_tool_result(tool_result)
+                tool_result = journal.add_tool_result(tool_result)
                 await journal.checkpoint(force=True)
                 yield data_chunk("agent-tool-result", tool_result)
 
@@ -833,6 +982,8 @@ class LangGraphAgentRunner:
                 settings=self.settings,
                 user_id=request.account_id,
                 search_binding=search_binding,
+                search_scope="collection" if _web_search_declined(request.metadata) else "online",
+                user_message=request.message,
             )
             graph = build_agent_graph(
                 model=build_chat_model(model_binding),
@@ -865,7 +1016,7 @@ class LangGraphAgentRunner:
                     if getattr(chunk, "type", None) == "tool":
                         continue
                     _merge_usage_max(usage_rounds[-1], _message_usage(chunk))
-                    reasoning = _message_reasoning(chunk)
+                    reasoning = _utf8_safe_text(_message_reasoning(chunk))
                     if reasoning:
                         now = perf_counter()
                         if first_output_at is None:
@@ -877,7 +1028,7 @@ class LangGraphAgentRunner:
                             reasoning_started = now
                         journal.add_reasoning(reasoning)
                         yield reasoning_delta_chunk(reasoning_id, reasoning)
-                    delta = _message_text(chunk)
+                    delta = _utf8_safe_text(_message_text(chunk))
                     if not delta:
                         continue
                     now = perf_counter()
@@ -943,15 +1094,17 @@ class LangGraphAgentRunner:
                         yield data_chunk("agent-tool-call", data, transient=True)
                         continue
 
+                    data = journal.add_tool_result(data)
                     source_parts = _source_url_chunks(data, seen_source_urls)
-                    journal.add_tool_result(data)
+                    persisted_source_parts: list[dict[str, object]] = []
                     for source_part in source_parts:
-                        journal.add_source(source_part)
+                        if journal.add_source(source_part):
+                            persisted_source_parts.append(source_part)
                     # Tool results and their provenance are business state, so
                     # they bypass the two-second text checkpoint cadence.
                     await journal.checkpoint(force=True)
                     yield data_chunk("agent-tool-result", data)
-                    for source_part in source_parts:
+                    for source_part in persisted_source_parts:
                         yield source_part
 
             if reasoning_open and reasoning_id is not None:

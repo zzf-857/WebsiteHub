@@ -24,7 +24,8 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Self
 from urllib.parse import urlsplit, urlunsplit
@@ -38,6 +39,7 @@ from webhub.bookmarks import queries as bookmark_queries
 from webhub.bookmarks.apply import category_distribution
 from webhub.bookmarks.models import NormalizationStatus
 from webhub.bookmarks.normalization import normalize_bookmark_url
+from webhub.chat.models import MAX_MESSAGE_JSON_BYTES
 from webhub.config import Settings
 from webhub.db.database import Database
 from webhub.db.models import BookmarkImportJob, Site, SpaceMember
@@ -50,21 +52,65 @@ from webhub.spaces.service import SpaceError
 
 from .provider_binding import ProviderBinding
 from .web_search import MAX_RESULTS as MAX_WEB_SEARCH_RESULTS
-from .web_search import WebSearchUnavailableError, search_web
+from .web_search import WebSearchUnavailableError, search_web, trusted_source_url
 
 # Provenance markers required by the todolist: the user must always be able to
 # tell a stored bookmark from something the model produced.
 SOURCE_LIBRARY = "站内存储数据"
 SOURCE_WEB = "联网搜索"
 SOURCE_MODEL = "llm推荐"
+SearchScope = Literal["collection", "online"]
 
 MAX_TOOL_LIMIT = 20
 MAX_PROPOSAL_TEXT_LENGTH = 20_000
-RECOMMENDATION_MANIFEST_VERSION = 2
+RECOMMENDATION_MANIFEST_VERSION = 3
+# Leave half of the message sidecar budget for search previews, other tool
+# results and protocol metadata. Complete recommendation arrays above this
+# boundary must be externalized before WebHub can persist and page them safely.
+MAX_RECOMMENDATION_ARTIFACT_BYTES = MAX_MESSAGE_JSON_BYTES // 2
 _COLLECTION_ACTION_SUFFIX = re.compile(
-    r"(?:/|\s|[，,。:：;；])+(?:入库|收藏|保存|收录)\s*[.!。！?？]*\s*$",
+    r"(?:\s|[，,。:：;；])+(?:入库|收藏|保存|收录)\s*[.!。！?？]*\s*$",
     re.IGNORECASE,
 )
+_RECOMMENDATION_COUNT = r"(?:[1-9]\d{0,4}|[零一二两三四五六七八九十百]{1,5})"
+_FINITE_RECOMMENDATION_PATTERNS = (
+    re.compile(
+        rf"(?:精选|只(?:要|看|需|给)|推荐|挑(?:选)?|选出|列出|给我|找(?:出)?)"
+        rf"[^，。！？,!?.\n]{{0,10}}?(?P<count>{_RECOMMENDATION_COUNT})\s*"
+        r"(?:个|条|家|项|款)(?:网站|站点)?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"前\s*(?P<count>{_RECOMMENDATION_COUNT})"
+        r"(?:\s*(?:个|条|家|项|款)(?:网站|站点)?|\s*(?:网站|站点))?"
+        r"(?![\dA-Za-z零一二两三四五六七八九十百])",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"(?P<count>{_RECOMMENDATION_COUNT})\s*(?:个|条|家|项|款)\s*"
+        r"[^，。！？,!?.\n]{0,8}(?:网站|站点|推荐)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\btop\s*(?P<count>\d{1,5})\b", re.IGNORECASE),
+    re.compile(
+        r"\brecommend(?:\s+me)?\s+(?P<count>\d{1,5})\s+"
+        r"(?:[a-z0-9_-]+\s+){0,4}(?:sites?|websites?|results?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:^|\b(?:show|give(?:\s+me)?|list)\s+)"
+        r"(?P<count>\d{1,5})\s+(?:sites?|websites?|results?)\b",
+        re.IGNORECASE,
+    ),
+)
+_PROTECTED_FRAGMENT_STOPWORDS = {
+    "com",
+    "http",
+    "https",
+    "net",
+    "org",
+    "www",
+}
 
 
 class SearchLibraryArgs(BaseModel):
@@ -82,9 +128,10 @@ class SearchLibraryArgs(BaseModel):
         description="只检索这个分类；必须先从 list_categories 获取真实 ID",
     )
     include_all: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "用户明确要求全部结果时设为 true。模型仍只看到有限预览，完整结果由界面分页展示"
+            "默认冻结全部匹配结果；模型只看到有限预览，完整结果由界面分页展示。"
+            "用户明确指定数量时服务端会按原话冻结前 N 项；只有未指定数量的主观精选才设为 false"
         ),
     )
 
@@ -231,6 +278,135 @@ def _selection_site_summary(site: Any) -> dict[str, Any]:
     }
 
 
+def _register_site_protected_values(
+    context: AgentToolContext,
+    items: Sequence[Mapping[str, Any]],
+) -> None:
+    values: list[Any] = []
+    for item in items:
+        values.extend(
+            [
+                item.get("name"),
+                item.get("url"),
+                item.get("summary"),
+                item.get("description"),
+                item.get("category"),
+                *(item.get("tags") if isinstance(item.get("tags"), list) else []),
+            ]
+        )
+    context.register_protected_search_values(values)
+
+
+def _recommendation_sort_key(item: Mapping[str, Any], query: str) -> tuple[Any, ...]:
+    """Rank complete library results without another model or network call."""
+
+    normalized_query = " ".join(unicodedata.normalize("NFKC", query).split()).casefold()
+    name = str(item.get("name") or "")
+    url = str(item.get("url") or "")
+    name_key = " ".join(unicodedata.normalize("NFKC", name).split()).casefold()
+    url_key = unicodedata.normalize("NFKC", url).casefold()
+    score = 0
+    if normalized_query and normalized_query == name_key:
+        score += 2_000
+    elif normalized_query and normalized_query in name_key:
+        score += 1_000
+    if normalized_query and normalized_query == url_key:
+        score += 800
+    elif normalized_query and normalized_query in url_key:
+        score += 400
+    for token in re.findall(r"[\w\u3400-\u9fff]+", normalized_query, re.UNICODE):
+        if token in name_key:
+            score += 100
+        if token in url_key:
+            score += 20
+    return (-score, name_key, str(item.get("site_id") or ""))
+
+
+def _normalized_search_text(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).split()).casefold()
+
+
+def _parse_recommendation_count(value: str) -> int | None:
+    if value.isascii() and value.isdecimal():
+        count = int(value)
+        return count if 1 <= count <= 99_999 else None
+
+    digits = {
+        "零": 0,
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if not any(character in {"十", "百"} for character in value):
+        try:
+            count = int("".join(str(digits[character]) for character in value))
+        except (KeyError, ValueError):
+            return None
+        return count if 1 <= count <= 99_999 else None
+
+    total = 0
+    current = 0
+    for character in value:
+        if character in digits:
+            current = digits[character]
+            continue
+        unit = {"十": 10, "百": 100}.get(character)
+        if unit is None:
+            return None
+        total += (current or 1) * unit
+        current = 0
+    count = total + current
+    return count if 1 <= count <= 99_999 else None
+
+
+def _requested_recommendation_count(value: str) -> int | None:
+    normalized = unicodedata.normalize("NFKC", value)
+    counts: list[int] = []
+    for pattern in _FINITE_RECOMMENDATION_PATTERNS:
+        for match in pattern.finditer(normalized):
+            # Inspect the text immediately before the number, including the
+            # part already consumed by this intent pattern. Otherwise phrases
+            # such as "recommend, but don't give only 3; list all" look like an
+            # exact request merely because the negation follows "recommend".
+            prefix = normalized[max(0, match.start("count") - 24) : match.start("count")]
+            if re.search(
+                r"(?:不要|不必|别|不(?!但|仅)|don't|do\s+not|\bnot\b)"
+                r"[^，。！？,!?.;；\n]{0,16}$",
+                prefix,
+                re.IGNORECASE,
+            ):
+                continue
+            count = _parse_recommendation_count(match.group("count"))
+            if count is not None:
+                counts.append(count)
+    return counts[0] if counts and len(set(counts)) == 1 else None
+
+
+def _user_requests_finite_recommendations(value: str) -> bool:
+    return _requested_recommendation_count(value) is not None
+
+
+def _protected_query_fragments(value: str) -> set[str]:
+    normalized = _normalized_search_text(value)
+    fragments: set[str] = set()
+    if len(normalized) >= 4 or any("\u3400" <= character <= "\u9fff" for character in normalized):
+        fragments.add(normalized)
+    for token in re.findall(r"[a-z0-9_]+|[\u3400-\u9fff]+", normalized, re.UNICODE):
+        if token in _PROTECTED_FRAGMENT_STOPWORDS:
+            continue
+        is_cjk = any("\u3400" <= character <= "\u9fff" for character in token)
+        if (is_cjk and len(token) >= 2) or (not is_cjk and len(token) >= 4):
+            fragments.add(token)
+    return fragments
+
+
 @dataclass(frozen=True, slots=True)
 class AgentToolContext:
     """Everything a tool needs, with the account scope already fixed."""
@@ -239,26 +415,148 @@ class AgentToolContext:
     settings: Settings
     user_id: str
     search_binding: ProviderBinding | None = None
+    search_scope: SearchScope = "collection"
+    user_message: str = ""
     _library_result_sets: dict[str, tuple[dict[str, Any], ...]] = field(
         default_factory=dict,
         init=False,
         repr=False,
         compare=False,
     )
+    _library_result_previews: dict[str, tuple[str, ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    # A one-element mutable holder keeps the latest-call marker writable while
+    # the context itself remains a frozen dataclass.
+    _latest_library_result_set_id: list[str | None] = field(
+        default_factory=lambda: [None],
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _library_search_state: list[Literal["not_run", "matched", "empty", "error"]] = field(
+        default_factory=lambda: ["not_run"],
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _latest_library_search_query: list[str | None] = field(
+        default_factory=lambda: [None],
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _trusted_web_search_urls: dict[str, str] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _protected_search_terms: set[str] = field(
+        default_factory=set,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
-    def register_library_result_set(self, items: Sequence[dict[str, Any]]) -> str:
+    def register_library_result_set(
+        self,
+        items: Sequence[dict[str, Any]],
+        preview: Sequence[dict[str, Any]],
+    ) -> str:
         result_set_id = str(uuid4())
         self._library_result_sets[result_set_id] = tuple(dict(item) for item in items)
+        self._library_result_previews[result_set_id] = tuple(
+            identity
+            for item in preview
+            if (identity := _recommendation_primary_identity(str(item.get("url") or "")))
+            is not None
+        )
+        self._latest_library_result_set_id[0] = result_set_id
         return result_set_id
+
+    def clear_latest_library_result_set(self) -> None:
+        self._latest_library_result_set_id[0] = None
 
     def library_result_set(self, result_set_id: str) -> tuple[dict[str, Any], ...] | None:
         return self._library_result_sets.get(result_set_id)
 
+    def latest_library_result_set(
+        self,
+    ) -> tuple[str, tuple[dict[str, Any], ...], tuple[str, ...]] | None:
+        result_set_id = self._latest_library_result_set_id[0]
+        if result_set_id is None:
+            return None
+        result_set = self._library_result_sets.get(result_set_id)
+        preview = self._library_result_previews.get(result_set_id)
+        return (
+            (result_set_id, result_set, preview)
+            if result_set is not None and preview is not None
+            else None
+        )
+
+    def mark_library_search(self, *, query: str, matched_count: int | None) -> None:
+        self._latest_library_search_query[0] = _normalized_search_text(query)
+        if matched_count is None:
+            self._library_search_state[0] = "error"
+        else:
+            self._library_search_state[0] = "matched" if matched_count > 0 else "empty"
+
+    def library_search_state(self) -> Literal["not_run", "matched", "empty", "error"]:
+        return self._library_search_state[0]
+
+    def library_search_matches_query(self, query: str) -> bool:
+        latest = self._latest_library_search_query[0]
+        return bool(latest) and latest == _normalized_search_text(query)
+
+    def register_protected_search_values(self, values: Sequence[Any]) -> None:
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            self._protected_search_terms.update(_protected_query_fragments(value))
+
+    def search_query_exposes_protected_value(self, query: str) -> bool:
+        normalized_query = _normalized_search_text(query)
+        normalized_user_message = _normalized_search_text(self.user_message)
+        query_fragments = _protected_query_fragments(query)
+        for term in self._protected_search_terms:
+            if term in normalized_query and term not in normalized_user_message:
+                return True
+            if any(
+                fragment in term and fragment not in normalized_user_message
+                for fragment in query_fragments
+            ):
+                return True
+        return False
+
+    def register_web_search_results(self, urls: Sequence[str]) -> None:
+        """Remember only URLs returned by this turn's trusted search tool."""
+
+        for url in urls:
+            canonical = trusted_source_url(url)
+            if canonical is not None:
+                self._trusted_web_search_urls[canonical] = canonical
+
+    def trusted_web_search_url(self, url: str) -> str | None:
+        canonical = trusted_source_url(url)
+        if canonical is None:
+            return None
+        return self._trusted_web_search_urls.get(canonical)
+
 
 async def _search_library(context: AgentToolContext, args: SearchLibraryArgs) -> dict[str, Any]:
+    # Every search replaces the preview-recovery candidate from an earlier
+    # call. Explicit counts are frozen server-side just like an all-results
+    # request, so quantities above the model's preview size remain exact.
+    context.clear_latest_library_result_set()
+    requested_count = _requested_recommendation_count(context.user_message)
+    freeze_result_set = args.include_all or requested_count is not None
     async with context.database.sessions() as session:
         try:
-            if args.include_all:
+            if freeze_result_set:
                 selection = await library_service.list_site_selection(
                     session,
                     context.user_id,
@@ -269,16 +567,41 @@ async def _search_library(context: AgentToolContext, args: SearchLibraryArgs) ->
                 )
                 items = sorted(
                     (_selection_site_summary(site) for site in selection.items),
-                    key=lambda item: (str(item["name"]).casefold(), str(item["site_id"])),
+                    key=lambda item: _recommendation_sort_key(item, args.query),
                 )
+                available_count = len(items)
+                if requested_count is not None:
+                    items = items[:requested_count]
+                compact_preview = items[: min(args.limit, MAX_TOOL_LIMIT)]
+                preview = [
+                    _site_summary(
+                        await library_service.get_site(
+                            session,
+                            context.user_id,
+                            str(item["site_id"]),
+                        )
+                    )
+                    for item in compact_preview
+                ]
+                _register_site_protected_values(context, preview)
                 result_set_id = (
-                    context.register_library_result_set(items) if items else None
+                    context.register_library_result_set(items, preview) if items else None
                 )
+                context.mark_library_search(query=args.query, matched_count=available_count)
                 return {
                     "source": SOURCE_LIBRARY,
-                    "matched_count": len(items),
-                    "items": items[: min(args.limit, MAX_TOOL_LIMIT)],
+                    "matched_count": available_count,
+                    **(
+                        {"selected_count": len(items)}
+                        if requested_count is not None
+                        else {}
+                    ),
+                    "items": preview,
                     "complete_result_set": bool(result_set_id),
+                    "search_scope": context.search_scope,
+                    "can_offer_online": (
+                        context.search_scope == "collection" and available_count == 0
+                    ),
                     **({"result_set_id": result_set_id} if result_set_id is not None else {}),
                 }
             listing = await library_service.list_sites(
@@ -295,11 +618,19 @@ async def _search_library(context: AgentToolContext, args: SearchLibraryArgs) ->
                 limit=min(args.limit, MAX_TOOL_LIMIT),
             )
         except LibraryError as error:
+            context.mark_library_search(query=args.query, matched_count=None)
             return {"source": SOURCE_LIBRARY, "error": error.message, "items": []}
+    context.mark_library_search(query=args.query, matched_count=listing.aggregate.matched_count)
+    listed_items = [_site_summary(site) for site in listing.items]
+    _register_site_protected_values(context, listed_items)
     return {
         "source": SOURCE_LIBRARY,
         "matched_count": listing.aggregate.matched_count,
-        "items": [_site_summary(site) for site in listing.items],
+        "items": listed_items,
+        "search_scope": context.search_scope,
+        "can_offer_online": (
+            context.search_scope == "collection" and listing.aggregate.matched_count == 0
+        ),
     }
 
 
@@ -310,6 +641,7 @@ async def _get_site_detail(context: AgentToolContext, args: SiteIdArgs) -> dict[
         except LibraryError as error:
             return {"source": SOURCE_LIBRARY, "error": error.message}
     detail = _site_summary(site)
+    _register_site_protected_values(context, [detail])
     detail.update(
         {
             "source": SOURCE_LIBRARY,
@@ -324,25 +656,23 @@ async def _get_site_detail(context: AgentToolContext, args: SiteIdArgs) -> dict[
 async def _list_categories(context: AgentToolContext, _: EmptyArgs) -> dict[str, Any]:
     async with context.database.sessions() as session:
         listing = await library_service.list_categories(session, context.user_id)
-    return {
-        "source": SOURCE_LIBRARY,
-        "items": [
-            {"id": item.id, "name": item.name, "site_count": item.site_count}
-            for item in listing.items
-        ],
-    }
+    items = [
+        {"id": item.id, "name": item.name, "site_count": item.site_count}
+        for item in listing.items
+    ]
+    context.register_protected_search_values([item["name"] for item in items])
+    return {"source": SOURCE_LIBRARY, "items": items}
 
 
 async def _list_tags(context: AgentToolContext, _: EmptyArgs) -> dict[str, Any]:
     async with context.database.sessions() as session:
         listing = await library_service.list_tags(session, context.user_id)
-    return {
-        "source": SOURCE_LIBRARY,
-        "items": [
-            {"id": item.id, "name": item.name, "site_count": item.site_count}
-            for item in listing.items
-        ],
-    }
+    items = [
+        {"id": item.id, "name": item.name, "site_count": item.site_count}
+        for item in listing.items
+    ]
+    context.register_protected_search_values([item["name"] for item in items])
+    return {"source": SOURCE_LIBRARY, "items": items}
 
 
 async def _list_spaces(context: AgentToolContext, _: EmptyArgs) -> dict[str, Any]:
@@ -358,17 +688,49 @@ async def _list_spaces(context: AgentToolContext, _: EmptyArgs) -> dict[str, Any
             )
         except SpaceError as error:
             return {"source": SOURCE_LIBRARY, "error": error.message, "items": []}
+    items = [
+        {"id": item.id, "name": item.name, "member_count": item.member_count}
+        for item in listing.items
+    ]
+    context.register_protected_search_values([item["name"] for item in items])
     return {
         "source": SOURCE_LIBRARY,
         "total_count": listing.aggregate.total_count,
-        "items": [
-            {"id": item.id, "name": item.name, "member_count": item.member_count}
-            for item in listing.items
-        ],
+        "items": items,
     }
 
 
 async def _web_search(context: AgentToolContext, args: WebSearchArgs) -> dict[str, Any]:
+    if context.search_scope != "online":
+        return {
+            "source": SOURCE_WEB,
+            "error": "当前搜索范围为仅网址库，不能调用联网搜索。",
+            "items": [],
+        }
+    if context.library_search_state() == "not_run":
+        return {
+            "source": SOURCE_WEB,
+            "error": "联网前必须先检索网址库。",
+            "items": [],
+        }
+    if context.library_search_state() == "error":
+        return {
+            "source": SOURCE_WEB,
+            "error": "网址库检索失败，无法确认是否需要联网搜索。",
+            "items": [],
+        }
+    if not context.library_search_matches_query(args.query):
+        return {
+            "source": SOURCE_WEB,
+            "error": "联网搜索词必须与本轮最近一次网址库检索词一致，请先用同一关键词检索网址库。",
+            "items": [],
+        }
+    if context.search_query_exposes_protected_value(args.query):
+        return {
+            "source": SOURCE_WEB,
+            "error": "联网搜索词包含仅应留在网址库中的私有字段，请改用公开主题后重试。",
+            "items": [],
+        }
     if context.search_binding is None:
         return {
             "source": SOURCE_WEB,
@@ -385,11 +747,20 @@ async def _web_search(context: AgentToolContext, args: WebSearchArgs) -> dict[st
             "error": WebSearchUnavailableError.safe_message,
             "items": [],
         }
+    items: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for result in results:
+        url = trusted_source_url(result.url)
+        if url is None or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        items.append({"title": result.title, "url": url, "snippet": result.snippet})
+    context.register_web_search_results([item["url"] for item in items])
     return {
         "source": SOURCE_WEB,
         "provider": context.search_binding.display_name,
         "provider_id": context.search_binding.provider,
-        "items": [result.as_dict() for result in results],
+        "items": items,
     }
 
 
@@ -427,6 +798,45 @@ def _recommendation_identity_candidates(url: str) -> list[str]:
     return list(dict.fromkeys(variants))
 
 
+def _recommendation_primary_identity(url: str) -> str | None:
+    identities = _recommendation_identity_candidates(url)
+    return identities[0] if identities else None
+
+
+def _complete_library_recommendation_artifact(
+    *,
+    result_set_id: str,
+    result_items: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    artifact = {
+        "manifest_version": RECOMMENDATION_MANIFEST_VERSION,
+        "complete": True,
+        "result_set_id": result_set_id,
+        "source": SOURCE_LIBRARY,
+        "provider": None,
+        "matched_count": len(result_items),
+        "items": [dict(item) for item in result_items],
+        "rejected_count": 0,
+    }
+    encoded_size = len(
+        json.dumps(artifact, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    if encoded_size <= MAX_RECOMMENDATION_ARTIFACT_BYTES:
+        return artifact
+    return {
+        "manifest_version": RECOMMENDATION_MANIFEST_VERSION,
+        "complete": False,
+        "source": SOURCE_LIBRARY,
+        "code": "result_set_too_large",
+        "error": (
+            f"匹配到 {len(result_items)} 个网站，完整结果超过单回合可安全保存的容量。"
+            "请增加关键词、分类或星标条件后重试。"
+        ),
+        "matched_count": len(result_items),
+        "rejected_count": 0,
+    }
+
+
 async def _present_website_recommendations(
     context: AgentToolContext,
     args: PresentWebsiteRecommendationsArgs,
@@ -448,17 +858,35 @@ async def _present_website_recommendations(
                 "error": "完整结果集已失效，请重新检索。",
             }
             return _recommendation_model_content(artifact), artifact
-        artifact = {
-            "manifest_version": RECOMMENDATION_MANIFEST_VERSION,
-            "complete": True,
-            "result_set_id": args.result_set_id,
-            "source": SOURCE_LIBRARY,
-            "provider": None,
-            "matched_count": len(result_set),
-            "items": [dict(item) for item in result_set],
-            "rejected_count": 0,
-        }
+        artifact = _complete_library_recommendation_artifact(
+            result_set_id=args.result_set_id,
+            result_items=result_set,
+        )
         return _recommendation_model_content(artifact), artifact
+
+    # A broad search freezes the complete result set server-side. If the model
+    # accidentally sends the preview back as ``items`` instead of the opaque
+    # result_set_id, recover that set when every submitted URL is a stored item
+    # from the latest search. This keeps pagination deterministic without
+    # exceeding a finite quantity already frozen by the server.
+    latest_result = context.latest_library_result_set()
+    if latest_result is not None and args.items:
+        result_set_id, result_items, preview_identities = latest_result
+        submitted_identities = tuple(
+            identity
+            for item in args.items
+            if (identity := _recommendation_primary_identity(item.url.strip())) is not None
+        )
+        if (
+            submitted_identities
+            and len(submitted_identities) == len(preview_identities)
+            and Counter(submitted_identities) == Counter(preview_identities)
+        ):
+            artifact = _complete_library_recommendation_artifact(
+                result_set_id=result_set_id,
+                result_items=result_items,
+            )
+            return _recommendation_model_content(artifact), artifact
 
     prepared: list[tuple[WebsiteRecommendation, list[str]]] = []
     seen: set[str] = set()
@@ -493,6 +921,8 @@ async def _present_website_recommendations(
                 )
 
     items: list[dict[str, Any]] = []
+    rejected_count = len(args.items) - len(prepared)
+    trusted_external_count = 0
     for item, identities in prepared:
         site_id = next(
             (stored_ids[identity] for identity in identities if identity in stored_ids),
@@ -501,10 +931,14 @@ async def _present_website_recommendations(
         if site_id is not None:
             items.append(_site_summary(stored_sites[site_id]))
             continue
+        trusted_web_url = context.trusted_web_search_url(item.url)
+        if context.search_scope == "collection" or trusted_web_url is None:
+            rejected_count += 1
+            continue
         items.append(
             {
                 "name": " ".join(item.name.split()),
-                "url": identities[0],
+                "url": trusted_web_url,
                 "favicon_url": None,
                 "summary": None,
                 "description": " ".join(item.description.split()),
@@ -513,17 +947,20 @@ async def _present_website_recommendations(
                 "pinned": False,
             }
         )
+        trusted_external_count += 1
 
     all_items_are_stored = bool(items) and all("site_id" in item for item in items)
     if all_items_are_stored:
         source = SOURCE_LIBRARY
         provider = None
-    elif context.search_binding is not None:
+    elif trusted_external_count > 0:
         source = SOURCE_WEB
-        provider = context.search_binding.display_name
+        provider = (
+            context.search_binding.display_name if context.search_binding is not None else None
+        )
     else:
-        source = SOURCE_MODEL
-        provider = SOURCE_MODEL
+        source = SOURCE_LIBRARY
+        provider = None
 
     artifact = {
         "manifest_version": RECOMMENDATION_MANIFEST_VERSION,
@@ -532,8 +969,19 @@ async def _present_website_recommendations(
         "provider": provider,
         "matched_count": len(items),
         "items": items,
-        "rejected_count": len(args.items) - len(prepared),
+        "rejected_count": rejected_count,
     }
+    if not items and rejected_count > 0:
+        artifact.update(
+            {
+                "code": "external_recommendation_rejected",
+                "error": (
+                    "仅网址库模式只能展示已收藏网站。"
+                    if context.search_scope == "collection"
+                    else "库外网址必须来自本轮真实联网搜索，无法验证的推荐已隐藏。"
+                ),
+            }
+        )
     return _recommendation_model_content(artifact), artifact
 
 
@@ -546,6 +994,11 @@ def _recommendation_model_content(artifact: dict[str, Any]) -> str:
             "source": artifact.get("source"),
             "code": artifact.get("code", "recommendation_unavailable"),
             "error": error,
+            **(
+                {"matched_count": artifact["matched_count"]}
+                if isinstance(artifact.get("matched_count"), int)
+                else {}
+            ),
         }
     else:
         items = artifact.get("items")
@@ -1117,7 +1570,10 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
         structured(
             "search_library",
             "在【当前用户自己的网址库】里检索已收藏的网站。回答任何“我有没有/我收藏过”类问题前必须先调用它。"
-            "用户明确要求全部结果时设 include_all=true；按分类检索必须先用 list_categories "
+            "关键词检索默认冻结全部匹配结果，最终推荐必须传 result_set_id 让界面分页；"
+            "用户明确指定数量时服务端也会冻结准确数量，必须使用返回的 result_set_id；"
+            "只有未指定数量的主观精选才设 include_all=false 并传 items。"
+            "按分类检索必须先用 list_categories "
             "获取 category_id。",
             SearchLibraryArgs,
             _search_library,
@@ -1150,8 +1606,8 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
         structured(
             "present_website_recommendations",
             "把本轮最终推荐的具体网站转换成界面可点击的站内卡片。只要回答里会推荐一个或多个具体网站，"
-            "就必须在最终回答前调用一次；普通推荐传 items，search_library(include_all=true) "
-            "的完整结果必须原样传 result_set_id，不能把预览项改写成 items，也不要用 Markdown "
+            "就必须在最终回答前调用一次；普通精选传 items，search_library 返回 result_set_id 时"
+            "必须原样传该 ID，不能把预览项改写成 items，也不要用 Markdown "
             "表格、列表或普通链接替代。"
             "服务端会自动识别已收藏网址并让卡片优先打开站内详情；未收藏网址保留收录和打开能力。",
             PresentWebsiteRecommendationsArgs,
@@ -1235,7 +1691,9 @@ def build_tools(context: AgentToolContext) -> Sequence[Any]:
         tools.append(
             structured(
                 "web_search",
-                "只有在 search_library 没有命中、且需要站外最新信息时才联网搜索。",
+                "只有在最近一次相同关键词的 search_library 无命中或结果不足，"
+                "或用户明确需要实时信息时"
+                "才联网搜索；query 必须原样复用最近一次站内检索词。",
                 WebSearchArgs,
                 _web_search,
             )

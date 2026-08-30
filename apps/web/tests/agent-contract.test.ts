@@ -2,11 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AGENT_RECOMMENDATION_MANIFEST_VERSION,
   AgentContractError,
+  activeAgentOnlineSearchOffer,
   agentErrorDetails,
   agentSourceLabels,
   agentToolLabel,
+  consumeAgentOnlineSearchOffer,
   describeAgentToolResult,
+  hasStrictRecommendationSourcePolicy,
+  isSafeLegacyAgentExternalUrl,
+  latestAgentOnlineSearchOffer,
   latestAgentUserText,
   MAX_AGENT_MESSAGE_LENGTH,
   normalizeAgentConversationHistory,
@@ -116,6 +122,128 @@ test("extracts the latest user text from text parts only", () => {
   assert.equal(latestAgentUserText([]), "");
   assert.equal(latestAgentUserText([{ role: "assistant", parts: [{ type: "text", text: "只有助手" }] }]), "");
   assert.equal(latestAgentUserText([{ role: "user" }, { role: "user", parts: [{ type: "file", url: "x" }] }]), "");
+});
+
+test("only the latest unresolved collection miss can offer an online retry", () => {
+  const miss = (toolCallId: string) => ({
+    type: "data-agent-tool-result",
+    data: {
+      toolCallId,
+      name: "search_library",
+      result: { matched_count: 0, items: [], can_offer_online: true },
+    },
+  });
+  const hit = {
+    type: "data-agent-tool-result",
+    data: {
+      toolCallId: "search-hit",
+      name: "search_library",
+      result: {
+        source: "站内存储数据",
+        matched_count: 1,
+        items: [{ site_id: "site-1", name: "React", url: "https://react.dev" }],
+      },
+    },
+  };
+
+  assert.deepEqual(
+    latestAgentOnlineSearchOffer([
+      { role: "user", parts: [{ type: "text", text: "问题 A" }] },
+      { role: "assistant", parts: [miss("offer-a")] },
+      { role: "user", parts: [{ type: "text", text: "问题 B" }] },
+      { role: "assistant", parts: [miss("offer-b")] },
+    ]),
+    { toolCallId: "offer-b", userText: "问题 B" },
+  );
+  assert.equal(
+    latestAgentOnlineSearchOffer([
+      { role: "user", parts: [{ type: "text", text: "先窄后宽" }] },
+      { role: "assistant", parts: [miss("stale-offer"), hit] },
+    ]),
+    null,
+  );
+  assert.equal(
+    latestAgentOnlineSearchOffer([
+      { role: "user", parts: [{ type: "text", text: "旧问题" }] },
+      { role: "assistant", parts: [miss("old-offer")] },
+      { role: "user", parts: [{ type: "text", text: "正在发送的新问题" }] },
+    ]),
+    null,
+  );
+});
+
+test("online retry offers are single-flight and become retryable after submission failure", async () => {
+  const consumed = new Set<string>();
+  let finishFirst: ((value: boolean) => void) | undefined;
+  const first = consumeAgentOnlineSearchOffer(
+    consumed,
+    "offer-1",
+    () => new Promise<boolean>((resolve) => {
+      finishFirst = resolve;
+    }),
+  );
+  assert.equal(await consumeAgentOnlineSearchOffer(consumed, "offer-1", async () => true), false);
+  finishFirst?.(true);
+  assert.equal(await first, true);
+  assert.equal(consumed.has("offer-1"), true);
+
+  assert.equal(
+    await consumeAgentOnlineSearchOffer(consumed, "offer-2", async () => false),
+    false,
+  );
+  assert.equal(consumed.has("offer-2"), false);
+  assert.equal(
+    await consumeAgentOnlineSearchOffer(consumed, "offer-3", async () => {
+      throw new Error("transport failed");
+    }),
+    false,
+  );
+  assert.equal(consumed.has("offer-3"), false);
+  assert.equal(await consumeAgentOnlineSearchOffer(consumed, "offer-2", async () => true), true);
+});
+
+test("keeps a failed or aborted online retry actionable after its attempted turn", () => {
+  const retryableOffer = { toolCallId: "offer-1", userText: "找前端文档" };
+  const attempted = [
+    { role: "user", parts: [{ type: "text", text: retryableOffer.userText }] },
+    { role: "assistant", parts: [] },
+  ];
+
+  assert.equal(latestAgentOnlineSearchOffer(attempted), null);
+  assert.deepEqual(
+    activeAgentOnlineSearchOffer(attempted, retryableOffer),
+    retryableOffer,
+  );
+});
+
+test("legacy model recommendation links reject local targets, credentials and secret keys", () => {
+  for (const url of [
+    "https://developer.mozilla.org/en-US/docs/Web",
+    "https://developer.mozilla.org/#/guide?section=hooks",
+    "https://8.8.8.8/docs",
+    "https://[2606:4700:4700::1111]/docs",
+  ]) {
+    assert.equal(isSafeLegacyAgentExternalUrl(url), true, url);
+  }
+  for (const url of [
+    "http://localhost/admin",
+    "http://2130706433/private",
+    "http://0x7f000001/private",
+    "http://0177.0.0.1/private",
+    "http://127.1/private",
+    "http://10.0.0.8/private",
+    "http://[::1]/private",
+    "http://[fc00::1]/private",
+    "https://intranet.internal/wiki",
+    "https://home.arpa/admin",
+    "https://router.home.arpa/admin",
+    "https://user:password@example.com/private",
+    "https://example.com/callback?access-token=secret",
+    "https://example.com/callback#session_id=secret",
+    "https://developer.mozilla.org/#/callback?access_token=secret",
+  ]) {
+    assert.equal(isSafeLegacyAgentExternalUrl(url), false, url);
+  }
 });
 
 test("projects tool results into links, facets, drafts, errors, and safe compatibility views", () => {
@@ -260,15 +388,75 @@ test("accepts explicit safe Markdown links and rejects executable or ambiguous h
     kind: "internal",
     href: "#section",
   });
+  assert.equal(
+    normalizeAgentMarkdownLink("https://hallucinated.example/path", { allowExternal: false }),
+    null,
+  );
+  assert.deepEqual(normalizeAgentMarkdownLink("/library/site-1", { allowExternal: false }), {
+    kind: "internal",
+    href: "/library/site-1",
+  });
+  const trustedSourceKeys = new Set(["https://docs.example.com/path"]);
+  assert.deepEqual(
+    normalizeAgentMarkdownLink("https://docs.example.com/path#section", {
+      allowedExternalUrlKeys: trustedSourceKeys,
+    }),
+    {
+      kind: "external",
+      href: "https://docs.example.com/path#section",
+      hostname: "docs.example.com",
+    },
+  );
+  assert.equal(
+    normalizeAgentMarkdownLink("http://docs.example.com/path", {
+      allowedExternalUrlKeys: trustedSourceKeys,
+    }),
+    null,
+  );
+  assert.equal(
+    normalizeAgentMarkdownLink("https://hallucinated.example/path", {
+      allowedExternalUrlKeys: trustedSourceKeys,
+    }),
+    null,
+  );
   for (const unsafe of [
     "//evil.example",
     "/\\evil.example",
     "javascript:alert(1)",
     "data:text/html,hello",
     "https://safe.example/\nunsafe",
+    "http://127.0.0.1/private",
+    "https://example.com/callback?access_token=secret",
   ]) {
     assert.equal(normalizeAgentMarkdownLink(unsafe), null);
   }
+});
+
+test("strict source policy starts at v3 without hiding legacy v2 cards", () => {
+  assert.equal(hasStrictRecommendationSourcePolicy({ recommendationManifestVersion: 2 }), false);
+  assert.equal(
+    hasStrictRecommendationSourcePolicy({
+      recommendationManifestVersion: AGENT_RECOMMENDATION_MANIFEST_VERSION,
+    }),
+    true,
+  );
+  assert.equal(hasStrictRecommendationSourcePolicy({}), false);
+});
+
+test("projects a collection miss into an online search offer", () => {
+  assert.deepEqual(
+    describeAgentToolResult("search_library", {
+      source: "站内存储数据",
+      search_scope: "collection",
+      matched_count: 0,
+      items: [],
+      can_offer_online: true,
+    }),
+    {
+      kind: "online-offer",
+      message: "网址库中没有找到足够匹配的网站，可以切换联网搜索继续查找。",
+    },
+  );
 });
 
 test("drops non-http urls to null while keeping named entries", () => {

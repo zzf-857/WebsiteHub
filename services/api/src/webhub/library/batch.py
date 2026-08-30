@@ -37,7 +37,7 @@ ItemStatus = Literal["ready", "duplicate", "invalid", "created", "failed"]
 # afterwards.  CJK punctuation never appears in a URL, so it terminates one.
 # The excluded ranges are written as escapes so the intent is readable:
 # U+3000-U+303F is CJK punctuation, U+FF00-U+FFEF is fullwidth forms.
-_URL_PATTERN = re.compile(r"https?://[^\s<>\"'\u3000-\u303f\uff00-\uffef]+", re.IGNORECASE)
+_URL_PATTERN = re.compile(r"https?://[^\s<>\"'`\u3000-\u303f\uff00-\uffef]+", re.IGNORECASE)
 # Trailing punctuation that is almost always sentence punctuation, not the URL.
 _TRAILING = ".,;:!?'\"”’》】"
 
