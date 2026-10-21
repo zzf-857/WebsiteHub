@@ -9,7 +9,8 @@
 #
 # 可选环境变量：
 #   WEBHUB_BACKUP_DIR      备份根目录（默认 deploy/backups，已被 Git 与 Docker 构建上下文忽略；
-#                          建议放到仓库之外，例如 /srv/webhub-backups，并定期同步到另一台机器）
+#                          建议放到仓库之外，例如 /srv/webhub-backups，并定期同步到另一台机器；
+#                          /srv 归 root，先执行一次 sudo install -d -m 700 -o "$USER" -g "$(id -gn)" /srv/webhub-backups）
 #   WEBHUB_BACKUP_KEEP     保留最近几份（默认 14）
 #   WEBHUB_BACKUP_INCLUDE_BOOKMARK_SOURCES=1
 #                          同时打包 /data/bookmark-imports（导入书签时上传的原始 HTML，可能很大）
@@ -204,7 +205,8 @@ else
   source_label="docker compose 服务 $service"
 fi
 
-mkdir -p -- "$backup_root"
+mkdir -p -- "$backup_root" \
+  || die "无法创建备份目录 $backup_root；位于 root 所有的目录（如 /srv）下时先执行一次：sudo install -d -m 700 -o \"\$USER\" -g \"\$(id -gn)\" $backup_root"
 chmod 700 -- "$backup_root"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 final_dir="$backup_root/webhub-$stamp"

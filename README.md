@@ -415,8 +415,9 @@ tailnet 内的浏览器 / Hermes ──HTTPS──▶ tailscale serve ──┐
 
 ### 前置条件
 
-- Linux ARM64 或 x86_64，Docker Engine 24+ 与 Compose v2 插件（`docker compose version` 能输出版本）。
-  镜像在服务器上原生构建（BuildKit 默认开启），不需要交叉编译或 QEMU。
+- Linux ARM64 或 x86_64，Docker Engine 24+ 及 Compose v2、Buildx 插件（按 Docker 官方文档安装 `docker-ce`、
+  `docker-compose-plugin`、`docker-buildx-plugin`；`docker compose version` 与 `docker buildx version` 都能输出版本）。
+  Dockerfile 用到 BuildKit 的缓存挂载，缺 Buildx 时构建会失败。镜像在服务器上原生构建，不需要交叉编译或 QEMU。
 - 构建时能访问 Docker Hub、npm 与 PyPI；镜像约 1 GB，首次构建需要几分钟。
 - 宿主机已安装并登录 Tailscale，tailnet 管理后台已开启 MagicDNS 与 HTTPS Certificates。
 - 执行 `docker` 的用户在 `docker` 组里，否则下文命令前加 `sudo`。
@@ -424,10 +425,12 @@ tailnet 内的浏览器 / Hermes ──HTTPS──▶ tailscale serve ──┐
 ### 1. 获取代码并生成配置
 
 ```bash
+sudo install -d -o "$USER" -g "$(id -gn)" /opt/WebsiteHub   # /opt 归 root：先建好归当前用户的目录
 git clone <仓库地址> /opt/WebsiteHub && cd /opt/WebsiteHub
 cp deploy/.env.production.example deploy/.env && chmod 600 deploy/.env
-openssl rand -base64 32                                          # 生成 Provider 主密钥
-tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//'  # 得到 <机器>.<tailnet>.ts.net
+openssl rand -base64 32                                       # 生成 Provider 主密钥
+# 得到 <机器>.<tailnet>.ts.net（也可在 Tailscale 管理后台 Machines 页复制完整域名）：
+tailscale status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'
 ```
 
 在 `deploy/.env` 中填写：
@@ -509,6 +512,7 @@ docker image prune -f                                              # 可选：�
 保留最近 14 份：
 
 ```bash
+sudo install -d -m 700 -o "$USER" -g "$(id -gn)" /srv/webhub-backups   # 只需一次：/srv 归 root
 WEBHUB_BACKUP_DIR=/srv/webhub-backups WEBHUB_BACKUP_KEEP=30 deploy/backup.sh
 
 # crontab -e：每天 03:17 备份
