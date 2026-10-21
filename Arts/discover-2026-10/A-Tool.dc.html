@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>发现页 · 方向 A 克制工具</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Noto+Sans+SC:wght@400;500;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#4f7a0b}a:hover{color:#16181a}
+.wa{--canvas:#f5f6f7;--surface:#ffffff;--subtle:#f1f3f4;--hover:#eef1f2;--text:#16181a;--text2:#3d444b;--muted:#5e666e;--line:#e3e6e8;--line-soft:#eef0f2;--accent:#b4e534;--accent-strong:#4f7a0b;--accent-soft:#edf6d4;--on-accent:#1a2005;--action:#16181a;--on-action:#ffffff;--repo:#16181a;--repo-text:#f2f3f5;--repo-muted:#9aa1a9;--shadow:0 1px 2px rgb(20 24 28 / 4%);--shadow-hover:0 8px 24px rgb(20 24 28 / 9%)}
+.wa[data-theme="dark"]{--canvas:#0e1012;--surface:#16181b;--subtle:#1d2024;--hover:#22262a;--text:#f2f3f5;--text2:#c6cbd1;--muted:#9aa1a9;--line:#26292d;--line-soft:#1f2225;--accent:#b9e845;--accent-strong:#b9e845;--accent-soft:#1f2a0b;--on-accent:#14190a;--action:#f0f2f4;--on-action:#16181a;--repo:#0b0c0e;--repo-text:#f2f3f5;--repo-muted:#8b939b;--shadow:0 1px 2px rgb(0 0 0 / 30%);--shadow-hover:0 10px 28px rgb(0 0 0 / 50%)}
+.wa *{box-sizing:border-box}
+.wa a{text-decoration:none}
+.wa .c1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wa .c2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.wa .c3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.wa .card{transition:transform 180ms cubic-bezier(.2,.8,.2,1),box-shadow 180ms cubic-bezier(.2,.8,.2,1)}
+.wa .card:hover{transform:translateY(-2px);box-shadow:var(--shadow-hover)}
+.wa .ph{background-color:var(--subtle);background-image:repeating-linear-gradient(135deg,var(--line) 0 1px,transparent 1px 11px)}
+.wa .ghost:hover,.wa .chip:hover{background:var(--hover)}
+.wa input::placeholder{color:var(--muted)}
+.wa :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+</helmet>
+<div class="wa" data-theme="{{theme}}" style="min-height: 1200px; background: var(--canvas); color: var(--text); font-family: Inter, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; min-height: 64px; padding: 12px clamp(16px, 3vw, 40px); background: var(--surface); border-bottom: 1px solid var(--line)">
+  <a href="#" aria-label="WebHub 首页" style="display: flex; align-items: center; gap: 10px; color: var(--text)">
+    <span style="display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: var(--accent); color: var(--on-accent)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+    </span>
+    <span style="font-size: 16px; font-weight: 700; letter-spacing: -0.01em">WebHub</span>
+  </a>
+  <nav aria-label="主导航" style="display: flex; flex-wrap: wrap; gap: 4px">
+    <a href="#" aria-current="page" style="padding: 7px 14px; border-radius: 7px; background: var(--action); color: var(--on-action); font-size: 14px; font-weight: 600">发现</a>
+    <a href="#" class="ghost" style="display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 7px; color: var(--text2); font-size: 14px; font-weight: 500">收件箱<span style="min-width: 20px; padding: 0 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent-strong); font-size: 12px; font-weight: 600; line-height: 20px; text-align: center">12</span></a>
+    <a href="#" class="ghost" style="padding: 7px 12px; border-radius: 7px; color: var(--text2); font-size: 14px; font-weight: 500">全部收藏</a>
+    <a href="#" class="ghost" style="padding: 7px 12px; border-radius: 7px; color: var(--text2); font-size: 14px; font-weight: 500">集合</a>
+  </nav>
+  <div style="flex: 1 1 0; min-width: 0"></div>
+  <label style="display: flex; align-items: center; gap: 8px; flex: 0 1 340px; min-width: 200px; height: 36px; padding: 0 8px 0 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--subtle); color: var(--muted)">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+    <input type="search" aria-label="搜索收藏" placeholder="搜索标题、正文、标签…" style="flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; outline: none">
+    <kbd style="padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); font-family: Inter, sans-serif; font-size: 11px; color: var(--muted)">⌘K</kbd>
+  </label>
+  <button type="button" style="display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border: 0; border-radius: 7px; background: var(--action); color: var(--on-action); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+    收藏
+  </button>
+  <button type="button" aria-label="账号菜单" style="width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--text); color: var(--surface); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer">管</button>
+</header>
+
+<main style="display: flex; flex-direction: column; gap: 32px; max-width: 1360px; margin: 0 auto; padding: 28px clamp(16px, 3vw, 40px) 72px">
+
+  <section aria-labelledby="rediscover-a" style="display: flex; flex-direction: column; gap: 20px; padding: clamp(18px, 2vw, 28px); border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow)">
+    <div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <div style="display: flex; align-items: center; gap: 6px; color: var(--accent-strong); font-size: 13px; font-weight: 600">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+          今日重温
+        </div>
+        <h1 id="rediscover-a" style="margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25">4 个被你遗忘的好东西</h1>
+        <p style="margin: 0; color: var(--muted)">收藏之后一次都没打开过 · 每天早上换一批</p>
+      </div>
+      <button type="button" class="ghost" style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text2); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
+        换一批
+      </button>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 20px">
+      <article style="flex: 999 1 600px; display: flex; flex-wrap: wrap; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface)">
+        <div style="flex: 1 1 300px; min-height: 280px; display: flex; flex-direction: column; justify-content: space-between; gap: 20px; padding: 24px; background: var(--repo); color: var(--repo-text)">
+          <div style="display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: var(--repo-muted)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6"></path><path d="m8 6-6 6 6 6"></path></svg>
+            github.com
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px; font-family: 'JetBrains Mono', ui-monospace, monospace">
+            <div style="font-size: 15px; color: var(--repo-muted)">browser-use /</div>
+            <div style="font-size: 34px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15">browser-use</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 16px; font-size: 13px; color: var(--repo-muted)">
+            <span style="display: flex; align-items: center; gap: 6px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #e3c44b"></span>Python</span>
+            <span style="display: flex; align-items: center; gap: 5px; color: var(--accent)"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>5万+</span>
+          </div>
+        </div>
+        <div style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 24px">
+          <div style="display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; color: var(--muted)">
+            <span>GitHub 仓库</span><span aria-hidden="true">·</span><span>43 天前收藏</span><span aria-hidden="true">·</span><span style="color: var(--accent-strong); font-weight: 600">从未打开</span>
+          </div>
+          <h2 style="margin: 0; font-size: 22px; font-weight: 700; line-height: 1.3; letter-spacing: -0.01em; text-wrap: pretty">让 AI Agent 像人一样操作浏览器</h2>
+          <p style="margin: 0; color: var(--text2); line-height: 1.65">点击、填表、翻页、读取页面：用一句话描述任务，它就在真实浏览器里一步步完成。</p>
+          <div style="display: flex; gap: 10px; padding: 12px 14px; border-radius: 7px; background: var(--accent-soft); color: var(--text2); font-size: 13px; line-height: 1.6">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 3px; color: var(--accent-strong)"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+            <span><strong style="color: var(--text); font-weight: 600">为什么现在值得看：</strong>你最近收藏的 Agent 和 MCP 资源越来越多，它可以直接接进 Hermes，替你完成网页上的重复操作。</span>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px">
+            <span style="padding: 2px 8px; border-radius: 5px; background: var(--subtle); color: var(--text2); font-size: 12px">Agent</span>
+            <span style="padding: 2px 8px; border-radius: 5px; background: var(--subtle); color: var(--text2); font-size: 12px">浏览器自动化</span>
+            <span style="padding: 2px 8px; border-radius: 5px; background: var(--subtle); color: var(--text2); font-size: 12px">开源</span>
+          </div>
+          <div style="flex: 1"></div>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px">
+            <a href="#" style="display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 7px; background: var(--action); color: var(--on-action); font-size: 14px; font-weight: 600">
+              打开仓库
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"></path><path d="M7 17 17 7"></path></svg>
+            </a>
+            <button type="button" class="ghost" style="height: 36px; padding: 0 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text2); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer">标记已看</button>
+            <button type="button" class="ghost" style="height: 36px; padding: 0 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text2); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer">下周再提醒</button>
+          </div>
+        </div>
+      </article>
+
+      <div style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 12px; font-weight: 600; color: var(--muted)">另外 3 个</div>
+        <sc-for list="{{picks}}" as="p" hint-placeholder-count="3">
+          <a href="#" class="card" style="display: flex; align-items: center; gap: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text)">
+            <div style="flex-shrink: 0; width: 104px; height: 68px; border-radius: 6px; overflow: hidden">
+              <sc-if value="{{p.isRepo}}" hint-placeholder-val="{{ false }}">
+                <div style="height: 100%; display: flex; align-items: flex-end; padding: 8px 10px; background: var(--repo); color: var(--repo-text); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 600">{{p.repo}}</div>
+              </sc-if>
+              <sc-if value="{{p.isVideo}}" hint-placeholder-val="{{ false }}">
+                <div class="ph" style="height: 100%; display: grid; place-items: center; color: var(--muted)">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="7 4 20 12 7 20 7 4"></polygon></svg>
+                </div>
+              </sc-if>
+              <sc-if value="{{p.isText}}" hint-placeholder-val="{{ false }}">
+                <div style="height: 100%; display: flex; align-items: flex-end; padding: 8px 10px; background: var(--subtle); color: var(--text2); font-size: 11px; font-weight: 700; line-height: 1.35">{{p.hook}}</div>
+              </sc-if>
+            </div>
+            <div style="min-width: 0; display: flex; flex-direction: column; gap: 3px">
+              <div style="font-size: 12px; color: var(--muted)">{{p.kind}} · {{p.saved}}</div>
+              <div class="c2" style="font-size: 14px; font-weight: 600; line-height: 1.4">{{p.title}}</div>
+            </div>
+          </a>
+        </sc-for>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="recent-a" style="display: flex; flex-direction: column; gap: 16px">
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px">
+      <h2 id="recent-a" style="margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em">最近收藏</h2>
+      <div role="group" aria-label="按类型筛选" style="display: flex; flex-wrap: wrap; gap: 6px">
+        <sc-for list="{{filters}}" as="f" hint-placeholder-count="5">
+          <button type="button" class="chip" aria-pressed="{{f.pressed}}" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid {{f.bd}}; border-radius: 7px; background: {{f.bg}}; color: {{f.fg}}; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer">{{f.label}}<span style="font-size: 12px; color: {{f.cc}}">{{f.count}}</span></button>
+        </sc-for>
+      </div>
+      <div style="flex: 1 1 0"></div>
+      <button type="button" class="ghost" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--text2); font: inherit; font-size: 13px; cursor: pointer">
+        最近收藏
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+      </button>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(272px, 100%), 1fr)); gap: 16px">
+      <sc-for list="{{cards}}" as="c" hint-placeholder-count="8">
+        <a href="#" class="card" style="display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); color: var(--text); box-shadow: var(--shadow)">
+          <div style="height: 150px; border-bottom: 1px solid var(--line-soft)">
+            <sc-if value="{{c.isRepo}}" hint-placeholder-val="{{ false }}">
+              <div style="height: 100%; display: flex; flex-direction: column; justify-content: space-between; padding: 16px 18px; background: var(--repo); color: var(--repo-text)">
+                <div style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: var(--repo-muted)">{{c.owner}} /</div>
+                <div class="c1" style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 22px; font-weight: 600; letter-spacing: -0.02em">{{c.repo}}</div>
+                <div style="display: flex; gap: 14px; font-size: 12px; color: var(--repo-muted)">
+                  <span style="display: flex; align-items: center; gap: 6px"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{c.langColor}}"></span>{{c.lang}}</span>
+                  <span style="display: flex; align-items: center; gap: 4px; color: var(--accent)"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>{{c.stars}}</span>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{c.isSite}}" hint-placeholder-val="{{ false }}">
+              <div style="height: 100%; display: grid; place-items: center; background: {{c.tint}}">
+                <div style="display: flex; flex-direction: column; align-items: center; gap: 10px">
+                  <span style="display: grid; place-items: center; width: 52px; height: 52px; border-radius: 8px; background: {{c.brand}}; color: #ffffff; font-size: 22px; font-weight: 700; box-shadow: 0 6px 16px rgb(0 0 0 / 14%)">{{c.letter}}</span>
+                  <span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: {{c.tintText}}">{{c.domain}}</span>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{c.isText}}" hint-placeholder-val="{{ false }}">
+              <div style="height: 100%; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; padding: 16px 18px; background: var(--subtle)">
+                <div style="font-size: 11px; font-weight: 600; color: var(--accent-strong)">一句话要点</div>
+                <div class="c3" style="font-size: 16px; font-weight: 700; line-height: 1.5; color: var(--text); text-wrap: pretty">{{c.hook}}</div>
+              </div>
+            </sc-if>
+            <sc-if value="{{c.isImage}}" hint-placeholder-val="{{ false }}">
+              <div class="ph" style="height: 100%; display: grid; place-items: center; color: var(--muted)">
+                <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path></svg>
+                  <span>{{c.phLabel}}</span>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 14px">
+            <div style="display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--muted)">
+              <span style="flex-shrink: 0; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; background: {{c.brand}}; color: #ffffff; font-size: 10px; font-weight: 700">{{c.letter}}</span>
+              <span class="c1">{{c.domain}}</span>
+              <span aria-hidden="true">·</span>
+              <span style="flex-shrink: 0">{{c.kind}}</span>
+            </div>
+            <h3 class="c2" style="margin: 0; font-size: 15px; font-weight: 600; line-height: 1.4; letter-spacing: -0.005em">{{c.title}}</h3>
+            <p class="c2" style="margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted)">{{c.summary}}</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px">
+              <sc-for list="{{c.tags}}" as="t" hint-placeholder-count="2">
+                <span style="padding: 2px 8px; border-radius: 5px; background: var(--subtle); color: var(--text2); font-size: 12px">{{t.label}}</span>
+              </sc-for>
+            </div>
+            <div style="flex: 1"></div>
+            <div style="display: flex; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted)">
+              <span>{{c.saved}}</span>
+              <sc-if value="{{c.unopened}}" hint-placeholder-val="{{ false }}">
+                <span style="display: flex; align-items: center; gap: 5px; color: var(--accent-strong); font-weight: 500"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--accent)"></span>未打开</span>
+              </sc-if>
+              <div style="flex: 1"></div>
+              <sc-if value="{{c.hasVia}}" hint-placeholder-val="{{ false }}">
+                <span style="display: flex; align-items: center; gap: 4px">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>
+                  {{c.via}}
+                </span>
+              </sc-if>
+            </div>
+          </div>
+        </a>
+      </sc-for>
+    </div>
+  </section>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":1440,"height":2000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const theme = this.props.theme ?? 'light';
+    const dark = theme === 'dark';
+    const base = { isRepo: false, isSite: false, isText: false, isImage: false, isVideo: false, unopened: false, hasVia: false, via: '', hook: '', phLabel: '', tint: '', tintText: '', owner: '', repo: '', lang: '', langColor: '', stars: '' };
+    const site = (o) => ({ ...base, ...o, isSite: true, tint: dark ? o.tintD : o.tintL, tintText: dark ? '#9aa1a9' : o.tintTextL });
+    const repo = (o) => ({ ...base, ...o, isRepo: true, brand: '#24292f', letter: 'G', domain: 'github.com', kind: '仓库' });
+    const tags = (...xs) => xs.map((label) => ({ label }));
+
+    const picks = [
+      { ...base, isVideo: true, kind: '视频', saved: '61 天前收藏', title: '【游戏开发】Unity 2D 平台 二段跳 三段跳 开发教程' },
+      { ...base, isText: true, kind: '文章', saved: '52 天前收藏', title: '再大光比也不用怕：包围曝光与曝光合成技术详解', hook: '先拍够曝光，再在后期合成' },
+      { ...base, isRepo: true, repo: 'localsend', kind: 'GitHub 仓库', saved: '31 天前收藏', title: 'localsend：跨平台局域网传文件，替代 AirDrop' },
+    ];
+
+    const cards = [
+      repo({ owner: 'karakeep-app', repo: 'karakeep', title: 'karakeep：自托管的书签与稍后读', summary: '收藏链接、笔记和图片后自动用 AI 打标签和总结，可以完全部署在自己的服务器上。', tags: tags('书签管理', '自托管'), lang: 'TypeScript', langColor: '#4a7fd1', stars: '1万+', saved: '2 天前', unopened: true, hasVia: true, via: 'Hermes' }),
+      repo({ owner: 'ollama', repo: 'ollama', title: 'ollama：一条命令在本地跑大模型', summary: '在自己电脑上下载并运行 Llama、Qwen、DeepSeek 等开源模型，自带兼容 OpenAI 的本地接口。', tags: tags('本地模型', 'LLM'), lang: 'Go', langColor: '#36b3c9', stars: '10万+', saved: '5 天前' }),
+      site({ title: 'VirusTotal', domain: 'virustotal.com', letter: 'V', brand: '#2f54d6', tintL: '#eef1fb', tintD: '#161b2b', tintTextL: '#4a5a86', kind: '工具', summary: '上传文件或输入网址，用数十家杀毒引擎同时检测是否含有恶意内容。', tags: tags('安全', '在线工具'), saved: '12 天前', unopened: true }),
+      { ...base, isImage: true, phLabel: '网页预览图', title: 'Civitai：开源 AI 绘画模型社区', domain: 'civitai.com', letter: 'C', brand: '#1f6fc5', kind: '网站', summary: '下载 Stable Diffusion、Flux 等开源模型和 LoRA，也能浏览别人用这些模型生成的作品。', tags: tags('AI 绘画', '模型下载'), saved: '19 天前' },
+      { ...base, isText: true, title: '自部署 Agent 踩坑记录：从 Ollama 到 MCP 工具链', hook: '先把网络和权限理顺，再谈模型和工具', domain: 'linux.do', letter: 'L', brand: '#d6336c', kind: '帖子', summary: '在家用服务器上部署本地模型并接入 MCP 工具的全过程，重点讲网络、权限和显存三类问题。', tags: tags('自部署', 'MCP'), saved: '27 天前', unopened: true, hasVia: true, via: 'grokbot' },
+      site({ title: 'LM Studio', domain: 'lmstudio.ai', letter: 'L', brand: '#6c4ee0', tintL: '#f1eefc', tintD: '#1c1830', tintTextL: '#5d5280', kind: '工具', summary: '在本机下载和运行开源大模型的桌面应用，带图形界面，也能开本地 API 给别的程序用。', tags: tags('本地模型', '桌面应用'), saved: '38 天前', unopened: true }),
+      { ...base, isText: true, title: '有哪些相见恨晚的 Chrome 扩展？', hook: '几百条回复里反复被推荐的扩展，挑几款试试', domain: 'v2ex.com', letter: 'V', brand: '#3a3d40', kind: '帖子', summary: '一个长期热帖，大家分享各自离不开的浏览器扩展，适合按需挑几款试用。', tags: tags('浏览器扩展', '讨论'), saved: '44 天前' },
+      site({ title: '熊猫搜书', domain: 'xmsoushu.com', letter: '熊', brand: '#2a2c2e', tintL: '#f0f0ec', tintD: '#1d1f21', tintTextL: '#5e666e', kind: '网站', summary: '电子书搜索导航，把多个书籍搜索引擎和文档资源聚合在一个页面里。', tags: tags('电子书', '搜索'), saved: '47 天前', unopened: true }),
+    ];
+
+    const defs = [['全部', '2,028'], ['仓库', '312'], ['帖子与文章', '864'], ['工具与网站', '541'], ['视频', '118']];
+    const filters = defs.map(([label, count], i) => {
+      const on = i === 0;
+      return { label, count, pressed: on, bd: on ? 'var(--action)' : 'var(--line)', bg: on ? 'var(--action)' : 'var(--surface)', fg: on ? 'var(--on-action)' : 'var(--text2)', cc: on ? 'var(--on-action)' : 'var(--muted)' };
+    });
+
+    return { theme, picks, cards, filters };
+  }
+}
+</script>
+</body>
+</html>

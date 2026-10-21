@@ -1,6 +1,7 @@
 # WebHub — Claude 接手指南
 
-Agent 主导的个人网址导航站。任何新会话（换账号、换机器、上下文丢失）按本文件即可无缝接手，
+个人收藏宝藏库：AI 整理收藏、网站可视化重温、外部 Agent 经 MCP 检索和管理（2026-10 起的定位，
+见 `ITERATION_QUEUE.md` 的“2026-10 方向重定”）。任何新会话（换账号、换机器、上下文丢失）按本文件即可无缝接手，
 不依赖任何聊天记录。
 
 ## 接手三步
@@ -18,8 +19,8 @@ Agent 主导的个人网址导航站。任何新会话（换账号、换机器�
 Chrome 是两套 cookie」这个坑。
 
 需求原文在 `F:\AI\AgentMake\AgentProjects\00_Todolist\WebHub_Todolist\todolist.md`；
-最新设计稿（唯一视觉真源）在 `Arts/handoff/untitled/project/WebHub 效果图.dc.html`（6 块画板 1a–1f，
-1f 是规范板：色彩/字阶/圆角/图标映射/动效，全部设计令牌都从它来）。
+设计令牌真源仍是 `Arts/handoff/untitled/project/WebHub 效果图.dc.html` 的 1f 规范板（色彩/字阶/圆角/图标映射/动效）；
+发现页、资源卡与封面的构图以 `Arts/discover-2026-10/` 为准（2026-10 D5）。
 
 ## 运行与验证
 
@@ -42,9 +43,10 @@ cd services/api && uv run pytest -q && uv run ruff check .
 
 - 绝不硬编码任何 LLM 供应商或 API Key；模型访问一律走 per-account 的 providers 模块
 - 完整密钥只回掩码 `********`；厂商异常原文绝不透出到客户端
-- Agent 工具强制服务端账号作用域；Agent 不直接写库，一律 propose → 人工确认
+- Agent 工具强制服务端账号作用域；站内 Agent 不直接写库，一律 propose → 人工确认；
+  外部 Agent 只经 MCP 令牌，`write` 只含可逆增量操作并记审计日志，不开放删除
 - 非 Ollama 的 base URL 必须 HTTPS 且过 `providers/targets.py` 的 SSRF 校验
-- 提交用中文 commit，**不推送 GitHub**
+- 提交用中文 commit；本地会话**不推送 GitHub**，云端会话只推送到会话指定的 `claude/*` 分支
 - 前端只用 `apps/web/app/globals.css` 顶部的设计令牌，禁止写死颜色；圆角全站 ≤8px；
   图标只用 lucide-react（1.26.0，无 Loader2/AlertCircle/StopCircle）；favicon 不走第三方 CDN
 

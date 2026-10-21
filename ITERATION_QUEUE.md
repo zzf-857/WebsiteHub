@@ -1759,6 +1759,188 @@ query 先查库再联网。分别请求“精选 15 个 AI 网站”和未指定
 
 ---
 
+## 2026-10 方向重定：收藏宝藏库（总负责人决策，Q42 起生效）
+
+用户在 2026-10-21 把项目总负责交给 Claude（架构、设计基调与交互逻辑）。以下决策取代与之冲突的旧条款，
+PRD 第 0 节同步记录。讨论过程与未筛选想法见 `IDEAS.md`。
+
+**产品理论。** 用户是重度资源收藏者，真实痛点不是“找不到网址”，而是“收藏后不回看、几天就忘”。
+产品围绕一条闭环设计：**收进来（零摩擦）→ AI 整理（零手工）→ 重新浮现（对抗遗忘）→ 被使用（人与 Agent）**。
+- 收进来：网页一键收藏、浏览器扩展、外部 Agent（Hermes / grokbot）经 MCP 收藏、书签导入。
+- 整理：资源类型、分类、标签、简介、封面、仓库元数据，全部自动生成，人只做纠正。
+- 浮现：按遗忘曲线做“间隔重现”——从未打开的收藏按 3 天后、7 天、30 天的节奏回到首页，直到被打开、
+  标记已看或被静音。推送理由可解释（收藏多久、和最近兴趣的关联），不靠黑箱推荐。
+- 使用：打开记录、星标“宝藏”、Agent 检索。北极星指标：**收藏后 30 天内被打开过的比例**。
+
+**架构决策。**
+- D1 定位：从“Agent 驱动的网址导航站”改为“收藏宝藏库”。`sites` 表保留（避免全仓改名），语义上是“资源”；
+  界面文案用“收藏”代替“网站”。
+- D2 对话外移：对话交给用户自己的 Agent（Hermes、grokbot），WebHub 通过 MCP 提供能力。站内 Agent 聊天
+  **冻结**：保持可用、只修缺陷，不再加功能和加固；入口移到账号菜单。浏览器标签组扩展同样冻结。
+- D3 外部 Agent 权限分级：令牌按账号签发、只存哈希、可吊销，权限分 `read` / `write`。`write` 只开放
+  可逆的增量操作（收藏、标签、星标、阅读状态、重温调度），每次写入记审计日志并可在网站查看；删除、
+  批量改分类等破坏性操作不对 MCP 开放。站内 Agent 的写操作仍走 propose → 人工确认。
+- D4 封面不存图：封面在渲染时由数据决定——网页自带预览图优先，否则按资源类型生成（仓库 / 要点 / 视频 /
+  站点四种），图片加载失败自动退回生成封面。零存储、零外部依赖。
+- D5 设计：一套令牌（`globals.css`，浅深双主题），两种密度——**发现模式**（封面优先、瀑布流、悬停揭示、
+  重温主视觉，取自方向稿 B 的构图）与**管理模式**（高密度网格/列表、批量与键盘，取自方向稿 A）。
+  方向稿 C 的“本周重温”留给 Agent 推送的周刊。参考稿：`Arts/discover-2026-10/`。圆角 ≤8px、
+  lucide 图标、青柠强调色等既有约束不变。
+- D6 交互原则：可逆操作一律乐观更新 + 撤销提示，不弹确认框；破坏性操作才二次确认。信息渐进揭示
+  （卡片只给封面和标题，摘要与操作在悬停/聚焦时出现）。键盘可达。动效只表达状态变化，尊重减少动态效果。
+- D7 部署：目标是用户的 Linux ARM64 服务器（Docker Compose），通过 Tailscale 等私网访问，**仍属可信网络**，
+  不触发 SaaS 门禁；Windows 本机开发继续支持。
+
+**执行顺序。** Q42（数据地基）→ Q43（MCP）与 Q44（发现页）可并行 → Q45 → Q46 → Q47 → Q48 → Q49 → Q50。
+Q49 可按用户需要提前。
+
+---
+
+## Q42 · 收藏模型：资源类型、阅读状态与重温调度（后端 + 前端契约）
+
+状态: 待做
+对应: D1 / D3 的数据地基；IDEAS I-02、I-03
+
+迁移 `20261021_0020`（原生 `ADD COLUMN`，不要 batch 重建 `sites`——FTS 触发器会炸，参考 0019 的降级写法）：
+
+- `kind` TEXT NOT NULL DEFAULT 'website'，取值 `repo | article | video | website`；
+  `kind_source` TEXT NOT NULL DEFAULT 'auto'，取值 `auto | manual`。
+- `open_count` INTEGER NOT NULL DEFAULT 0；`last_opened_at`、`seen_at`、`starred_at`、`resurface_due_at` 可空时间；
+  `resurface_count` INTEGER NOT NULL DEFAULT 0；`resurface_muted` BOOLEAN NOT NULL DEFAULT 0；
+  `meta_json` TEXT NOT NULL DEFAULT '{}'（按类型存附加元数据，如仓库 owner/repo/host）。
+- 迁移内为存量记录按 URL 规则回填 `kind` 与仓库 `meta_json`；补发现查询需要的最少索引。
+
+规则与服务：
+
+- 纯函数 `webhub/library/kinds.py::infer_kind(url)`：GitHub / GitLab / Gitee / Codeberg / Hugging Face 的
+  `/{owner}/{repo}`（含 `/tree/`、`/blob/` 等仓库内路径）→ `repo`，其 issue / pull / discussion 页 → `article`；
+  YouTube、youtu.be、Bilibili 视频、b23.tv、Vimeo → `video`；帖子与文章特征路径（`/t/`、`/p/`、`/post(s)/`、
+  `/article(s)/`、`/blog/`、微信 `/s`、`/question/`、`/answer/`、`/status/`、`/comments/`、HN `item?id=`、
+  `.pdf` 等）以及路径层级 ≥2 → `article`；根路径或单层短路径 → `website`。附带 `repo_meta(url)` 解析 owner/repo/host。
+- 新建时自动推断（`kind_source=auto`）；修改 URL 且仍为 auto 时重新推断；`PATCH /sites/{id}` 可传 `kind`，
+  此后 `kind_source=manual` 不再自动覆盖。
+- 使用信号**不改** `version` 与 `updated_at`（ORM 上 `updated_at` 有 `onupdate`，必须用显式 SQL 保持原值）。
+
+API：
+
+- `POST /api/sites/{id}/open`：`open_count+1`、`last_opened_at=now`、`seen_at` 为空时置为 now；需可信 Origin。
+- `PUT /api/sites/{id}/state`：严格请求体，至少一个字段——`starred: bool`、`seen: bool`、
+  `snooze_days: int`（0 表示清除，1–90 表示推迟并 `resurface_count+1`）、`resurface_muted: bool`；返回 `SiteResponse`。
+- `GET /api/discover/rediscover?limit=4&shuffle=0`（limit ≤12）：候选 = 从未打开且未标记已看、未静音、
+  到期（`resurface_due_at` 为空或已到）、收藏满 3 天。排序：先按与“最近 30 天新收藏的高频标签”的重叠度，
+  再按“日期 + shuffle”决定的确定性轮转（同一天同一 shuffle 结果稳定；可用 id 分界点轮转，避免全表随机）。
+  每项返回 `site`、`saved_days` 与规则生成的中文 `reason`（例如“43 天前收藏，一次都没打开过；和你最近常收藏的
+  「Agent」相关”）。GET 不产生任何写入。
+- `GET /api/library/overview`：总数、按类型计数、未打开数、星标数、近 7 天新增、近 7 天打开。
+- `GET /api/sites` 新增筛选 `kind`、`state=unopened|opened|starred`，排序新增 `opened`（最近打开）；
+  游标作用域必须纳入新筛选。
+- `SiteResponse` 新增 `kind`、`kind_source`、`open_count`、`last_opened_at`、`seen_at`、`starred`、`starred_at`、
+  `resurface_muted`、`meta`。
+
+前端契约（只改契约与客户端，不改页面）：`lib/library-contract.ts` 解析新字段并保持对旧响应的容错；
+`lib/library-client.ts` 增加 `recordSiteOpen`、`updateSiteState`、`fetchRediscover`、`fetchLibraryOverview`
+与列表新参数；补契约与客户端测试。
+
+完成标准：`infer_kind` 表驱动测试 ≥25 例；迁移升降级与回填测试；API 测试覆盖“打开不改版本和更新时间”、
+星标/已看/推迟/静音、重温的排除条件与同日稳定性、跨账号 404、概览计数、列表新筛选与游标；全量门禁全绿，
+基线只涨不降；同步 `PROGRESS.md`。
+
+## Q43 · MCP 服务与 Agent 令牌
+
+状态: 待做
+对应: D2 / D3；IDEAS I-05
+
+- 依赖：官方 Python MCP SDK（`mcp`），用 uv 加入并更新锁文件。
+- 数据：`agent_tokens`（账号、名称、令牌 SHA-256、展示用前缀、`scopes`、创建/最近使用/吊销时间）与
+  `agent_audit_log`（账号、令牌、工具名、目标收藏、简短摘要、时间）。令牌明文形如 `whk_<随机>`，只在创建时返回一次。
+- 端点：FastAPI 挂载 `/api/mcp`，Streamable HTTP、无状态、JSON 响应（避免经 Next 代理时 SSE 被缓冲），
+  外部访问路径是网站同源代理 `/api/backend/mcp`。只认 `Authorization: Bearer`，不读 Cookie、不做浏览器 Origin
+  校验；未带或无效令牌 401；吊销即时生效；更新 `last_used_at`。
+- 工具（描述用英文，内容保持原语言）：`search_resources`（query、kind、state、tag、limit≤30）、`get_resource`、
+  `get_rediscover`、`list_taxonomy`；写权限：`save_resource`（url，可选 title/tags/note；已存在则返回现有项并标明，
+  新建后排队分析，source=agent）、`update_resource`（增删标签、改分类名、星标、类型）、
+  `mark_resource`（opened / seen / snooze / mute）。不提供删除。所有写入记审计日志；只读令牌调用写工具返回明确错误。
+- 网站 REST（Cookie + 可信 Origin）：令牌列表 / 创建 / 吊销、最近 50 条 Agent 活动。
+- 设置页 `/settings/agents`：令牌列表（名称、前缀、权限、最近使用、吊销）、创建对话框（名称 + 权限勾选，
+  明文只显示一次并可复制）、Hermes 配置片段（`~/.hermes/config.yaml` 的 `mcp_servers` → `url` + `headers`）与
+  通用 MCP 客户端片段、Agent 活动列表。设置导航加入口。
+- 完成标准：令牌只存哈希、吊销后 401、权限隔离、跨账号隔离、`save_resource` 去重、审计记录、
+  一次完整 MCP 往返（initialize → tools/list → tools/call）的自动化测试；全量门禁全绿；同步 `PROGRESS.md`。
+
+## Q44 · 发现页（新首页）
+
+状态: 待做
+对应: D4 / D5 / D6；IDEAS I-01、I-02、I-09；依赖 Q42
+
+- `/` 改为发现页；Agent 输入框、分类分区、置顶区、最近收录列表与侧栏从首页移除（置顶与批量补全工具条
+  移到 `/library`）。顶部导航：发现 · 收藏库 · Space；右侧搜索（⌘K，复用现有转场）、“收藏”按钮
+  （输入 URL 即收藏，自动分析）、账号菜单（服务商、Agent 接入、导入书签、语义索引、站内对话、主题）。
+- **今日重温**：主卡（大封面、类型 · 收藏天数 · 从未打开、标题、简介、推荐理由、标签、操作：打开 / 标记已看 /
+  下周再提醒 / 不再推荐）+ “接下来” 3 项 + “换一批”。操作后卡片退场、下一项补位，并给 5 秒撤销。
+  无候选时给出“都看过了”的空状态。“打开”先记录打开再新标签打开原站。
+- **全部收藏**：类型筛选（带概览计数）、状态筛选（全部 / 未打开 / 星标）、排序（最近收藏 / 最近打开）；
+  瀑布流卡片，静默无限加载。列分配用纯函数（按估算高度放入最短列，追加时不重排已有卡片）。
+- **资源卡**：封面 + 标题 + 域名 · 类型 · 收藏时间 + 未打开标记 + 来源 Agent 徽标；悬停/聚焦揭示摘要与
+  快捷操作（打开、星标、已看）；点击进入详情页。
+- **封面**：纯函数决定封面模型（预览图 → 仓库 / 要点 / 视频 / 站点生成封面），加载失败退回生成封面。
+  站点色相由域名确定性推导，明度和饱和度来自主题令牌（新增封面类令牌，浅深各一套），不写死颜色。
+- 视觉以 `Arts/discover-2026-10/Gallery.dc.html` 的构图为准、用现有令牌落地，浅深主题都要好看；
+  动效遵守 D6。
+- 完成标准：封面模型、瀑布流分配、重温操作与撤销状态、相对时间格式的 Node 测试；首页渲染测试；
+  全量门禁全绿；同步 `PROGRESS.md`。
+
+## Q45 · GitHub 仓库富化
+
+状态: 待做
+对应: IDEAS I-04；依赖 Q42
+
+仓库类收藏分析时经现有安全出站通道读取 GitHub 公开 API（星数、fork、主语言、topics、许可证、最近推送、
+是否归档、README 摘要），写入 `meta_json` 并作为 LLM 简介的证据；处理匿名限流与退避，可选账号级令牌；
+前端仓库封面与详情展示这些数据。
+
+## Q46 · 详情页与收藏库管理改版、键盘操作
+
+状态: 待做
+对应: D5 / D6；依赖 Q44
+
+详情页改为大封面 + 简介 + 详细介绍 + 仓库面板 + 可就地编辑的分类/标签 + 状态操作 + 相似收藏 + 打开记录；
+`/library` 改为管理模式（高密度网格/列表、类型与状态筛选、批量操作保留）；全局快捷键（⌘K / `/` 搜索，
+卡片间 J/K，O 打开、S 星标、E 已看）。
+
+## Q47 · 浏览器扩展「收藏当前页」
+
+状态: 待做
+对应: IDEAS I-06；依赖 Q43
+
+工具栏按钮、右键菜单、快捷键一键收藏；选项页填写 WebHub 地址与 `write` 令牌，复用 Q43 的令牌体系与
+`save_resource` 语义；成功/重复/失败有明确反馈。现有标签组能力保持冻结。
+
+## Q48 · 正文快照与按内容检索
+
+状态: 待做
+对应: IDEAS I-07
+
+分析时已抓到的正文（≤12k 字）持久化到独立表并进入全文索引；收藏库搜索与 MCP `search_resources` 命中正文，
+`get_resource` 可选返回正文；每条收藏只保留最新快照。
+
+## Q49 · Linux ARM64 部署（Docker Compose + 私网）
+
+状态: 待做
+对应: D7；IDEAS I-11
+
+多架构镜像、Compose（数据卷、健康检查、单 API worker）、备份脚本（SQLite 在线备份 + Provider 主密钥）、
+Tailscale 私网接入说明；README 增加部署章节并声明可信网络边界，不暴露公网。
+
+## Q50 · RSS / 播客订阅流（只展示，不入库）
+
+状态: 待做
+对应: IDEAS I-10；依赖 Q49
+
+订阅源与条目独立存表（保留 30 天自动清理）、定时拉取、按收藏库标签偏好排序的“每日精选”、一键收进收藏库、
+MCP 工具 `get_feed_digest`；中文站点用用户自部署的 RSSHub 生成订阅源。
+
+---
+
 ## SaaS-TODO · 公网上线专项（当前未启动）
 
 状态: 未启动，仅作为未来公网化的专项准入清单；当前版本仍以 Windows 本机/可信局域网为正式安全边界
@@ -1929,6 +2111,8 @@ TypeScript、Next.js 生产构建（静态页 12/12）与根级 `pnpm check` 已
 - 完整密钥绝不进前端 state、日志、聊天记录或普通数据导出；对外只给 `SECRET_MASK`
 - 厂商/供应商异常文本绝不透出到客户端（可能含 URL、请求体、凭据片段）
 - 所有 Agent 工具强制服务端账号作用域；Agent 的指令永远不能替代授权
-- Agent 不得直接写库，写操作一律 propose → 人工确认
+- 站内 Agent 不得直接写库，写操作一律 propose → 人工确认
+- 外部 Agent 只能经 MCP 令牌访问：令牌按账号签发、只存哈希、可吊销；`write` 只开放可逆的增量操作
+  （收藏、标签、星标、阅读状态、重温调度），每次写入记审计日志；删除与批量改分类不对 MCP 开放（2026-10 D3）
 - 非 Ollama 的 Provider base URL 必须 HTTPS 且过 SSRF 校验
-- 不推送 GitHub
+- 本地会话不推送 GitHub；云端会话只推送到会话指定的 `claude/*` 分支，不推主分支
