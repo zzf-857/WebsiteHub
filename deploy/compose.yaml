@@ -1,0 +1,56 @@
+# WebHub 单服务编排（Q49 / 2026-10 D7）。在仓库根目录执行：
+#   cp deploy/.env.production.example deploy/.env   # 按文件内说明填写，然后 chmod 600 deploy/.env
+#   docker compose -f deploy/compose.yaml up -d --build
+#
+# 网络边界：容器只把网站端口发布到宿主机回环地址 127.0.0.1:3100；对 tailnet 的 HTTPS 由宿主机上的
+# `tailscale serve --bg 3100` 提供。不要把这里改成 0.0.0.0 或 "3100:3100"，也不要在云安全列表 /
+# 防火墙里开放 3100——这是可信私网部署，不是公网 SaaS。API 不发布端口，只在容器回环上监听。
+name: webhub
+
+services:
+  webhub:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: webhub:local
+    # tini 作 PID 1：转发信号、回收僵尸进程；入口脚本负责“先迁移、再双进程、任一退出整体退出”。
+    init: true
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # 单容器设计的不变量，写在这里会覆盖 .env 中的同名值：数据只落在 /data 卷里；
+      # 网站只代理到同容器回环上的 API（该值也已在构建期固化进重写规则）。
+      WEBHUB_DATA_DIR: /data
+      WEBHUB_API_INTERNAL_URL: http://127.0.0.1:8100
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - webhub-data:/data
+    # 入口脚本给两个进程 20 秒退出（uvicorn 其中 10 秒优雅收尾），再留余量给 tini；超时 Docker 才强杀。
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      # 经网站访问 /api/health，网站再调用回环 API：两个进程任一不可用都会判为不健康。
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3100/api/health',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  # 数据库（含 WAL）与书签源文件都在这个卷里（实际卷名 webhub_webhub-data）；Provider 主密钥在
+  # deploy/.env，不在卷里，两者必须一起备份。`docker compose down` 保留卷，只有 `down -v` 会删除——
+  # 不要加 -v。备份与恢复见 deploy/backup.sh。
+  webhub-data:

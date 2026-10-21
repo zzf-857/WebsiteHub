@@ -1,0 +1,56 @@
+# 构建上下文只需要源码与锁文件（Dockerfile 只 COPY 明确列出的路径）。依赖、构建产物、本地数据、
+# 密钥、备份和设计资料一律不进构建上下文，更不会进镜像。
+
+# 版本控制与本地工具状态
+.git
+.gitattributes
+.claude
+.workbuddy
+.idea
+.vscode
+.playwright-cli
+
+# 依赖与构建产物（镜像内按锁文件重新安装、重新构建）
+**/node_modules
+**/.next
+**/.venv
+**/venv
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+.pnpm-store
+.uv-cache
+
+# 本地数据、备份与密钥（deploy/.env 由 **/.env 覆盖）
+.data
+MockData
+deploy/backups
+**/.env
+**/.env.*
+**/*.db
+**/*.sqlite
+**/*.sqlite3*
+cookies.txt
+**/*.cookie-jar.txt
+LOCAL_DEV.md
+
+# 设计稿、截图、文档、测试与日志（镜像只运行，不跑测试；门禁在提交前于开发机执行）
+Arts
+docs
+apps/web/tests
+services/api/tests
+**/test-results
+**/playwright-report
+**/*.log
+logs
+temp
+tmp
+scratch
+**/.DS_Store
+**/Thumbs.db
+**/Desktop.ini

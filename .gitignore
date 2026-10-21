@@ -13,6 +13,10 @@ LOCAL_DEV.md
 .env
 .env.*
 !.env.example
+!/deploy/.env.production.example
+
+# 服务器部署的本地备份（含数据库快照与 Provider 主密钥）
+/deploy/backups/
 
 # JavaScript / Next.js
 node_modules/
