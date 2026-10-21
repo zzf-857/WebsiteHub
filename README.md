@@ -468,6 +468,7 @@ UTF-8 安全投影。该过滤仍只是安全启发式，不是来源证明或 D
 | [PRD.md](./PRD.md) | 产品范围、用户流程与非目标 |
 | [PROGRESS.md](./PROGRESS.md) | 已验证能力、已知问题与验收基线（每轮更新） |
 | [ITERATION_QUEUE.md](./ITERATION_QUEUE.md) | 下一项开发的唯一调度入口，含未来公网 SaaS 上线专项 TODO |
+| [IDEAS.md](./IDEAS.md) | 讨论中记录的未筛选灵感，不参与调度 |
 | [AGENTS.md](./AGENTS.md) | 项目目录、状态文档和敏感数据规则 |
 | [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) | 冻结的早期架构基线，仅作背景参考 |
 | [skills/import-browser-bookmarks](./skills/import-browser-bookmarks/SKILL.md) | 书签导入合同与离线预览流程 |
