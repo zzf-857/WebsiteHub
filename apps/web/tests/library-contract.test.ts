@@ -66,6 +66,16 @@ test("normalizes strict site and paginated list contracts", () => {
     version: 3,
     createdAt: "2026-07-25T10:00:00Z",
     updatedAt: "2026-07-26T10:00:00Z",
+    // This fixture predates the Q42 fields: they read as neutral defaults.
+    kind: "website",
+    kindSource: "auto",
+    openCount: 0,
+    lastOpenedAt: null,
+    seenAt: null,
+    starred: false,
+    starredAt: null,
+    resurfaceMuted: false,
+    meta: {},
   });
 
   const page = normalizeLibrarySitePage({

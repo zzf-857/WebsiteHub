@@ -2,8 +2,17 @@ import { createContractGuards } from "./contract-guards.ts";
 
 // "relevance" 只在有搜索词时可用：按相关度排「什么都没搜」是没有意义的，
 // 后端会 422。配了 embedding Provider 且建过索引时，它是唯一会带语义召回的排序。
-export type LibrarySort = "created" | "updated" | "name" | "custom" | "relevance";
+// "opened" 按最近打开排序，从未打开的收藏无论升降序都排在最后。
+export type LibrarySort = "created" | "updated" | "name" | "custom" | "opened" | "relevance";
 export type LibraryDirection = "asc" | "desc";
+
+export const LIBRARY_SITE_KINDS = ["repo", "article", "video", "website"] as const;
+const LIBRARY_KIND_SOURCES = ["auto", "manual"] as const;
+/**
+ * unopened：从未经 WebHub 打开且没有标记已看；opened：至少打开过一次；
+ * starred：已星标。只标记了已看的收藏不属于前两者。
+ */
+export const LIBRARY_SITE_STATES = ["unopened", "opened", "starred"] as const;
 
 const LIBRARY_SITE_SOURCES = ["manual", "agent", "browser_import", "backup"] as const;
 const LIBRARY_SITE_CREATE_SOURCES = ["manual", "agent"] as const;
@@ -35,6 +44,9 @@ const SITE_SIMILARITY_GROUP_KINDS = ["duplicate", "same_site"] as const;
 const SITE_SIMILARITY_GROUP_FILTERS = ["duplicate", "same_site", "all"] as const;
 
 export type LibrarySiteSource = (typeof LIBRARY_SITE_SOURCES)[number];
+export type LibrarySiteKind = (typeof LIBRARY_SITE_KINDS)[number];
+export type LibraryKindSource = (typeof LIBRARY_KIND_SOURCES)[number];
+export type LibrarySiteState = (typeof LIBRARY_SITE_STATES)[number];
 export type LibrarySiteCreateSource = (typeof LIBRARY_SITE_CREATE_SOURCES)[number];
 export type LibraryAnalysisStatus = (typeof LIBRARY_ANALYSIS_STATUSES)[number];
 export type LibraryAnalysisPhase = (typeof LIBRARY_ANALYSIS_PHASES)[number];
@@ -63,6 +75,9 @@ export const MAX_LIBRARY_SITE_SUMMARY_LENGTH = 50;
 export const MAX_LIBRARY_CATEGORY_NAME_LENGTH = 80;
 export const MAX_LIBRARY_TAG_NAME_LENGTH = 40;
 export const MAX_LIBRARY_BULK_DELETE_SITES = 100;
+export const MAX_LIBRARY_SNOOZE_DAYS = 90;
+export const DEFAULT_LIBRARY_REDISCOVER_LIMIT = 4;
+export const MAX_LIBRARY_REDISCOVER_LIMIT = 12;
 
 /** Match the backend taxonomy identity rule before comparing or submitting tags. */
 export function normalizeLibraryTagName(name: string): string {
@@ -118,6 +133,74 @@ export type LibrarySite = {
   version: number;
   createdAt: string;
   updatedAt: string;
+  /** Resource kind inferred from the URL (`auto`) or chosen by the user (`manual`). */
+  kind: LibrarySiteKind;
+  kindSource: LibraryKindSource;
+  /** Usage signals. They never change `version` or `updatedAt`. */
+  openCount: number;
+  lastOpenedAt: string | null;
+  seenAt: string | null;
+  starred: boolean;
+  starredAt: string | null;
+  resurfaceMuted: boolean;
+  /** Per-kind metadata, e.g. a repository's host / owner / repo. */
+  meta: LibrarySiteMeta;
+};
+
+export type LibrarySiteMeta = Readonly<Record<string, unknown>>;
+
+export type LibraryRepoMeta = {
+  host: string;
+  owner: string;
+  repo: string;
+  /** Hugging Face only: model, dataset or space. */
+  repoType?: string;
+};
+
+export type LibrarySiteOpenResult = {
+  siteId: string;
+  openCount: number;
+  lastOpenedAt: string;
+  seenAt: string;
+};
+
+/** Reversible usage state; every field is optional but at least one is required. */
+export type LibrarySiteStateInput = {
+  starred?: boolean;
+  /** `false` clears the seen mark. */
+  seen?: boolean;
+  /** `0` clears a snooze; 1–90 resurfaces the site again after that many days. */
+  snoozeDays?: number;
+  resurfaceMuted?: boolean;
+};
+
+export type LibraryRediscoverQuery = {
+  limit?: number;
+  /** Each increment rotates today's picks deterministically ("换一批"). */
+  shuffle?: number;
+};
+
+export type LibraryRediscoverItem = {
+  site: LibrarySite;
+  savedDays: number;
+  /** Rule-generated, human-readable reason (Chinese). */
+  reason: string;
+};
+
+export type LibraryRediscover = {
+  /** UTC date (YYYY-MM-DD) the rotation was computed for. */
+  generatedFor: string;
+  items: LibraryRediscoverItem[];
+};
+
+export type LibraryOverview = {
+  total: number;
+  byKind: Record<LibrarySiteKind, number>;
+  unopened: number;
+  starred: number;
+  added7d: number;
+  /** Distinct saves opened in the last 7 days (not a click count). */
+  opened7d: number;
 };
 
 export type LibrarySiteSelectionItem = Pick<
@@ -270,6 +353,8 @@ export type LibrarySiteQuery = {
   categoryId?: string;
   tagId?: string;
   pinned?: boolean;
+  kind?: LibrarySiteKind;
+  state?: LibrarySiteState;
   sort?: LibrarySort;
   direction?: LibraryDirection;
   cursor?: string;
@@ -293,6 +378,8 @@ export type LibrarySiteUpdateInput = Omit<
   "categoryId" | "source"
 > & {
   categoryId?: string | null;
+  /** Setting a kind makes it manual: later URL edits no longer re-infer it. */
+  kind?: LibrarySiteKind;
   expectedVersion: number;
 };
 
@@ -407,6 +494,85 @@ export function normalizeLibraryTag(value: unknown): LibraryTag {
   };
 }
 
+function nullableIsoDateAt(value: unknown, path: string): string | null {
+  return value === null ? null : isoDate(value, path);
+}
+
+function siteMetaAt(value: unknown, path: string): LibrarySiteMeta {
+  return Object.freeze({ ...record(value, path) });
+}
+
+type LibrarySiteCollectionFields = Pick<
+  LibrarySite,
+  | "kind"
+  | "kindSource"
+  | "openCount"
+  | "lastOpenedAt"
+  | "seenAt"
+  | "starred"
+  | "starredAt"
+  | "resurfaceMuted"
+  | "meta"
+>;
+
+/**
+ * Resource kind and usage signals (Q42). An API that predates them omits the
+ * keys entirely; such a site reads as a never-opened, unstarred `website`.
+ * A key that is present but malformed is still a contract error.
+ */
+function normalizeSiteCollectionFields(
+  candidate: JsonRecord,
+  path: string,
+): LibrarySiteCollectionFields {
+  const present = (key: string): boolean => candidate[key] !== undefined;
+  const starredAt = present("starred_at")
+    ? nullableIsoDateAt(candidate.starred_at, `${path}.starred_at`)
+    : null;
+  const starred = present("starred")
+    ? boolean(candidate.starred, `${path}.starred`)
+    : starredAt !== null;
+  if (present("starred") && present("starred_at") && starred !== (starredAt !== null)) {
+    throw new LibraryContractError(`${path}.starred 与 ${path}.starred_at 不一致`);
+  }
+  return {
+    kind: present("kind")
+      ? literal(candidate.kind, `${path}.kind`, LIBRARY_SITE_KINDS)
+      : "website",
+    kindSource: present("kind_source")
+      ? literal(candidate.kind_source, `${path}.kind_source`, LIBRARY_KIND_SOURCES)
+      : "auto",
+    openCount: present("open_count") ? count(candidate.open_count, `${path}.open_count`) : 0,
+    lastOpenedAt: present("last_opened_at")
+      ? nullableIsoDateAt(candidate.last_opened_at, `${path}.last_opened_at`)
+      : null,
+    seenAt: present("seen_at") ? nullableIsoDateAt(candidate.seen_at, `${path}.seen_at`) : null,
+    starred,
+    starredAt,
+    resurfaceMuted: present("resurface_muted")
+      ? boolean(candidate.resurface_muted, `${path}.resurface_muted`)
+      : false,
+    meta: present("meta") ? siteMetaAt(candidate.meta, `${path}.meta`) : Object.freeze({}),
+  };
+}
+
+/** Repository coordinates stored with a `repo` site, or `null` when absent. */
+export function libraryRepoMeta(meta: LibrarySiteMeta): LibraryRepoMeta | null {
+  const { host, owner, repo, repo_type: repoType } = meta;
+  if (
+    typeof host !== "string" || !host.trim()
+    || typeof owner !== "string" || !owner.trim()
+    || typeof repo !== "string" || !repo.trim()
+  ) {
+    return null;
+  }
+  return {
+    host,
+    owner,
+    repo,
+    ...(typeof repoType === "string" && repoType.trim() ? { repoType } : {}),
+  };
+}
+
 export function normalizeLibrarySite(value: unknown): LibrarySite {
   const candidate = record(value, "site");
   if (!Array.isArray(candidate.tags)) throw new LibraryContractError("site.tags 必须是数组");
@@ -431,7 +597,128 @@ export function normalizeLibrarySite(value: unknown): LibrarySite {
     version: version(candidate.version, "site.version"),
     createdAt: isoDate(candidate.created_at, "site.created_at"),
     updatedAt: isoDate(candidate.updated_at, "site.updated_at"),
+    ...normalizeSiteCollectionFields(candidate, "site"),
   };
+}
+
+export function normalizeLibrarySiteOpen(value: unknown): LibrarySiteOpenResult {
+  const candidate = record(value, "site_open");
+  const openCount = count(candidate.open_count, "site_open.open_count");
+  if (openCount < 1) throw new LibraryContractError("site_open.open_count 必须至少为 1");
+  return {
+    siteId: identifier(candidate.site_id, "site_open.site_id"),
+    openCount,
+    lastOpenedAt: isoDate(candidate.last_opened_at, "site_open.last_opened_at"),
+    seenAt: isoDate(candidate.seen_at, "site_open.seen_at"),
+  };
+}
+
+const UTC_DATE = /^\d{4}-\d{2}-\d{2}$/u;
+
+export function normalizeLibraryRediscover(value: unknown): LibraryRediscover {
+  const candidate = record(value, "rediscover");
+  const generatedFor = text(candidate.generated_for, "rediscover.generated_for");
+  const midnight = UTC_DATE.test(generatedFor) ? Date.parse(`${generatedFor}T00:00:00Z`) : NaN;
+  if (
+    Number.isNaN(midnight)
+    || new Date(midnight).toISOString().slice(0, 10) !== generatedFor
+  ) {
+    throw new LibraryContractError("rediscover.generated_for 必须是 YYYY-MM-DD 日期");
+  }
+  if (!Array.isArray(candidate.items)) {
+    throw new LibraryContractError("rediscover.items 必须是数组");
+  }
+  if (candidate.items.length > MAX_LIBRARY_REDISCOVER_LIMIT) {
+    throw new LibraryContractError(
+      `rediscover.items 不能超过 ${MAX_LIBRARY_REDISCOVER_LIMIT} 条`,
+    );
+  }
+  const items = candidate.items.map((item, index) => {
+    const path = `rediscover.items[${index}]`;
+    const entry = record(item, path);
+    return {
+      site: normalizeLibrarySite(entry.site),
+      savedDays: count(entry.saved_days, `${path}.saved_days`),
+      reason: text(entry.reason, `${path}.reason`),
+    };
+  });
+  if (new Set(items.map((item) => item.site.id)).size !== items.length) {
+    throw new LibraryContractError("rediscover.items 不能包含重复收藏");
+  }
+  return { generatedFor, items };
+}
+
+export function normalizeLibraryOverview(value: unknown): LibraryOverview {
+  const candidate = record(value, "overview");
+  const kinds = record(candidate.by_kind, "overview.by_kind");
+  const byKind = Object.fromEntries(
+    LIBRARY_SITE_KINDS.map((kind) => [kind, count(kinds[kind], `overview.by_kind.${kind}`)]),
+  ) as Record<LibrarySiteKind, number>;
+  const overview: LibraryOverview = {
+    total: count(candidate.total, "overview.total"),
+    byKind,
+    unopened: count(candidate.unopened, "overview.unopened"),
+    starred: count(candidate.starred, "overview.starred"),
+    added7d: count(candidate.added_7d, "overview.added_7d"),
+    opened7d: count(candidate.opened_7d, "overview.opened_7d"),
+  };
+  const kindTotal = LIBRARY_SITE_KINDS.reduce((sum, kind) => sum + byKind[kind], 0);
+  if (kindTotal !== overview.total) {
+    throw new LibraryContractError("overview.by_kind 之和必须等于 total");
+  }
+  if (
+    [overview.unopened, overview.starred, overview.added7d, overview.opened7d]
+      .some((value) => value > overview.total)
+  ) {
+    throw new LibraryContractError("overview 的分项计数不能超过 total");
+  }
+  return overview;
+}
+
+export function assertLibrarySiteKind(value: unknown): LibrarySiteKind {
+  return literal(value, "site.kind", LIBRARY_SITE_KINDS);
+}
+
+export function assertLibrarySiteState(value: unknown): LibrarySiteState {
+  return literal(value, "site.state", LIBRARY_SITE_STATES);
+}
+
+export function assertLibrarySiteStateInput(input: LibrarySiteStateInput): LibrarySiteStateInput {
+  const normalized: LibrarySiteStateInput = {};
+  if (input.starred !== undefined) normalized.starred = boolean(input.starred, "site_state.starred");
+  if (input.seen !== undefined) normalized.seen = boolean(input.seen, "site_state.seen");
+  if (input.snoozeDays !== undefined) {
+    const days = input.snoozeDays;
+    if (!Number.isSafeInteger(days) || days < 0 || days > MAX_LIBRARY_SNOOZE_DAYS) {
+      throw new LibraryContractError(
+        `site_state.snooze_days 必须是 0 到 ${MAX_LIBRARY_SNOOZE_DAYS} 之间的整数`,
+      );
+    }
+    normalized.snoozeDays = days;
+  }
+  if (input.resurfaceMuted !== undefined) {
+    normalized.resurfaceMuted = boolean(input.resurfaceMuted, "site_state.resurface_muted");
+  }
+  if (Object.keys(normalized).length === 0) {
+    throw new LibraryContractError("状态更新至少需要一个字段");
+  }
+  return normalized;
+}
+
+export function assertLibraryRediscoverQuery(
+  query: LibraryRediscoverQuery,
+): Required<LibraryRediscoverQuery> {
+  const limit = query.limit ?? DEFAULT_LIBRARY_REDISCOVER_LIMIT;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIBRARY_REDISCOVER_LIMIT) {
+    throw new LibraryContractError(
+      `rediscover.limit 必须是 1 到 ${MAX_LIBRARY_REDISCOVER_LIMIT} 之间的整数`,
+    );
+  }
+  const shuffle = query.shuffle ?? 0;
+  if (!Number.isSafeInteger(shuffle) || shuffle < 0) {
+    throw new LibraryContractError("rediscover.shuffle 必须是非负整数");
+  }
+  return { limit, shuffle };
 }
 
 export function normalizeLibrarySiteAnalysis(value: unknown): LibrarySiteAnalysisResult {
@@ -1070,6 +1357,7 @@ export function assertLibrarySiteUpdateInput(input: LibrarySiteUpdateInput): Lib
       ? { tagIds: Array.from(new Set(input.tagIds.map((id, index) => identifier(id, `site.tag_ids[${index}]`)))) }
       : {}),
     ...(input.pinned !== undefined ? { pinned: boolean(input.pinned, "site.pinned") } : {}),
+    ...(input.kind !== undefined ? { kind: assertLibrarySiteKind(input.kind) } : {}),
   };
 }
 

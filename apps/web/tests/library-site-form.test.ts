@@ -25,6 +25,15 @@ const site: LibrarySite = {
   version: 4,
   createdAt: "2026-07-27T00:00:00Z",
   updatedAt: "2026-07-27T00:00:00Z",
+  kind: "website",
+  kindSource: "auto",
+  openCount: 0,
+  lastOpenedAt: null,
+  seenAt: null,
+  starred: false,
+  starredAt: null,
+  resurfaceMuted: false,
+  meta: {},
 };
 
 const values: LibrarySiteFormValues = {

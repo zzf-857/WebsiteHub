@@ -3,10 +3,15 @@ import {
   assertLibraryCategoryName,
   assertLibraryExpectedVersion,
   assertMetadataBackfillRequest,
+  assertLibraryRediscoverQuery,
   assertLibrarySiteCreateInput,
   assertLibrarySiteCreateSource,
+  assertLibrarySiteKind,
+  assertLibrarySiteState,
+  assertLibrarySiteStateInput,
   assertLibrarySiteUpdateInput,
   assertLibraryTagName,
+  LibraryContractError,
   libraryTagNameKey,
   libraryErrorDetails,
   METADATA_BACKFILL_LIMITS,
@@ -15,8 +20,11 @@ import {
   normalizeCategoryDeletePreview,
   normalizeLibraryCategories,
   normalizeLibraryCategory,
+  normalizeLibraryOverview,
+  normalizeLibraryRediscover,
   normalizeLibrarySite,
   normalizeLibrarySiteAnalysis,
+  normalizeLibrarySiteOpen,
   normalizeLibrarySitePage,
   normalizeLibrarySiteSelection,
   normalizeLibraryTag,
@@ -34,13 +42,18 @@ import {
   type LibraryBulkDeleteItem,
   type LibraryBulkDeleteResult,
   type LibraryCategoryDeletePreview,
+  type LibraryOverview,
+  type LibraryRediscover,
+  type LibraryRediscoverQuery,
   type LibrarySite,
   type LibrarySiteAnalysisResult,
   type LibrarySiteCreateInput,
   type LibrarySiteCreateSource,
+  type LibrarySiteOpenResult,
   type LibrarySitePage,
   type LibrarySiteQuery,
   type LibrarySiteSelectionItem,
+  type LibrarySiteStateInput,
   type LibrarySiteUpdateInput,
   type LibraryTag,
   type MetadataBackfillPlan,
@@ -55,6 +68,7 @@ import {
 } from "./library-contract.ts";
 
 const LIBRARY_BASE = "/api/backend/library";
+const DISCOVER_BASE = "/api/backend/discover";
 export const DEFAULT_LIBRARY_PAGE_SIZE = 24;
 export const MAX_LIBRARY_PAGE_SIZE = 100;
 export const MAX_LIBRARY_ANALYSIS_BACKFILL = 5_000;
@@ -90,8 +104,12 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-async function request(path: string, init: RequestInit = {}): Promise<unknown> {
-  const response = await fetch(`${LIBRARY_BASE}${path}`, {
+async function request(
+  path: string,
+  init: RequestInit = {},
+  base: string = LIBRARY_BASE,
+): Promise<unknown> {
+  const response = await fetch(`${base}${path}`, {
     ...init,
     cache: "no-store",
     credentials: "include",
@@ -126,6 +144,8 @@ export function buildLibrarySiteSearchParams(query: LibrarySiteQuery = {}): URLS
   if (query.categoryId?.trim()) params.set("category_id", query.categoryId.trim());
   if (query.tagId?.trim()) params.set("tag_id", query.tagId.trim());
   if (query.pinned !== undefined) params.set("pinned", String(query.pinned));
+  if (query.kind !== undefined) params.set("kind", assertLibrarySiteKind(query.kind));
+  if (query.state !== undefined) params.set("state", assertLibrarySiteState(query.state));
   params.set("sort", query.sort ?? "updated");
   params.set("direction", query.direction ?? "desc");
   if (query.cursor?.trim()) params.set("cursor", query.cursor.trim());
@@ -160,6 +180,19 @@ function siteUpdatePayload(input: LibrarySiteUpdateInput): Record<string, unknow
     ...(normalized.categoryId !== undefined ? { category_id: normalized.categoryId } : {}),
     ...(normalized.tagIds !== undefined ? { tag_ids: normalized.tagIds } : {}),
     ...(normalized.pinned !== undefined ? { pinned: normalized.pinned } : {}),
+    ...(normalized.kind !== undefined ? { kind: normalized.kind } : {}),
+  };
+}
+
+function siteStatePayload(input: LibrarySiteStateInput): Record<string, unknown> {
+  const normalized = assertLibrarySiteStateInput(input);
+  return {
+    ...(normalized.starred !== undefined ? { starred: normalized.starred } : {}),
+    ...(normalized.seen !== undefined ? { seen: normalized.seen } : {}),
+    ...(normalized.snoozeDays !== undefined ? { snooze_days: normalized.snoozeDays } : {}),
+    ...(normalized.resurfaceMuted !== undefined
+      ? { resurface_muted: normalized.resurfaceMuted }
+      : {}),
   };
 }
 
@@ -273,6 +306,60 @@ export async function updateLibrarySite(id: string, input: LibrarySiteUpdateInpu
     method: "PATCH",
     body: JSON.stringify(siteUpdatePayload(input)),
   }));
+}
+
+/**
+ * Record one open of a saved site through WebHub. Usage is not an edit: the
+ * site's `version` and `updatedAt` stay as they are. `keepalive` lets the
+ * count land even when the click also navigates this page away.
+ */
+export async function recordSiteOpen(
+  id: string,
+  signal?: AbortSignal,
+): Promise<LibrarySiteOpenResult> {
+  const siteId = encodeId(id);
+  const result = normalizeLibrarySiteOpen(await request(`/sites/${siteId}/open`, {
+    method: "POST",
+    keepalive: true,
+    signal,
+  }));
+  if (result.siteId !== id.trim()) {
+    throw new LibraryContractError("site_open.site_id 与请求的收藏不一致");
+  }
+  return result;
+}
+
+/** Star / mark seen / snooze / mute. Reversible and version-free. */
+export async function updateSiteState(
+  id: string,
+  input: LibrarySiteStateInput,
+  signal?: AbortSignal,
+): Promise<LibrarySite> {
+  const body = JSON.stringify(siteStatePayload(input));
+  return normalizeLibrarySite(await request(`/sites/${encodeId(id)}/state`, {
+    method: "PUT",
+    body,
+    signal,
+  }));
+}
+
+/** Today's resurfacing picks: stable per UTC day; bump `shuffle` for another set. */
+export async function fetchRediscover(
+  query: LibraryRediscoverQuery = {},
+  signal?: AbortSignal,
+): Promise<LibraryRediscover> {
+  const normalized = assertLibraryRediscoverQuery(query);
+  const params = new URLSearchParams({
+    limit: String(normalized.limit),
+    shuffle: String(normalized.shuffle),
+  });
+  return normalizeLibraryRediscover(
+    await request(`/rediscover?${params.toString()}`, { signal }, DISCOVER_BASE),
+  );
+}
+
+export async function fetchLibraryOverview(signal?: AbortSignal): Promise<LibraryOverview> {
+  return normalizeLibraryOverview(await request("/overview", { signal }));
 }
 
 export async function deleteLibrarySite(id: string, expectedVersion: number): Promise<void> {
