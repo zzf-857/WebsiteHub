@@ -16,11 +16,14 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     text,
 )
+from sqlalchemy.engine.default import DefaultExecutionContext
 from sqlalchemy.orm import Mapped, mapped_column
 
 from webhub.db.models._base import Base, new_id, utc_now
+from webhub.library.kinds import infer_kind, kind_meta_json
 
 
 class Category(Base):
@@ -77,6 +80,25 @@ class Tag(Base):
     )
 
 
+def _inferred_site_kind(context: DefaultExecutionContext) -> str:
+    """Insert default for ``Site.kind``: the URL rules of ``library.kinds``.
+
+    Being the column default (not a call each creation path must remember)
+    makes every ORM / Core insert into ``sites`` -- manual or Agent saves,
+    batch import, bookmark apply and any future path -- classify the URL the
+    same way. An explicit ``kind`` value still wins.
+    """
+
+    return infer_kind(context.get_current_parameters().get("identity_url"))
+
+
+def _inferred_site_meta_json(context: DefaultExecutionContext) -> str:
+    parameters = context.get_current_parameters()
+    url = parameters.get("identity_url")
+    kind = parameters.get("kind") or infer_kind(url)
+    return kind_meta_json(kind, url)
+
+
 class Site(Base):
     __tablename__ = "sites"
     __table_args__ = (
@@ -98,6 +120,13 @@ class Site(Base):
             "analysis_status IN ('not_analyzed', 'pending', 'complete', 'failed', 'limited')",
             name="valid_analysis_status",
         ),
+        # 迁移 0020 用原生 ADD COLUMN 把这两条写成列级 CHECK（表级约束要重建
+        # sites，FTS 触发器会炸）；这里声明同名约束只为让模型与库语义一致。
+        CheckConstraint(
+            "kind IN ('repo', 'article', 'video', 'website')",
+            name="valid_kind",
+        ),
+        CheckConstraint("kind_source IN ('auto', 'manual')", name="valid_kind_source"),
         Index("ix_sites_user_updated_id", "user_id", "updated_at", "id"),
         Index("ix_sites_user_created_id", "user_id", "created_at", "id"),
         Index("ix_sites_user_name_id", "user_id", "normalized_name", "id"),
@@ -120,6 +149,10 @@ class Site(Base):
             "position",
             unique=True,
         ),
+        # kind 筛选（按收藏时间翻页）与概览的按类型计数。
+        Index("ix_sites_user_kind_created_id", "user_id", "kind", "created_at", "id"),
+        # 重温候选（从未打开、按 id 轮转）、state=opened/unopened 筛选与 sort=opened 共用。
+        Index("ix_sites_user_last_opened_id", "user_id", "last_opened_at", "id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -153,6 +186,36 @@ class Site(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    # 资源类型：插入时由列默认值按 identity_url 推断（auto）；auto 状态下改 URL
+    # 会重新推断；用户经 PATCH 指定后为 manual，此后不再自动覆盖。
+    # server_default 只兜底绕过 ORM 的原始 SQL 插入。
+    kind: Mapped[str] = mapped_column(
+        Text, nullable=False, default=_inferred_site_kind, server_default="website"
+    )
+    kind_source: Mapped[str] = mapped_column(
+        Text, nullable=False, default="auto", server_default="auto"
+    )
+    # 使用信号与重温调度。它们是“用户看过/收藏过”的事实，不是对记录本身的
+    # 编辑：只能经 ``library.service.engagement`` 的显式 SQL 写入，并且必须保持
+    # ``version`` 与 ``updated_at`` 原值（否则打开一次就会让编辑表单版本冲突、
+    # 让“最近更新”排序被浏览行为打乱）。
+    open_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    starred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resurface_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resurface_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    resurface_muted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # 按类型存放的附加元数据（如仓库的 host/owner/repo），JSON 对象文本。
+    meta_json: Mapped[str] = mapped_column(
+        Text, nullable=False, default=_inferred_site_meta_json, server_default="{}"
     )
 
 

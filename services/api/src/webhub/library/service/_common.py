@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from collections.abc import Iterable
-from typing import Literal
+from typing import Any, Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,9 +27,13 @@ from webhub.library.schemas import (
 )
 
 # "relevance" 只在带 q 时可用，且是唯一会走语义融合的排序。
-# 单独开一个键而不是让语义召回去改现有排序的结果顺序：现有四个键的含义
+# 单独开一个键而不是让语义召回去改现有排序的结果顺序：现有键的含义
 # 是"按这一列排"，把融合塞进去会让同一个请求在配了 Provider 后悄悄换个顺序。
-SortKey = Literal["created", "updated", "name", "custom", "relevance"]
+# "opened" 按最近打开时间排；从未打开（NULL）无论升降序都排在最后。
+SortKey = Literal["created", "updated", "name", "custom", "opened", "relevance"]
+# unopened：从未经 WebHub 打开且没有标记已看（与重温候选、概览同一口径）；
+# opened：至少打开过一次；starred：已星标。只标记已看的收藏不属于前两者。
+SiteStateFilter = Literal["unopened", "opened", "starred"]
 SortDirection = Literal["asc", "desc"]
 _SEARCH_TOKEN = re.compile(r"\w+", re.UNICODE)
 _CJK_CHARACTER = re.compile(r"[\u3400-\u9fff]")
@@ -75,6 +80,31 @@ def _site_url(value: str) -> tuple[str, str]:
         reason = normalized.reason or "invalid_url"
         raise LibraryValidationError(f"网址无效或不受支持：{reason}")
     return original_url, normalized.normalized_url
+
+
+def _site_meta(raw: str | None) -> dict[str, Any]:
+    """Parse stored per-kind metadata; a damaged value degrades to ``{}``."""
+
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _never_opened() -> ColumnElement[bool]:
+    # ``open_count`` and ``last_opened_at`` are only ever written together, by
+    # ``record_site_open``. The timestamp is the indexed key of the two; the
+    # counter keeps the condition literally "open_count = 0" as well.
+    return and_(Site.last_opened_at.is_(None), Site.open_count == 0)
+
+
+def _state_condition(state: SiteStateFilter) -> ColumnElement[bool]:
+    if state == "unopened":
+        return and_(_never_opened(), Site.seen_at.is_(None))
+    if state == "opened":
+        return Site.last_opened_at.is_not(None)
+    return Site.starred_at.is_not(None)
 
 
 def _safe_favicon_url(value: str | None) -> str | None:

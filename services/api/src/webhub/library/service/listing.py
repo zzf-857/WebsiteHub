@@ -19,6 +19,7 @@ from webhub.db.models import (
     SpaceMember,
     Tag,
 )
+from webhub.library.kinds import SiteKind
 from webhub.library.schemas import (
     SiteListAggregate,
     SiteListResponse,
@@ -35,11 +36,13 @@ from ._common import (
     LibraryConflictError,
     LibraryNotFoundError,
     LibraryValidationError,
+    SiteStateFilter,
     SortKey,
     _owned_category,
     _owned_space,
     _owned_tag,
     _safe_favicon_url,
+    _state_condition,
 )
 from .sites import (
     _site_response,
@@ -59,6 +62,8 @@ def _cursor_scope(
     pinned: bool | None,
     sort: SortKey,
     direction: SortDirection,
+    kind: SiteKind | None = None,
+    state: SiteStateFilter | None = None,
 ) -> str:
     scope_payload: dict[str, object] = {
         "user_id": user_id,
@@ -72,6 +77,12 @@ def _cursor_scope(
     }
     if space_id is not None:
         scope_payload["space_version"] = space_version
+    # Added only when set, so cursors issued before these filters existed keep
+    # their scope; a cursor from one kind/state can never page another.
+    if kind is not None:
+        scope_payload["kind"] = kind
+    if state is not None:
+        scope_payload["state"] = state
     payload = json.dumps(
         scope_payload,
         ensure_ascii=False,
@@ -198,6 +209,8 @@ def _site_filters(
     tag_id: str | None,
     space_id: str | None,
     pinned: bool | None,
+    kind: SiteKind | None = None,
+    state: SiteStateFilter | None = None,
 ):
     conditions = [Site.user_id == user_id]
     if q and (query := q.strip()):
@@ -226,7 +239,32 @@ def _site_filters(
         )
     if pinned is not None:
         conditions.append(Site.pinned.is_(pinned))
+    if kind is not None:
+        conditions.append(Site.kind == kind)
+    if state is not None:
+        conditions.append(_state_condition(state))
     return conditions
+
+
+def _opened_cursor_comparator(
+    value: datetime | None,
+    cursor_id: str,
+    *,
+    direction: SortDirection,
+):
+    """Keyset step for ``last_opened_at`` with never-opened (NULL) rows last.
+
+    NULLs trail in both directions, so the step is symmetric: inside the
+    opened region the usual (value, id) comparison applies and every
+    never-opened row is still ahead; inside the NULL region only the id moves.
+    """
+
+    column = Site.last_opened_at
+    after_id = Site.id > cursor_id if direction == "asc" else Site.id < cursor_id
+    if value is None:
+        return and_(column.is_(None), after_id)
+    after_value = column > value if direction == "asc" else column < value
+    return or_(after_value, and_(column == value, after_id), column.is_(None))
 
 
 async def list_sites(
@@ -243,6 +281,8 @@ async def list_sites(
     cursor: str | None,
     limit: int,
     embedding_binding: EmbeddingEndpoint | None = None,
+    kind: SiteKind | None = None,
+    state: SiteStateFilter | None = None,
 ) -> SiteListResponse:
     space_version: int | None = None
     if category_id:
@@ -260,6 +300,8 @@ async def list_sites(
         tag_id=tag_id,
         space_id=space_id,
         pinned=pinned,
+        kind=kind,
+        state=state,
     )
     matched_count = int(
         await session.scalar(
@@ -279,6 +321,8 @@ async def list_sites(
         tag_id=tag_id,
         space_id=space_id,
         pinned=True,
+        kind=kind,
+        state=state,
     )
     pinned_count = int(
         await session.scalar(
@@ -310,6 +354,7 @@ async def list_sites(
         "updated": Site.updated_at,
         "name": Site.normalized_name,
         "custom": Site.position,
+        "opened": Site.last_opened_at,
     }[sort]
     scope = _cursor_scope(
         user_id=user_id,
@@ -321,6 +366,8 @@ async def list_sites(
         pinned=pinned,
         sort=sort,
         direction=direction,
+        kind=kind,
+        state=state,
     )
     query = (
         select(Site, Category)
@@ -338,28 +385,48 @@ async def list_sites(
             scope=scope,
         )
         try:
-            cursor_value: str | int | datetime = (
+            # "opened" encodes a never-opened (NULL) boundary row as "".
+            cursor_value: str | int | datetime | None = (
                 raw_value
                 if sort == "name"
                 else int(raw_value)
                 if sort == "custom"
+                else None
+                if sort == "opened" and raw_value == ""
                 else datetime.fromisoformat(raw_value)
             )
         except ValueError as error:
             raise LibraryValidationError("分页游标包含无效排序值") from error
-        comparator = (
-            or_(
-                sort_column > cursor_value,
-                and_(sort_column == cursor_value, Site.id > cursor_id),
+        if sort == "opened":
+            assert cursor_value is None or isinstance(cursor_value, datetime)
+            comparator = _opened_cursor_comparator(
+                cursor_value,
+                cursor_id,
+                direction=direction,
             )
-            if direction == "asc"
-            else or_(
-                sort_column < cursor_value,
-                and_(sort_column == cursor_value, Site.id < cursor_id),
+        else:
+            comparator = (
+                or_(
+                    sort_column > cursor_value,
+                    and_(sort_column == cursor_value, Site.id > cursor_id),
+                )
+                if direction == "asc"
+                else or_(
+                    sort_column < cursor_value,
+                    and_(sort_column == cursor_value, Site.id < cursor_id),
+                )
             )
-        )
         query = query.where(comparator)
-    ordering = sort_column.asc() if direction == "asc" else sort_column.desc()
+    if sort == "opened":
+        # Never-opened rows (NULL) trail in both directions: "least recently
+        # opened first" still lists things the user did open before the rest.
+        ordering = (
+            sort_column.asc().nulls_last()
+            if direction == "asc"
+            else sort_column.desc().nulls_last()
+        )
+    else:
+        ordering = sort_column.asc() if direction == "asc" else sort_column.desc()
     id_ordering = Site.id.asc() if direction == "asc" else Site.id.desc()
     rows = (await session.execute(query.order_by(ordering, id_ordering).limit(limit + 1))).all()
     has_more = len(rows) > limit
@@ -393,6 +460,12 @@ async def list_sites(
             raw_sort_value = last_site.normalized_name
         elif sort == "custom":
             raw_sort_value = str(last_site.position)
+        elif sort == "opened":
+            raw_sort_value = (
+                last_site.last_opened_at.isoformat()
+                if last_site.last_opened_at is not None
+                else ""
+            )
         else:
             raw_sort_value = (
                 last_site.created_at if sort == "created" else last_site.updated_at
@@ -423,6 +496,8 @@ async def list_site_selection(
     category_id: str | None,
     tag_id: str | None,
     pinned: bool | None,
+    kind: SiteKind | None = None,
+    state: SiteStateFilter | None = None,
 ) -> SiteSelectionResponse:
     """Freeze all current filter matches without loading full site cards.
 
@@ -442,6 +517,8 @@ async def list_site_selection(
         tag_id=tag_id,
         space_id=None,
         pinned=pinned,
+        kind=kind,
+        state=state,
     )
     rows = (
         await session.execute(

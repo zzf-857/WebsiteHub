@@ -1,16 +1,22 @@
-from datetime import datetime
-from typing import Annotated, Literal
+from datetime import date, datetime
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
+    StrictInt,
     TypeAdapter,
     ValidationError,
     field_validator,
+    model_validator,
 )
 from pydantic.functional_validators import BeforeValidator
+
+# kinds 是纯函数模块（不依赖 library 其他部分），从它引用取值集合不会成环。
+from webhub.library.kinds import KindSource, SiteKind
 
 # 定义在这里而不是 batch.py：schemas 不依赖任何 library 内部模块，
 # 反过来让 batch 引用它才不会形成 schemas → batch → service → schemas 的环。
@@ -144,6 +150,8 @@ class SiteUpdateRequest(StrictRequest):
     category_id: str | None = None
     tag_ids: list[str] | None = Field(default=None, max_length=50)
     pinned: bool | None = None
+    # 显式指定资源类型：此后 kind_source=manual，改 URL 也不再自动重算。
+    kind: SiteKind | None = None
 
     @field_validator("summary", mode="before")
     @classmethod
@@ -175,6 +183,89 @@ class SiteResponse(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+    # Q42 收藏模型：资源类型与使用信号。使用信号不属于“编辑”，变化时
+    # ``version`` / ``updated_at`` 保持不变。
+    kind: SiteKind
+    kind_source: KindSource
+    open_count: int = Field(ge=0)
+    last_opened_at: datetime | None
+    seen_at: datetime | None
+    starred: bool
+    starred_at: datetime | None
+    resurface_muted: bool
+    # 由 ``meta_json`` 解析的按类型元数据（仓库为 host/owner/repo）；损坏时为 {}。
+    meta: dict[str, Any]
+
+
+MAX_SNOOZE_DAYS = 90
+
+
+class SiteStateUpdateRequest(StrictRequest):
+    """Reversible engagement state. Never bumps the site version.
+
+    Strict JSON types: ``"true"`` or ``1`` is not a boolean here, and ``7.0``
+    is not a day count. Absent fields are left unchanged; an explicit ``null``
+    is rejected rather than read as "no change".
+    """
+
+    starred: StrictBool | None = None
+    # false 清空 seen_at；true 在未看过时记为现在（已有时间保持不变）。
+    seen: StrictBool | None = None
+    # 0 清除推迟；1-90 表示 resurface_due_at = 现在 + N 天，并累计一次推迟次数。
+    snooze_days: StrictInt | None = Field(default=None, ge=0, le=MAX_SNOOZE_DAYS)
+    resurface_muted: StrictBool | None = None
+
+    @model_validator(mode="after")
+    def require_one_explicit_field(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("状态更新至少需要一个字段")
+        empty = sorted(name for name in self.model_fields_set if getattr(self, name) is None)
+        if empty:
+            raise ValueError(f"{'、'.join(empty)} 不能为 null")
+        return self
+
+
+class SiteOpenResponse(BaseModel):
+    """Usage counters after one recorded open; the site version is untouched."""
+
+    site_id: str
+    open_count: int = Field(ge=1)
+    last_opened_at: datetime
+    seen_at: datetime
+
+
+MAX_REDISCOVER_LIMIT = 12
+
+
+class RediscoverItemResponse(BaseModel):
+    site: SiteResponse
+    saved_days: int = Field(ge=0)
+    # 规则生成的中文理由，可解释、不经模型。
+    reason: str
+
+
+class RediscoverResponse(BaseModel):
+    # 本次轮转所依据的 UTC 日期：同一天、同一 shuffle 的结果稳定。
+    generated_for: date
+    items: list[RediscoverItemResponse] = Field(max_length=MAX_REDISCOVER_LIMIT)
+
+
+class LibraryKindCounts(BaseModel):
+    repo: int = Field(ge=0)
+    article: int = Field(ge=0)
+    video: int = Field(ge=0)
+    website: int = Field(ge=0)
+
+
+class LibraryOverviewResponse(BaseModel):
+    total: int = Field(ge=0)
+    by_kind: LibraryKindCounts
+    # 从未在 WebHub 打开、也没有标记已看（与重温候选、state=unopened 同一口径）。
+    unopened: int = Field(ge=0)
+    starred: int = Field(ge=0)
+    # 近 7 天新收藏数；近 7 天打开过的收藏数（按收藏去重，不是打开次数）。
+    added_7d: int = Field(ge=0)
+    opened_7d: int = Field(ge=0)
 
 
 class SiteAnalysisResponse(BaseModel):

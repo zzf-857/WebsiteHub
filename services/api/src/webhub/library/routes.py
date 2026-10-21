@@ -19,6 +19,7 @@ from webhub.ingestion import worker as ingestion_worker
 from webhub.ingestion.enrichment import AnalysisIntent
 from webhub.library import batch, service
 from webhub.library import similarity as site_similarity
+from webhub.library.kinds import SiteKind
 from webhub.library.schemas import (
     CategoryCreateRequest,
     CategoryDeletePreviewResponse,
@@ -276,10 +277,12 @@ async def sites(
     tag_id: str | None = None,
     space_id: str | None = None,
     pinned: bool | None = None,
-    sort: Literal["created", "updated", "name", "custom", "relevance"] = "updated",
+    sort: Literal["created", "updated", "name", "custom", "opened", "relevance"] = "updated",
     direction: Literal["asc", "desc"] = "desc",
     cursor: Annotated[str | None, Query(max_length=2_048)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    kind: SiteKind | None = None,
+    state: service.SiteStateFilter | None = None,
 ) -> SiteListResponse:
     # 解析 Provider 的代价不只是读库解密：resolve_binding 会重新做一次
     # DNS 解析（保存后主机名可能被指向内网，这道 SSRF 校验必须留着），
@@ -308,6 +311,8 @@ async def sites(
             cursor=cursor,
             limit=limit,
             embedding_binding=binding,
+            kind=kind,
+            state=state,
         )
     )
     visible_site_ids = tuple(
@@ -349,7 +354,11 @@ async def site_selection(
     category_id: str | None = None,
     tag_id: str | None = None,
     pinned: bool | None = None,
+    kind: SiteKind | None = None,
+    state: service.SiteStateFilter | None = None,
 ) -> SiteSelectionResponse:
+    # Same filter set as the visible list: a bulk "select all" must freeze
+    # exactly what the user is looking at, never a wider set.
     return await _call(
         service.list_site_selection(
             session,
@@ -358,6 +367,8 @@ async def site_selection(
             category_id=category_id,
             tag_id=tag_id,
             pinned=pinned,
+            kind=kind,
+            state=state,
         )
     )
 

@@ -9,6 +9,7 @@
 - ``tags``        标签增删改查
 - ``sites``       站点增删改查
 - ``listing``     游标分页、搜索条件、列表与重排
+- ``engagement``  打开记录、阅读状态、重温调度与收藏概览（不改版本与更新时间）
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from ._common import (
     LibraryError,
     LibraryNotFoundError,
     LibraryValidationError,
+    SiteStateFilter,
     _category_count,
     _category_response,
     _default_category,
@@ -39,6 +41,12 @@ from .categories import (
     delete_category,
     list_categories,
     update_category,
+)
+from .engagement import (
+    library_overview,
+    record_site_open,
+    rediscover,
+    update_site_state,
 )
 from .listing import (
     SortDirection,
@@ -75,6 +83,7 @@ __all__ = [
     "LibraryError",
     "LibraryNotFoundError",
     "LibraryValidationError",
+    "SiteStateFilter",
     "SortDirection",
     "SortKey",
     "_CJK_CHARACTER",
@@ -109,12 +118,16 @@ __all__ = [
     "delete_site",
     "delete_tag",
     "get_site",
+    "library_overview",
     "list_categories",
     "list_site_selection",
     "list_sites",
     "list_tags",
+    "record_site_open",
+    "rediscover",
     "reorder_sites",
     "update_category",
     "update_site",
+    "update_site_state",
     "update_tag",
 ]

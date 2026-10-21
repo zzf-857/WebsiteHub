@@ -17,6 +17,7 @@ from webhub.db.models import (
     Tag,
     utc_now,
 )
+from webhub.library.kinds import infer_kind, kind_meta_json
 from webhub.library.schemas import (
     CategoryReference,
     SiteBulkDeleteRequest,
@@ -39,6 +40,7 @@ from ._common import (
     _owned_category,
     _owned_tags,
     _safe_favicon_url,
+    _site_meta,
     _site_url,
 )
 
@@ -94,6 +96,15 @@ async def _site_response(
         version=site.version,
         created_at=site.created_at,
         updated_at=site.updated_at,
+        kind=site.kind,  # type: ignore[arg-type]
+        kind_source=site.kind_source,  # type: ignore[arg-type]
+        open_count=site.open_count,
+        last_opened_at=site.last_opened_at,
+        seen_at=site.seen_at,
+        starred=site.starred_at is not None,
+        starred_at=site.starred_at,
+        resurface_muted=site.resurface_muted,
+        meta=_site_meta(site.meta_json),
     )
 
 
@@ -163,6 +174,8 @@ async def create_site(
         )
         or 0
     )
+    # ``kind`` / ``meta_json`` are left to the ``Site`` column defaults, which
+    # infer them from ``identity_url`` for every insert path alike.
     site = Site(
         user_id=user_id,
         category_id=category.id,
@@ -272,6 +285,8 @@ async def update_site(
 
     if "pinned" in fields and payload.pinned is None:
         raise LibraryValidationError("置顶状态不能为空")
+    if "kind" in fields and payload.kind is None:
+        raise LibraryValidationError("资源类型不能为空")
 
     category: Category | None = None
     if "category_id" in fields:
@@ -359,6 +374,7 @@ async def update_site(
             preference.llm_analyzed_at = None
         if name_update is not None:
             site.name, site.normalized_name = name_update
+        previous_kind = site.kind
         if url_update is not None:
             site.original_url, site.identity_url = url_update
         if url_changed:
@@ -397,6 +413,17 @@ async def update_site(
                 preference.favicon_is_manual = True
         if "pinned" in fields:
             site.pinned = bool(payload.pinned)
+        if "kind" in fields:
+            # Field presence is the user's decision, even when it repeats the
+            # inferred value: later URL edits must not override it.
+            site.kind = str(payload.kind)
+            site.kind_source = "manual"
+        elif url_changed and site.kind_source == "auto":
+            site.kind = infer_kind(site.identity_url)
+        if url_changed or site.kind != previous_kind:
+            # Per-kind metadata describes the previous target or kind. Keep it
+            # only when both survive, so later enrichment is not discarded.
+            site.meta_json = kind_meta_json(site.kind, site.identity_url)
         if category is not None:
             if category.id != site.category_id:
                 site.position = int(

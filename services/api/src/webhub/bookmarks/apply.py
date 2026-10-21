@@ -791,6 +791,8 @@ async def apply_candidates(
                     version=1,
                     created_at=now,
                     updated_at=now,
+                    # kind / meta_json: the Site column defaults infer them
+                    # from identity_url, exactly as for REST and Agent saves.
                 )
             )
             await _attach_tags(

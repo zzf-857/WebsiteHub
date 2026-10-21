@@ -39,6 +39,7 @@ from webhub.db.models import (
     new_id,
     utc_now,
 )
+from webhub.library.kinds import infer_kind, kind_meta_json
 from webhub.library.schemas import (
     CategoryReference,
     SiteSimilarityApplyResponse,
@@ -55,6 +56,7 @@ from webhub.library.service._common import (
     LibraryNotFoundError,
     LibraryValidationError,
     _safe_favicon_url,
+    _site_meta,
 )
 
 SIMILARITY_RULESET_VERSION = "library-site-similarity.v1"
@@ -549,8 +551,72 @@ def _decode_cursor(cursor: str, *, run_id: str, kind: str) -> int:
         raise LibraryValidationError("分页游标无效", code="invalid_similarity_cursor") from error
 
 
-def _member_response(member: SiteSimilarityGroupMember) -> SiteSimilarityMemberResponse:
+@dataclass(frozen=True, slots=True)
+class _LiveCollectionState:
+    """Resource kind and usage signals read from the live row, not the snapshot."""
+
+    kind: str
+    kind_source: str
+    meta_json: str
+    open_count: int
+    last_opened_at: datetime | None
+    seen_at: datetime | None
+    starred_at: datetime | None
+    resurface_muted: bool
+
+
+async def _live_collection_state(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    site_ids: Iterable[str],
+) -> dict[str, _LiveCollectionState]:
+    """Current kind / usage for still-existing members, account-scoped.
+
+    The scan snapshot freezes what a cleanup decision is about (identity,
+    content, version). Kind and usage are not part of that decision and never
+    change the version, so showing them live keeps a starred or recently
+    opened duplicate recognisable while the user decides what to keep.
+    """
+
+    ids = list(dict.fromkeys(site_ids))
+    if not ids:
+        return {}
+    rows = await session.execute(
+        select(
+            Site.id,
+            Site.kind,
+            Site.kind_source,
+            Site.meta_json,
+            Site.open_count,
+            Site.last_opened_at,
+            Site.seen_at,
+            Site.starred_at,
+            Site.resurface_muted,
+        ).where(Site.user_id == user_id, Site.id.in_(ids))
+    )
+    return {str(row[0]): _LiveCollectionState(*row[1:]) for row in rows}
+
+
+def _member_response(
+    member: SiteSimilarityGroupMember,
+    live: _LiveCollectionState | None,
+) -> SiteSimilarityMemberResponse:
     tags = json.loads(member.tags_json)
+    if live is None:
+        # The member was deleted after the scan: derive the kind from the
+        # frozen URL and report neutral usage for the card.
+        kind = infer_kind(member.identity_url)
+        live = _LiveCollectionState(
+            kind=kind,
+            kind_source="auto",
+            meta_json=kind_meta_json(kind, member.identity_url),
+            open_count=0,
+            last_opened_at=None,
+            seen_at=None,
+            starred_at=None,
+            resurface_muted=False,
+        )
     return SiteSimilarityMemberResponse(
         id=member.site_id,
         name=member.name,
@@ -574,6 +640,15 @@ def _member_response(member: SiteSimilarityGroupMember) -> SiteSimilarityMemberR
         version=member.expected_version,
         created_at=member.site_created_at,
         updated_at=member.site_updated_at,
+        kind=live.kind,  # type: ignore[arg-type]
+        kind_source=live.kind_source,  # type: ignore[arg-type]
+        open_count=live.open_count,
+        last_opened_at=live.last_opened_at,
+        seen_at=live.seen_at,
+        starred=live.starred_at is not None,
+        starred_at=live.starred_at,
+        resurface_muted=live.resurface_muted,
+        meta=_site_meta(live.meta_json),
         is_recommended=member.is_recommended,
     )
 
@@ -650,6 +725,7 @@ async def list_groups(
     group_ids = [group.id for group in page_rows]
     members_by_group: defaultdict[str, list[SiteSimilarityGroupMember]] = defaultdict(list)
     selected_by_group: defaultdict[str, set[str]] = defaultdict(set)
+    live_states: dict[str, _LiveCollectionState] = {}
     if group_ids:
         members, selected_rows = await session.scalars(
             select(SiteSimilarityGroupMember)
@@ -677,6 +753,11 @@ async def list_groups(
             members_by_group[member.group_id].append(member)
         for group_id, site_id in selected_rows:
             selected_by_group[group_id].add(site_id)
+        live_states = await _live_collection_state(
+            session,
+            user_id=user_id,
+            site_ids=(member.site_id for member in members),
+        )
     items = [
         SiteSimilarityGroupResponse(
             id=group.id,
@@ -690,7 +771,10 @@ async def list_groups(
                 for member in members_by_group[group.id]
                 if member.site_id in selected_by_group[group.id]
             ],
-            members=[_member_response(member) for member in members_by_group[group.id]],
+            members=[
+                _member_response(member, live_states.get(member.site_id))
+                for member in members_by_group[group.id]
+            ],
         )
         for group in page_rows
     ]
