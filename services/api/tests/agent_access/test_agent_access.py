@@ -32,6 +32,7 @@ TOOL_NAMES = {
     "search_resources",
     "get_resource",
     "get_rediscover",
+    "get_feed_digest",
     "list_taxonomy",
     "save_resource",
     "update_resource",

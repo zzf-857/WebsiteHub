@@ -52,6 +52,7 @@ from webhub.db.models.bookmark_staging import (
     BookmarkStagingFolder,
     BookmarkStagingOccurrence,
 )
+from webhub.db.models.feeds import FEED_KINDS, Feed, FeedItem
 from webhub.db.models.library import (
     Category,
     Site,
@@ -102,6 +103,9 @@ __all__ = [
     "BookmarkStagingFolder",
     "BookmarkStagingOccurrence",
     "Category",
+    "FEED_KINDS",
+    "Feed",
+    "FeedItem",
     "DEFAULT_CATEGORY_NAME",
     "LoginSession",
     "ProviderConfig",

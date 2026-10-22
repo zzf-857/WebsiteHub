@@ -66,9 +66,10 @@ INSTRUCTIONS = (
     "description you did not give) are filled in automatically afterwards. Search is "
     "literal keyword matching where every keyword must match, so search with one to "
     "three distinctive words and retry with fewer or translated keywords before "
-    "concluding something was never saved. Nothing can be deleted through this "
-    "server. Texts are stored in their original language (often Chinese); quote them "
-    "as they are."
+    "concluding something was never saved. get_feed_digest returns today's picks from the "
+    "user's RSS / podcast subscriptions (not saved items) for daily or weekly digests. "
+    "Nothing can be deleted through this server. Texts are stored in their original "
+    "language (often Chinese); quote them as they are."
 )
 
 _READ = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
@@ -229,6 +230,28 @@ def build_mcp_server(database: Database) -> FastMCP:
         return await run(
             "get_rediscover",
             lambda session, identity: tools.get_rediscover(session, identity, limit=limit),
+            write=False,
+        )
+
+    @mcp.tool(
+        name="get_feed_digest",
+        description=(
+            "Get today's picks from the user's RSS / podcast subscriptions: fresh items "
+            "(last 7 days) ranked by overlap with the tags and categories the user saves "
+            "most, plus recency, with at most 3 items per source. These are NOT saved "
+            "resources; use them for daily or weekly digests. Each item has title, url, "
+            "source, kind (rss|podcast), summary, published_at, audio_url and "
+            "duration_seconds for podcasts, saved_to_library and a short reason (Chinese)."
+        ),
+        annotations=_READ,
+        structured_output=False,
+    )
+    async def get_feed_digest(
+        limit: Annotated[int, Field(ge=1, le=20, description="Number of picks (1-20).")] = 10,
+    ) -> str:
+        return await run(
+            "get_feed_digest",
+            lambda session, identity: tools.get_feed_digest(session, identity, limit=limit),
             write=False,
         )
 

@@ -37,6 +37,7 @@ type HealthState = "checking" | "online" | "offline";
 const navigation = [
   { label: "发现", href: "/", sections: ["/"] },
   { label: "收藏库", href: "/library", sections: ["/library"] },
+  { label: "订阅", href: "/feeds", sections: ["/feeds"] },
   { label: "Space", href: "/spaces", sections: ["/spaces"] },
 ] as const;
 
