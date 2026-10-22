@@ -40,10 +40,8 @@ function QuoteMark() {
 }
 
 function RepoStats({ model }: Readonly<{ model: RepoCover }>) {
-  if (!model.language && !model.stars) {
-    // 没有 Q45 统计数据时，底行放代码托管站点，保持“上 · 中 · 下”的版式不塌
-    return <span className="resource-cover-repo-host">{model.host}</span>;
-  }
+  // 顶行已经写了托管站点 / owner，没有 Q45 统计数据时底行整行不画，不再重复域名
+  if (!model.language && !model.stars) return null;
   return (
     <span className="resource-cover-repo-stats">
       {model.language && (

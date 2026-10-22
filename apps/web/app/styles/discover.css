@@ -354,22 +354,36 @@
   -webkit-line-clamp: 3;
 }
 
-.discover-hero-reason {
+.discover-hero-summary {
+  display: -webkit-box;
   margin: 0;
+  overflow: hidden;
   color: var(--text-secondary);
   font-size: 15px;
   line-height: 1.8;
-}
-
-.discover-hero-summary {
-  display: -webkit-box;
-  margin: -6px 0 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1.75;
+  overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+}
+
+/* 推荐依据：小字一行，跟在简介后面 */
+.discover-hero-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.discover-hero-reason svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  /* 与首行文字垂直居中：(13 × 1.6 − 14) / 2 */
+  margin-top: 3px;
+  color: var(--accent-mid);
 }
 
 .discover-hero-tags {
@@ -971,13 +985,11 @@
 
 .resource-cover-repo-owner,
 .resource-cover-repo-name,
-.resource-cover-repo-stats,
-.resource-cover-repo-host {
+.resource-cover-repo-stats {
   font-family: var(--font-mono);
 }
 
-.resource-cover-repo-owner,
-.resource-cover-repo-host {
+.resource-cover-repo-owner {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1640,13 +1652,16 @@
     width: auto;
   }
 
-  /* 类型标签横向滑动，不折成两行；左右出血到屏幕边缘，上下留出聚焦环的位置 */
+  /* 类型标签独占一行，在自己的容器里横向滑动：不折行、不出血到屏幕边缘，也不撑出页面横向滚动。
+     四周各留 4px 给聚焦环（描边 2px + 外移 2px），再用等量负外边距抵消，文字仍与页边距对齐 */
   .discover-kind-tabs {
-    flex: 0 0 calc(100% + 2 * var(--page-gutter));
+    flex: 0 0 calc(100% + 8px);
     flex-wrap: nowrap;
-    margin: -3px calc(-1 * var(--page-gutter));
-    padding: 3px var(--page-gutter);
+    min-width: 0;
+    margin: -4px;
+    padding: 4px;
     overflow-x: auto;
+    overscroll-behavior-x: contain;
     scrollbar-width: none;
   }
 
@@ -1658,8 +1673,10 @@
     display: none;
   }
 
+  /* 状态分段与排序换到标签下一行；仍放不下时排序再折到下一行 */
   .discover-gallery-controls {
     flex: 1 1 100%;
+    min-width: 0;
     justify-content: space-between;
   }
 

@@ -11,6 +11,7 @@ import {
   estimateCardHeight,
   estimateCoverHeight,
   formatStars,
+  heroSummaryText,
   isSafePreviewUrl,
   repoCoordinates,
   repoStats,
@@ -109,6 +110,39 @@ test("repo stats come from Q45's meta.github and are formatted", () => {
   assert.equal(formatStars(-3), "0");
 });
 
+test("repo covers only carry a bottom row when meta has language or stars", () => {
+  // 顶行已写托管站点与 owner；没有统计数据时 language / stars 都为空，底行整行不画
+  for (const size of ["card", "hero"] as const) {
+    const bare = coverModel(siteFixture({ kind: "repo", originalUrl: "https://github.com/ollama/ollama" }), size);
+    assert.equal(bare.type, "repo");
+    if (bare.type === "repo") {
+      assert.equal(bare.host, "github.com");
+      assert.equal(bare.language, null);
+      assert.equal(bare.stars, null);
+    }
+  }
+
+  const languageOnly = coverModel(
+    siteFixture({ kind: "repo", originalUrl: "https://github.com/ollama/ollama", meta: { github: { language: "Go" } } }),
+    "hero",
+  );
+  assert.equal(languageOnly.type, "repo");
+  if (languageOnly.type === "repo") {
+    assert.equal(languageOnly.language, "Go");
+    assert.equal(languageOnly.stars, null);
+  }
+
+  const starsOnly = coverModel(
+    siteFixture({ kind: "repo", originalUrl: "https://github.com/ollama/ollama", meta: { github: { stars: 1_234 } } }),
+    "card",
+  );
+  assert.equal(starsOnly.type, "repo");
+  if (starsOnly.type === "repo") {
+    assert.equal(starsOnly.language, null);
+    assert.equal(starsOnly.stars, "1.2k");
+  }
+});
+
 test("article covers need a summary; without one they fall back to the site cover", () => {
   const withSummary = coverModel(
     siteFixture({ kind: "article", summary: "先拍够曝光，再在后期合成，比赌一张更稳妥可靠。" }),
@@ -140,6 +174,33 @@ test("the hover overlay never repeats the hook already drawn on an article cover
   // 其他类型：简介优先，缺失时退回详细介绍
   assert.equal(cardOverlayText(siteFixture({ summary: null, description: "网址检测工具" })), "网址检测工具");
   assert.equal(cardOverlayText(siteFixture({ summary: "多引擎检测文件和网址的安全性" })), "多引擎检测文件和网址的安全性");
+});
+
+test("the hero copy shows the summary unless the cover already draws it", () => {
+  // 站点 / 图片封面：简介优先，缺失时退回详细介绍
+  assert.equal(heroSummaryText(siteFixture({ summary: "多引擎检测文件和网址的安全性", description: "网页描述" })), "多引擎检测文件和网址的安全性");
+  assert.equal(heroSummaryText(siteFixture({ summary: "  ", description: "网址检测工具" })), "网址检测工具");
+  assert.equal(heroSummaryText(siteFixture({ summary: null, description: null })), "");
+
+  // 要点封面画了钩子，仓库主卡封面画了一句话介绍：只在详细介绍另有内容时才写
+  const hook = "先拍够曝光，再在后期合成，比赌一张更稳妥可靠。";
+  assert.equal(heroSummaryText(siteFixture({ kind: "article", summary: hook })), "");
+  assert.equal(
+    heroSummaryText(siteFixture({ kind: "article", summary: hook, description: "包围曝光的完整流程与参数。" })),
+    "包围曝光的完整流程与参数。",
+  );
+  const repo = { kind: "repo" as const, originalUrl: "https://github.com/ollama/ollama" };
+  assert.equal(heroSummaryText(siteFixture({ ...repo, summary: "本地运行大模型" })), "");
+  assert.equal(heroSummaryText(siteFixture({ ...repo, summary: null, description: "本地运行大模型" })), "");
+  assert.equal(
+    heroSummaryText(siteFixture({ ...repo, summary: "本地运行大模型", description: "支持 Llama、Qwen 等模型。" })),
+    "支持 Llama、Qwen 等模型。",
+  );
+  // 有预览图时封面不画文字，照常给简介
+  assert.equal(
+    heroSummaryText(siteFixture({ ...repo, summary: "本地运行大模型", previewUrl: "https://example.com/og.png" })),
+    "本地运行大模型",
+  );
 });
 
 test("websites and unknown shapes use the site cover with the real favicon", () => {

@@ -5,6 +5,7 @@ import {
   heroActive,
   heroDismissInput,
   heroPosition,
+  heroReasonDetail,
   heroReducer,
   heroToastMessage,
   heroUndoInput,
@@ -220,6 +221,19 @@ test("dismissals map to state updates, inverse updates and toast copy", () => {
   assert.equal(heroToastMessage("snooze"), "下周再提醒你");
   assert.equal(heroToastMessage("mute"), "不再推荐");
   assert.equal(heroToastMessage("open"), null);
+});
+
+test("the hero reason keeps only what the meta line does not already say", () => {
+  assert.equal(heroReasonDetail("31 天前收藏，一次都没打开过"), null);
+  assert.equal(
+    heroReasonDetail("31 天前收藏，一次都没打开过；和你最近常收藏的「Agent」相关"),
+    "和你最近常收藏的「Agent」相关",
+  );
+  assert.equal(heroReasonDetail("12 天前收藏，一次都没打开过；推迟过 2 次，提醒已到期"), "推迟过 2 次，提醒已到期");
+  // 空分句与多余空白不产生“为什么推荐”
+  assert.equal(heroReasonDetail("5 天前收藏，一次都没打开过；  "), null);
+  assert.equal(heroReasonDetail("5 天前收藏；甲； ；乙"), "甲；乙");
+  assert.equal(heroReasonDetail(""), null);
 });
 
 /* ── 相对时间 ───────────────────────────────────────────── */

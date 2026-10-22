@@ -173,8 +173,8 @@
   --cover-article-bg: #16181b;
   --cover-article-text: var(--text);
   --cover-quote: var(--accent-mid);
-  --cover-tint-l: 0.23;
-  --cover-tint-c: 0.04;
+  --cover-tint-l: 0.215;
+  --cover-tint-c: 0.03;
   --cover-domain-l: 0.74;
   --cover-domain-c: 0.06;
   --cover-lang-l: 0.74;
@@ -231,8 +231,8 @@
     --cover-article-bg: #16181b;
     --cover-article-text: var(--text);
     --cover-quote: var(--accent-mid);
-    --cover-tint-l: 0.23;
-    --cover-tint-c: 0.04;
+    --cover-tint-l: 0.215;
+    --cover-tint-c: 0.03;
     --cover-domain-l: 0.74;
     --cover-domain-c: 0.06;
     --cover-lang-l: 0.74;

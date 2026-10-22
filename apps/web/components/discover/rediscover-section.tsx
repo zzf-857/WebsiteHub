@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, RefreshCw } from "lucide-react";
+import { ArrowUpRight, RefreshCw, Sparkles } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
@@ -21,6 +21,7 @@ import {
   heroActive,
   heroDismissInput,
   heroPosition,
+  heroReasonDetail,
   heroReducer,
   heroToastMessage,
   heroUndoInput,
@@ -30,11 +31,10 @@ import {
   type HeroEntry,
 } from "@/lib/discover-hero";
 import { fetchRediscover } from "@/lib/library-client";
-import { librarySiteCardSummary } from "@/lib/library-contract";
 import { subscribeSiteUpdated } from "@/lib/library-events";
 import { siteDetailHref } from "@/lib/quick-add";
 import { formatSavedDays } from "@/lib/relative-time";
-import { coverModel, resourceKindLabel, resourceTitle } from "@/lib/resource-cover";
+import { heroSummaryText, resourceKindLabel, resourceTitle } from "@/lib/resource-cover";
 
 // 发现页 A 区“今日重温”（方向稿 B 的主视觉）：左侧大封面，右侧理由与操作。
 // 主卡队列与撤销是 lib/discover-hero 的纯 reducer；这里负责取数、调接口与动效。
@@ -188,10 +188,9 @@ export function RediscoverSection() {
   const { index, total } = heroPosition(hero);
   const site = active.site;
   const title = resourceTitle(site);
-  const summary = librarySiteCardSummary(site);
-  // 要点与仓库封面已经把简介画在左侧大封面上，文字列不再重复
-  const coverType = coverModel(site, "hero").type;
-  const showSummary = summary && coverType !== "article" && coverType !== "repo" && !active.reason.includes(summary);
+  // 标题下写网站简介；“N 天前收藏”眉行已经写了，理由只展示其后的推荐依据
+  const summary = heroSummaryText(site);
+  const reasonDetail = heroReasonDetail(active.reason);
   const upNext = heroUpNext(hero);
   const swapIn = reducedMotion
     ? { initial: false as const, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, transition: { duration: 0 } }, transition: { duration: 0 } }
@@ -233,8 +232,13 @@ export function RediscoverSection() {
                 <span>从未打开</span>
               </p>
               <h3 className="discover-hero-title">{title}</h3>
-              <p className="discover-hero-reason">{active.reason}</p>
-              {showSummary && <p className="discover-hero-summary">{summary}</p>}
+              {summary && <p className="discover-hero-summary">{summary}</p>}
+              {reasonDetail && (
+                <p className="discover-hero-reason">
+                  <Sparkles aria-hidden="true" />
+                  <span>为什么推荐：{reasonDetail}</span>
+                </p>
+              )}
               {site.tags.length > 0 && (
                 <p className="discover-hero-tags" aria-label="标签">
                   {site.tags.slice(0, MAX_TAGS).map((tag) => (

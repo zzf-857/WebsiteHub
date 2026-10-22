@@ -92,6 +92,12 @@ test("the hero opens the original site synchronously and offers undo for reversi
   assert.match(hero, /heroUndoInput\(dismissal\)/u);
   assert.match(hero, /<AnimatePresence mode="wait" initial=\{false\}>/u);
   assert.match(hero, /收藏都看过了。新收藏满 3 天后，没打开过的会出现在这里。/u);
+  // 眉行已写“N 天前收藏 · 从未打开”：标题下放简介，理由只展示其后的推荐依据
+  assert.match(hero, /heroSummaryText\(site\)/u);
+  assert.match(hero, /heroReasonDetail\(active\.reason\)/u);
+  assert.match(hero, /<Sparkles aria-hidden="true" \/>/u);
+  assert.match(hero, /为什么推荐：\{reasonDetail\}/u);
+  assert.doesNotMatch(hero, /\{active\.reason\}/u);
 });
 
 test("resource cards keep quick actions outside the detail link", async () => {
@@ -108,6 +114,9 @@ test("resource cards keep quick actions outside the detail link", async () => {
   assert.match(cover, /loading=\{size === "hero" \? "eager" : "lazy"\}/u);
   assert.match(cover, /onError=\{\(\) => setFailedSrc\(model\.src\)\}/u);
   assert.match(cover, /"--site-hue": hue/u);
+  // 仓库封面顶行已有托管站点：没有语言 / 星数时底行不画，也不再用域名凑数
+  assert.match(cover, /if \(!model\.language && !model\.stars\) return null;/u);
+  assert.doesNotMatch(cover, /resource-cover-repo-host/u);
 });
 
 test("discover styles use tokens only, radii stay within 8px and motion can be reduced", async () => {
@@ -122,6 +131,10 @@ test("discover styles use tokens only, radii stay within 8px and motion can be r
   assert.match(styles, /@media \(hover: none\)/u);
   assert.match(styles, /oklch\(var\(--cover-tint-l\) var\(--cover-tint-c\) var\(--site-hue\)\)/u);
   assert.match(styles, /grid-template-rows: subgrid/u);
+  // 窄屏：类型标签在自己的容器里横向滑动、隐藏滚动条，不再出血到屏幕边缘撑出页面
+  assert.match(styles, /\.discover-kind-tabs \{[^}]*flex-wrap: nowrap;[^}]*overflow-x: auto;[^}]*scrollbar-width: none;/u);
+  assert.match(styles, /\.discover-kind-tabs::-webkit-scrollbar \{\s*display: none;/u);
+  assert.doesNotMatch(styles, /calc\(-1 \* var\(--page-gutter\)\)/u);
 
   for (const token of NEW_TOKENS) {
     const count = globals.split(`${token}:`).length - 1;

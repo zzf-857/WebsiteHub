@@ -217,6 +217,18 @@ export function cardOverlayText(site: CoverSite): string {
   return description && description !== cover.hook ? description : "";
 }
 
+/**
+ * 主卡文字列标题下的简介：摘要优先，退回详细介绍。
+ * 要点封面的钩子、仓库主卡封面的一句话介绍已经画在左侧，这时只在详细介绍另有内容时才写。
+ */
+export function heroSummaryText(site: CoverSite): string {
+  const cover = coverModel(site, "hero");
+  const drawn = cover.type === "article" ? cover.hook : cover.type === "repo" ? cover.blurb : null;
+  if (!drawn) return summaryText(site) ?? "";
+  const description = site.description?.trim() ?? "";
+  return description && description !== drawn ? description : "";
+}
+
 /* ── 卡片尺寸估算（瀑布流分列用） ───────────────────────────── */
 
 /** 图片封面的最小高度：保证悬停遮罩放得下摘要与操作行。 */

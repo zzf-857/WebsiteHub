@@ -140,3 +140,22 @@ export function heroToastMessage(dismissal: HeroDismissal): string | null {
   if (dismissal === "mute") return "不再推荐";
   return null;
 }
+
+/** 后端理由的分句符：第一句固定是“N 天前收藏，一次都没打开过”。 */
+const REASON_SEPARATOR = "；";
+
+/**
+ * 推荐理由里超出“收藏时长”的那部分（如“和你最近常收藏的「Agent」相关”“推迟过 2 次，提醒已到期”）。
+ * 第一句与眉行的“N 天前收藏 · 从未打开”重复，不再展示；没有额外分句时返回 null。
+ */
+export function heroReasonDetail(reason: string): string | null {
+  const index = reason.indexOf(REASON_SEPARATOR);
+  if (index < 0) return null;
+  const detail = reason
+    .slice(index + REASON_SEPARATOR.length)
+    .split(REASON_SEPARATOR)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(REASON_SEPARATOR);
+  return detail || null;
+}
