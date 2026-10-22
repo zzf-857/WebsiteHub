@@ -62,9 +62,13 @@ INSTRUCTIONS = (
     "for get_resource, update_resource and mark_resource. get_rediscover returns "
     "saved-but-never-opened items worth bringing back today, with a reason. Saving "
     "(save_resource) is cheap, deduplicated and reversible, so save useful links the "
-    "user shares or asks you to keep; summaries, categories and tags are filled in "
-    "automatically afterwards. Nothing can be deleted through this server. Texts are "
-    "stored in their original language (often Chinese); quote them as they are."
+    "user shares or asks you to keep; the summary and category (and any tags or "
+    "description you did not give) are filled in automatically afterwards. Search is "
+    "literal keyword matching where every keyword must match, so search with one to "
+    "three distinctive words and retry with fewer or translated keywords before "
+    "concluding something was never saved. Nothing can be deleted through this "
+    "server. Texts are stored in their original language (often Chinese); quote them "
+    "as they are."
 )
 
 _READ = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
@@ -147,7 +151,12 @@ def build_mcp_server(database: Database) -> FastMCP:
         description=(
             "Search the user's saved resources by keywords and/or filters. Use this first "
             "whenever the user refers to something they saved or asks for resources on a "
-            "topic. An empty query lists the most recently saved items. Returns "
+            "topic. Matching is literal, not semantic: every keyword must appear "
+            "(case-insensitive) in the title, URL, description, category or tags, so pass "
+            "one to three distinctive words such as a name, product or topic rather than a "
+            "sentence. If nothing matches, retry with fewer or different keywords, or their "
+            "Chinese/English equivalent (much of the library is in Chinese). An empty query "
+            "lists the most recently saved items. Returns "
             "{total, items: [{id, title, url, kind, summary, category, tags, saved_at, "
             "opened, starred}]}, best matches first; call get_resource for full details."
         ),
@@ -159,8 +168,8 @@ def build_mcp_server(database: Database) -> FastMCP:
             str,
             Field(
                 max_length=300,
-                description="Keywords matched against title, URL, summary, description, "
-                "category and tags. Leave empty to browse.",
+                description="Space-separated keywords; every one must appear in the "
+                "title, URL, description, category or tags. Leave empty to browse.",
             ),
         ] = "",
         kind: KindArgument = None,
@@ -257,7 +266,12 @@ def build_mcp_server(database: Database) -> FastMCP:
             Field(min_length=1, max_length=4096, description="Absolute http(s) URL."),
         ],
         title: Annotated[
-            str | None, Field(max_length=160, description="Optional display title.")
+            str | None,
+            Field(
+                max_length=1_000,
+                description="Optional display title; longer titles are shortened to "
+                "160 characters.",
+            ),
         ] = None,
         tags: TagNames = None,
         note: Annotated[

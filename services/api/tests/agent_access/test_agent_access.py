@@ -493,7 +493,8 @@ def test_tokens_are_confined_to_their_own_account(environment: Environment) -> N
     _use_cookie(client, intruder_cookie)
     intruder = _create_token(client, name="B agent")["token"]
 
-    assert _ok(client, intruder, "search_resources", {"query": "秘密"}) == {"total": 0, "items": []}
+    foreign_search = _ok(client, intruder, "search_resources", {"query": "秘密"})
+    assert foreign_search["total"] == 0 and foreign_search["items"] == []
     assert _ok(client, intruder, "search_resources")["total"] == 0
     for name, arguments in (
         ("get_resource", {"id": secret["id"]}),
@@ -781,6 +782,46 @@ def test_read_tools_and_activity_feed(environment: Environment) -> None:
     assert activity[0]["summary"] == "News：加星标"
     assert len(client.get("/api/agent-activity", params={"limit": 1}).json()["items"]) == 1
     assert client.get("/api/agent-activity", params={"limit": 0}).status_code == 422
+
+
+def test_search_guides_agents_past_all_keyword_misses(environment: Environment) -> None:
+    client = environment.client
+    _register(client, "keyword-searcher")
+    site = _site(client, "https://github.com/langchain-ai/langgraph", name="LangGraph")
+    token = _create_token(client)["token"]
+
+    # Keyword search requires every keyword. A sentence-like query from an
+    # LLM finds nothing, so the result must tell the Agent how to retry
+    # instead of reading as "nothing saved" and falling back to the web.
+    sentence = _ok(
+        client, token, "search_resources", {"query": "langgraph agent framework I saved"}
+    )
+    assert sentence["total"] == 0
+    assert "every keyword" in sentence["note"]
+    retried = _ok(client, token, "search_resources", {"query": "langgraph"})
+    assert [item["id"] for item in retried["items"]] == [site["id"]]
+    assert "note" not in retried
+    # Browsing an empty library is not a keyword miss.
+    browse = _ok(client, token, "search_resources", {"kind": "video"})
+    assert browse["total"] == 0 and "note" not in browse
+
+    listed = _rpc(client, token, "tools/list", {}).json()["result"]["tools"]
+    search = next(tool for tool in listed if tool["name"] == "search_resources")
+    assert "every keyword" in search["description"]
+    # The keyword index does not cover the short summary; do not promise it.
+    assert "summary," not in search["inputSchema"]["properties"]["query"]["description"]
+
+
+def test_save_resource_shortens_long_titles(environment: Environment) -> None:
+    client = environment.client
+    _register(client, "long-titles")
+    token = _create_token(client)["token"]
+
+    title = "很长的文章标题" * 40
+    saved = _ok(
+        client, token, "save_resource", {"url": "https://blog.example/long", "title": title}
+    )
+    assert saved["resource"]["title"] == title[:160]
 
 
 def test_resolve_token_ignores_malformed_values(tmp_path: Path) -> None:

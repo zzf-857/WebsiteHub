@@ -253,10 +253,20 @@ async def search_resources(
         kind=kind,
         state=state,
     )
-    return {
+    payload: dict[str, Any] = {
         "total": result.aggregate.matched_count,
         "items": [compact_resource(site) for site in result.items],
     }
+    if q and not result.items:
+        # Keyword search ANDs every keyword; a sentence-like query from an LLM
+        # misses items that are saved. Say how to retry so the Agent does not
+        # conclude "never saved" and fall back to the web.
+        payload["note"] = (
+            "No saved item contains every keyword. Retry with fewer or different "
+            "keywords (one distinctive name or topic works best, or its Chinese/English "
+            "equivalent) before concluding it was never saved."
+        )
+    return payload
 
 
 async def get_resource(
