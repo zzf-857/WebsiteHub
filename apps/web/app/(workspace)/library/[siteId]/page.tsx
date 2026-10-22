@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { SiteDetailPage } from "@/components/library/detail/site-detail-page";
 
-export const metadata: Metadata = { title: "网站详情 | WebHub" };
+export const metadata: Metadata = { title: "收藏详情 | WebHub" };
 
 type LibrarySitePageProps = {
   params: Promise<{ siteId: string }>;

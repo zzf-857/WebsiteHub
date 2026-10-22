@@ -498,6 +498,7 @@ async def list_site_selection(
     pinned: bool | None,
     kind: SiteKind | None = None,
     state: SiteStateFilter | None = None,
+    space_id: str | None = None,
 ) -> SiteSelectionResponse:
     """Freeze all current filter matches without loading full site cards.
 
@@ -510,12 +511,14 @@ async def list_site_selection(
         await _owned_category(session, user_id, category_id)
     if tag_id:
         await _owned_tag(session, user_id, tag_id)
+    if space_id:
+        await _owned_space(session, user_id, space_id)
     filters = _site_filters(
         user_id=user_id,
         q=q,
         category_id=category_id,
         tag_id=tag_id,
-        space_id=None,
+        space_id=space_id,
         pinned=pinned,
         kind=kind,
         state=state,

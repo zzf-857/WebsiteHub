@@ -6,6 +6,7 @@ const ROOT = new URL("../", import.meta.url);
 const TRANSITION = new URL("components/library-search-transition.tsx", ROOT);
 const WORKSPACE_LAYOUT = new URL("app/(workspace)/layout.tsx", ROOT);
 const SITE_HEADER = new URL("components/site-header.tsx", ROOT);
+const GLOBAL_SHORTCUTS = new URL("components/keyboard/global-shortcuts.tsx", ROOT);
 const LIBRARY_WORKSPACE = new URL("components/library/library-workspace.tsx", ROOT);
 const MOTION_STYLES = new URL("app/styles/motion.css", ROOT);
 
@@ -39,9 +40,10 @@ test("library search navigation is coordinated by a persistent shared-element pr
 });
 
 test("the header and library toolbar hand off one layout id without duplicate library entry", async () => {
-  const [header, library] = await Promise.all([
+  const [header, library, shortcuts] = await Promise.all([
     readFile(SITE_HEADER, "utf8"),
     readFile(LIBRARY_WORKSPACE, "utf8"),
+    readFile(GLOBAL_SHORTCUTS, "utf8"),
   ]);
 
   assert.match(header, /isLibrarySection \? null : \(/u);
@@ -50,7 +52,9 @@ test("the header and library toolbar hand off one layout id without duplicate li
   assert.match(header, /layoutId=\{searchTransitionActive \? LIBRARY_SEARCH_LAYOUT_ID : undefined\}/u);
   assert.match(header, /animate: trigger === "pointer"/u);
   assert.match(header, /event\.detail === 0 \? "keyboard" : "pointer"/u);
-  assert.match(header, /openSearch\("keyboard"\)/u);
+  // ⌘K 与 “/” 归全站快捷键分发器：键盘唤起不播放长距离转场，直接聚焦搜索框（Q46）
+  assert.doesNotMatch(header, /addEventListener\("keydown", handleKeydown\)/u);
+  assert.match(shortcuts, /startSearch\(\{ animate: false, trigger: "keyboard" \}\)/u);
   assert.doesNotMatch(header, /router\.push\("\/library\?focus=search"\)/u);
 
   assert.match(library, /<motion\.label/u);

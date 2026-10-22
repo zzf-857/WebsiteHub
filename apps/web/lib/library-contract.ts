@@ -145,6 +145,10 @@ export type LibrarySite = {
   resurfaceMuted: boolean;
   /** Per-kind metadata, e.g. a repository's host / owner / repo. */
   meta: LibrarySiteMeta;
+  /** How many times the site was snoozed (an undo clears the due time, not the count). */
+  resurfaceCount: number;
+  /** When a snooze ends; `null` when the site is not snoozed. */
+  resurfaceDueAt: string | null;
 };
 
 export type LibrarySiteMeta = Readonly<Record<string, unknown>>;
@@ -352,6 +356,8 @@ export type LibrarySiteQuery = {
   q?: string;
   categoryId?: string;
   tagId?: string;
+  /** Only sites that are members of this Space. */
+  spaceId?: string;
   pinned?: boolean;
   kind?: LibrarySiteKind;
   state?: LibrarySiteState;
@@ -513,6 +519,8 @@ type LibrarySiteCollectionFields = Pick<
   | "starredAt"
   | "resurfaceMuted"
   | "meta"
+  | "resurfaceCount"
+  | "resurfaceDueAt"
 >;
 
 /**
@@ -552,6 +560,12 @@ function normalizeSiteCollectionFields(
       ? boolean(candidate.resurface_muted, `${path}.resurface_muted`)
       : false,
     meta: present("meta") ? siteMetaAt(candidate.meta, `${path}.meta`) : Object.freeze({}),
+    resurfaceCount: present("resurface_count")
+      ? count(candidate.resurface_count, `${path}.resurface_count`)
+      : 0,
+    resurfaceDueAt: present("resurface_due_at")
+      ? nullableIsoDateAt(candidate.resurface_due_at, `${path}.resurface_due_at`)
+      : null,
   };
 }
 

@@ -105,6 +105,8 @@ async def _site_response(
         starred_at=site.starred_at,
         resurface_muted=site.resurface_muted,
         meta=_site_meta(site.meta_json),
+        resurface_count=site.resurface_count,
+        resurface_due_at=site.resurface_due_at,
     )
 
 

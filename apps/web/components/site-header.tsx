@@ -5,6 +5,7 @@ import {
   Compass,
   Database,
   FileUp,
+  Keyboard,
   LogOut,
   MessagesSquare,
   Monitor,
@@ -20,6 +21,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 
 import { useAuth } from "@/components/auth/auth-context";
 import { QuickAddButton } from "@/components/discover/quick-add";
+import { openShortcutHelp } from "@/components/keyboard/global-shortcuts";
 import {
   LIBRARY_SEARCH_LAYOUT_ID,
   LIBRARY_SEARCH_LAYOUT_TRANSITION,
@@ -57,14 +59,6 @@ function isNavActive(pathname: string, sections: readonly string[]): boolean {
   return sections.some((section) =>
     section === "/" ? pathname === "/" : pathname === section || pathname.startsWith(`${section}/`),
   );
-}
-
-/* 判断当前按键事件是否发生在输入场景（输入框 / 文本域 / 可编辑区域）。
-   此时不抢占 ⌘K/Ctrl+K，避免破坏浏览器或页面内已有的输入快捷键。 */
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
 }
 
 /* 键帽文案：服务端一律渲染设计稿的 ⌘K，客户端水合后按平台修正为 Ctrl K。
@@ -128,18 +122,7 @@ export function SiteHeader() {
     });
   }, [startSearchTransition]);
 
-  /* 全局 ⌘K/Ctrl+K 唤起搜索；输入场景不抢占，卸载时清理监听。 */
-  useEffect(() => {
-    const handleKeydown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
-      if (isTypingTarget(event.target)) return;
-      event.preventDefault();
-      openSearch("keyboard");
-    };
-
-    window.addEventListener("keydown", handleKeydown);
-    return () => window.removeEventListener("keydown", handleKeydown);
-  }, [openSearch]);
+  /* ⌘K / Ctrl+K 与 “/” 由全站快捷键分发器（components/keyboard/global-shortcuts）统一处理。 */
 
   /* 路由变化时收起账号浮层，避免跳转后浮层残留。 */
   useEffect(() => {
@@ -307,6 +290,18 @@ export function SiteHeader() {
               {themeError}
             </p>
           )}
+          <button
+            className="header-account-item"
+            type="button"
+            onClick={() => {
+              accountRef.current?.removeAttribute("open");
+              openShortcutHelp();
+            }}
+          >
+            <Keyboard aria-hidden="true" />
+            <span>键盘快捷键</span>
+            <kbd className="header-account-kbd" aria-hidden="true">?</kbd>
+          </button>
           <div className="header-account-divider" aria-hidden="true" />
           <button
             className="header-account-item"

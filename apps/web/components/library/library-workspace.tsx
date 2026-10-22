@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
+  Box,
   FolderCog,
   FolderTree,
   LayoutGrid,
@@ -53,9 +54,25 @@ import {
 import { SiteSimilarityReview } from "@/components/library/site-similarity-review";
 import { ThemedSelect } from "@/components/ui/themed-select";
 import { MAX_LIBRARY_BULK_DELETE_SITES } from "@/lib/library-contract";
-import type { LibrarySort } from "@/lib/library-contract";
+import type { LibrarySiteKind, LibrarySiteState, LibrarySort } from "@/lib/library-contract";
 
 type LibraryLayoutMode = "centered" | "full";
+
+// 管理模式的筛选（Q46）：类型与阅读状态用分段按钮，计数来自收藏概览（全库口径）
+const KIND_FILTERS: ReadonlyArray<{ value: LibrarySiteKind | ""; label: string }> = [
+  { value: "", label: "全部" },
+  { value: "repo", label: "仓库" },
+  { value: "article", label: "帖子与文章" },
+  { value: "website", label: "工具与网站" },
+  { value: "video", label: "视频" },
+];
+
+const STATE_FILTERS: ReadonlyArray<{ value: LibrarySiteState | ""; label: string }> = [
+  { value: "", label: "全部" },
+  { value: "unopened", label: "未打开" },
+  { value: "opened", label: "已打开" },
+  { value: "starred", label: "星标" },
+];
 
 export function LibraryWorkspace() {
   const [layoutMode, setLayoutMode] = useState<LibraryLayoutMode>("centered");
@@ -95,6 +112,7 @@ export function LibraryWorkspace() {
     handleUpdate,
     hasActiveFilters,
     hasSites,
+    kind,
     loadMore,
     loadTaxonomies,
     loadedSiteCount,
@@ -102,6 +120,7 @@ export function LibraryWorkspace() {
     mutationError,
     notice,
     openDialog,
+    overview,
     pinnedOnly,
     pinnedPage,
     refreshSites,
@@ -113,15 +132,21 @@ export function LibraryWorkspace() {
     selectionMode,
     setCategoryId,
     setDirection,
+    setKind,
     setNotice,
     setPinnedOnly,
     setSearchInput,
     setSelectionMode,
+    setSiteState,
+    setSpaceId,
     setTagId,
     setViewMode,
+    siteState,
     sitesError,
     sitesLoading,
     sort,
+    spaceId,
+    spaces,
     tagId,
     tags,
     taxonomyError,
@@ -221,7 +246,7 @@ export function LibraryWorkspace() {
             ) : (
               <WandSparkles aria-hidden="true" />
             )}
-            {analysisBackfillBusy ? "正在启动" : "补全网站信息"}
+            {analysisBackfillBusy ? "正在启动" : "批量补全信息"}
           </button>
           <button
             className="library-button secondary"
@@ -230,7 +255,7 @@ export function LibraryWorkspace() {
             disabled={totalLibrarySites === 0}
           >
             <ScanSearch aria-hidden="true" />
-            排查相似网站
+            排查相似收藏
           </button>
           <button
             className="library-button secondary"
@@ -242,7 +267,7 @@ export function LibraryWorkspace() {
           </button>
           <button className="library-button primary" type="button" onClick={() => openDialog({ kind: "create" })}>
             <Plus aria-hidden="true" />
-            新增网站
+            新增收藏
           </button>
         </div>
       </header>
@@ -274,7 +299,7 @@ export function LibraryWorkspace() {
                 setCategoryId("");
               }}
             >
-              <span><LayoutGrid aria-hidden="true" />全部网站</span>
+              <span><LayoutGrid aria-hidden="true" />全部收藏</span>
               <small>{totalLibrarySites}</small>
             </button>
             <button
@@ -286,7 +311,7 @@ export function LibraryWorkspace() {
                 setPinnedOnly(true);
               }}
             >
-              <span><Pin aria-hidden="true" />置顶网站</span>
+              <span><Pin aria-hidden="true" />置顶收藏</span>
               <small>{pinnedPage.matchedCount}</small>
             </button>
           </section>
@@ -335,12 +360,12 @@ export function LibraryWorkspace() {
               }}
             >
               <Search aria-hidden="true" />
-              <span className="sr-only">搜索网址库</span>
+              <span className="sr-only">搜索收藏库</span>
               <input
                 ref={searchInputRef}
                 data-library-search-input
                 type="search"
-                placeholder="搜索名称、网址或描述"
+                placeholder="搜索名称、网址或描述（/）"
                 value={searchInput}
                 onChange={(event) => {
                   const nextSearchInput = event.target.value;
@@ -379,8 +404,9 @@ export function LibraryWorkspace() {
                 className="library-toolbar-select"
                 options={[
                   { value: "updated", label: "最近更新" },
-                  { value: "created", label: "创建时间" },
-                  { value: "name", label: "网站名称" },
+                  { value: "created", label: "最近收藏" },
+                  { value: "opened", label: "最近打开" },
+                  { value: "name", label: "名称" },
                   { value: "custom", label: "自定义顺序" },
                   {
                     value: "relevance",
@@ -411,6 +437,7 @@ export function LibraryWorkspace() {
                 className="icon-button"
                 type="button"
                 data-active={viewMode === "grid" || undefined}
+                aria-pressed={viewMode === "grid"}
                 onClick={() => setViewMode("grid")}
                 aria-label="网格视图"
                 title="网格视图"
@@ -421,6 +448,7 @@ export function LibraryWorkspace() {
                 className="icon-button"
                 type="button"
                 data-active={viewMode === "list" || undefined}
+                aria-pressed={viewMode === "list"}
                 onClick={() => setViewMode("list")}
                 aria-label="列表视图"
                 title="列表视图"
@@ -430,8 +458,81 @@ export function LibraryWorkspace() {
             </div>
           </div>
 
+          <div className="library-filter-bar">
+            <div className="library-kind-filter" role="group" aria-label="按类型筛选">
+              {KIND_FILTERS.map((filter) => {
+                const count = overview
+                  ? filter.value ? overview.byKind[filter.value] : overview.total
+                  : null;
+                return (
+                  <button
+                    key={filter.label}
+                    className="library-filter-chip"
+                    type="button"
+                    aria-pressed={kind === filter.value}
+                    onClick={() => {
+                      clearSelection();
+                      setKind(filter.value);
+                    }}
+                  >
+                    {filter.label}
+                    {count !== null && <small>{count}</small>}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="library-state-filter" role="group" aria-label="按阅读状态筛选">
+              {STATE_FILTERS.map((filter) => {
+                const count = !overview
+                  ? null
+                  : filter.value === "unopened"
+                    ? overview.unopened
+                    : filter.value === "starred"
+                      ? overview.starred
+                      : null;
+                return (
+                  <button
+                    key={filter.label}
+                    className="library-segment"
+                    type="button"
+                    aria-pressed={siteState === filter.value}
+                    onClick={() => {
+                      clearSelection();
+                      setSiteState(filter.value);
+                    }}
+                  >
+                    {filter.label}
+                    {count !== null && <small>{count}</small>}
+                  </button>
+                );
+              })}
+            </div>
+            {spaces.length > 0 && (
+              <div className="library-filter-select">
+                <Box aria-hidden="true" />
+                <ThemedSelect<string>
+                  ariaLabel="按 Space 筛选"
+                  className="library-toolbar-select"
+                  options={[
+                    { value: "", label: "全部 Space" },
+                    ...spaces.map((space) => ({
+                      value: space.id,
+                      label: `${space.name} (${space.memberCount})`,
+                    })),
+                  ]}
+                  variant="toolbar"
+                  value={spaceId}
+                  onValueChange={(nextSpaceId) => {
+                    clearSelection();
+                    setSpaceId(nextSpaceId);
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
           <div className="library-results-heading" aria-live="polite">
-            <span>{sitesLoading ? "正在读取网址库" : `共 ${totalMatched} 个结果`}</span>
+            <span>{sitesLoading ? "正在读取收藏库" : `共 ${totalMatched} 个结果`}</span>
             <div className="library-results-actions">
               {hasActiveFilters && (
                 <button
@@ -537,8 +638,8 @@ export function LibraryWorkspace() {
           ) : !hasSites && !sitesError ? (
             <section className="library-empty-state">
               <span className="library-empty-icon" aria-hidden="true"><Search /></span>
-              <h2>{hasActiveFilters ? "没有匹配的网站" : "网址库还是空的"}</h2>
-              <p>{hasActiveFilters ? "调整关键词或筛选条件后再试。" : "新增第一个网站，开始建立个人网站知识库。"}</p>
+              <h2>{hasActiveFilters ? "没有匹配的收藏" : "收藏库还是空的"}</h2>
+              <p>{hasActiveFilters ? "调整关键词或筛选条件后再试。" : "新增第一条收藏，或者从浏览器导入书签。"}</p>
               {hasActiveFilters ? (
                 <button
                   className="library-button secondary"
@@ -549,7 +650,7 @@ export function LibraryWorkspace() {
                 </button>
               ) : (
                 <button className="library-button primary" type="button" onClick={() => openDialog({ kind: "create" })}>
-                  <Plus aria-hidden="true" />新增网站
+                  <Plus aria-hidden="true" />新增收藏
                 </button>
               )}
             </section>
@@ -560,7 +661,7 @@ export function LibraryWorkspace() {
                   <div className="library-section-heading">
                     <div>
                       <Pin aria-hidden="true" />
-                      <h2>置顶网站</h2>
+                      <h2>置顶收藏</h2>
                     </div>
                     <span>{pinnedPage.matchedCount} 个</span>
                   </div>
@@ -580,7 +681,7 @@ export function LibraryWorkspace() {
                   <div className="library-section-heading">
                     <div>
                       <LayoutGrid aria-hidden="true" />
-                      <h2>{pinnedPage.matchedCount > 0 ? "其他网站" : "全部网站"}</h2>
+                      <h2>{pinnedPage.matchedCount > 0 ? "其他收藏" : "全部收藏"}</h2>
                     </div>
                     <span>{regularPage.matchedCount} 个</span>
                   </div>

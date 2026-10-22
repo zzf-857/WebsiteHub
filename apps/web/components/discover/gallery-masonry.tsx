@@ -31,6 +31,7 @@ type GalleryMasonryProps = {
   onOpen: (site: LibrarySite) => void;
   onToggleStar: (site: LibrarySite) => void;
   onMarkSeen: (site: LibrarySite) => void;
+  onSnooze: (site: LibrarySite) => void;
 };
 
 function columnWidth(grid: Grid): number {
@@ -96,9 +97,11 @@ export function GalleryMasonry({
   onOpen,
   onToggleStar,
   onMarkSeen,
+  onSnooze,
   grid,
 }: Readonly<GalleryMasonryProps & { grid: Grid }>) {
   const byId = useMemo(() => new Map(items.map((site) => [site.id, site])), [items]);
+  const orderById = useMemo(() => new Map(items.map((site, index) => [site.id, index])), [items]);
   const layout = useMemo(() => {
     const width = columnWidth(grid);
     return layoutMasonry(
@@ -120,9 +123,12 @@ export function GalleryMasonry({
                 <ResourceCard
                   site={site}
                   now={now}
+                  // 瀑布流 DOM 按列排，j / k 要按收藏顺序走（Q46）
+                  shortcutOrder={orderById.get(id) ?? 0}
                   onOpen={onOpen}
                   onToggleStar={onToggleStar}
                   onMarkSeen={onMarkSeen}
+                  onSnooze={onSnooze}
                 />
               </GalleryItem>
             );

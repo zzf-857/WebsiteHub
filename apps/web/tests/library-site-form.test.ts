@@ -34,6 +34,8 @@ const site: LibrarySite = {
   starredAt: null,
   resurfaceMuted: false,
   meta: {},
+  resurfaceCount: 0,
+  resurfaceDueAt: null,
 };
 
 const values: LibrarySiteFormValues = {

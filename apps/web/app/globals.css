@@ -13,6 +13,8 @@
 @import "./styles/library-similarity.css";
 @import "./styles/motion.css";
 @import "./styles/discover.css";
+@import "./styles/keyboard.css";
+@import "./styles/library-manage.css";
 
 /* 设计令牌取自设计稿 1f 规范板
    （Arts/handoff/untitled/project/WebHub 效果图.dc.html）。

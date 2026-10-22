@@ -70,12 +70,14 @@ test("metadata backfill refreshes the visible library for a bounded period", asy
   assert.match(source, /const result = await startMetadataBackfill\(\)[\s\S]*?refreshSites\(\)/);
 });
 
-test("site detail renders a compact, dismissible preview only when previewUrl exists", async () => {
+test("site detail leads with the shared cover; the zoom lightbox exists only for a safe preview", async () => {
   const source = await readFile(SITE_DETAIL, "utf8");
+  // Q46：顶部大封面复用发现页的 ResourceCover；预览图只在安全地址时提供放大层
+  assert.match(source, /<ResourceCover site=\{site\} size="hero" \/>/);
+  assert.match(source, /isSafePreviewUrl\(readySite\.previewUrl\)/);
   assert.match(source, /previewUrl && previewUrl !== failedPreviewUrl/);
   assert.match(source, /previewAvailable && previewUrl/);
-  assert.match(source, /className="sd-preview-row"/);
-  assert.match(source, /className="sd-preview-trigger"/);
+  assert.match(source, /className="sd-cover-zoom"/);
   assert.match(source, /className="sd-preview-overlay"/);
   assert.match(source, /aria-modal="true"/);
   assert.match(source, /event\.key === "Escape"/);

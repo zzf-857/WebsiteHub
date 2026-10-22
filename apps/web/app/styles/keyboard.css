@@ -1,0 +1,72 @@
+/* keyboard：全站快捷键帮助浮层（Q46）。只使用 globals.css 中定义的设计令牌。 */
+
+.shortcut-help {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 20px 32px;
+}
+
+.shortcut-help-group h3 {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shortcut-help-group dl {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.shortcut-help-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.shortcut-help-row:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-help-row dt {
+  display: flex;
+  gap: 4px;
+}
+
+.shortcut-help-row dd {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.shortcut-help kbd,
+.header-account-kbd {
+  display: inline-grid;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.header-account-kbd {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+/* j / k 把焦点移到某一项时，避开吸顶的顶栏 */
+[data-shortcut-item] {
+  scroll-margin-top: calc(var(--header-height) + 24px);
+  scroll-margin-bottom: 24px;
+}

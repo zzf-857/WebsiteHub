@@ -76,6 +76,8 @@ test("normalizes strict site and paginated list contracts", () => {
     starredAt: null,
     resurfaceMuted: false,
     meta: {},
+    resurfaceCount: 0,
+    resurfaceDueAt: null,
   });
 
   const page = normalizeLibrarySitePage({
