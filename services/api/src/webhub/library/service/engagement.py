@@ -17,7 +17,7 @@ Two rules hold for everything in this module:
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from sqlalchemy import ColumnElement, and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -161,23 +161,31 @@ def rediscover_pivot(user_id: str, day: date, shuffle: int) -> str:
     return digest[:8]
 
 
-def _rediscover_conditions(user_id: str, now: datetime) -> list[ColumnElement[bool]]:
+def _rediscover_conditions(
+    user_id: str,
+    now: datetime,
+    day_start: datetime,
+) -> list[ColumnElement[bool]]:
     return [
         Site.user_id == user_id,
         _never_opened(),
         Site.seen_at.is_(None),
         Site.resurface_muted.is_(False),
+        # A snooze is an explicit timestamp the user scheduled ("已到").
         or_(Site.resurface_due_at.is_(None), Site.resurface_due_at <= now),
-        Site.created_at <= now - REDISCOVER_MIN_AGE,
+        # The age rule moves per UTC day, not with the clock: a save turning
+        # three days old at noon joins tomorrow's picks instead of reshuffling
+        # today's. Anchored at day start it is "满 3 天" at any time of day.
+        Site.created_at <= day_start - REDISCOVER_MIN_AGE,
     ]
 
 
 async def _interest_tags(
     session: AsyncSession,
     user_id: str,
-    now: datetime,
+    day_start: datetime,
 ) -> list[tuple[str, str]]:
-    """The account's most used tags among saves of the last 30 days."""
+    """The account's most used tags among saves of the last 30 UTC days."""
 
     uses = func.count(SiteTag.site_id)
     rows = (
@@ -185,7 +193,7 @@ async def _interest_tags(
             select(Tag.id, Tag.name)
             .join(SiteTag, and_(SiteTag.user_id == Tag.user_id, SiteTag.tag_id == Tag.id))
             .join(Site, and_(Site.user_id == SiteTag.user_id, Site.id == SiteTag.site_id))
-            .where(Tag.user_id == user_id, Site.created_at >= now - INTEREST_WINDOW)
+            .where(Tag.user_id == user_id, Site.created_at >= day_start - INTEREST_WINDOW)
             .group_by(Tag.id, Tag.name, Tag.normalized_name)
             .having(uses >= INTEREST_TAG_MIN_SITES)
             .order_by(uses.desc(), Tag.normalized_name, Tag.id)
@@ -305,13 +313,16 @@ async def rediscover(
     recent interest tags first, then the deterministic daily rotation.
     """
 
-    current = now or utc_now()
-    today = _as_utc(current).date()
+    current = _as_utc(now or utc_now())
+    today = current.date()
+    # Everything except snooze expiry is derived from the UTC day, so the
+    # same (account, day, shuffle) gives the same picks and reasons all day.
+    day_start = datetime.combine(today, time.min, tzinfo=UTC)
     bounded_limit = max(1, min(limit, MAX_REDISCOVER_LIMIT))
-    conditions = _rediscover_conditions(user_id, current)
+    conditions = _rediscover_conditions(user_id, current, day_start)
     pivot = rediscover_pivot(user_id, today, shuffle)
 
-    interest = await _interest_tags(session, user_id, current)
+    interest = await _interest_tags(session, user_id, day_start)
     interest_rank = {tag_id: rank for rank, (tag_id, _) in enumerate(interest)}
     picked: list[Site] = []
     if interest_rank:
@@ -353,7 +364,8 @@ async def rediscover(
             (tag for tag in response.tags if tag.id in interest_rank),
             key=lambda tag: interest_rank[tag.id],
         )
-        saved_days = max(0, (_as_utc(current) - _as_utc(site.created_at)).days)
+        # Calendar days, like the age rule: the reason text is stable all day.
+        saved_days = max(0, (today - _as_utc(site.created_at).date()).days)
         items.append(
             RediscoverItemResponse(
                 site=response,

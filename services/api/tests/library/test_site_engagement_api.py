@@ -711,6 +711,60 @@ def test_rediscover_rotation_is_stable_per_utc_day_and_shuffle(
         asyncio.run(database.dispose())
 
 
+def test_rediscover_thresholds_move_per_utc_day_not_mid_day(environment: Environment) -> None:
+    # Regression: the 3-day age rule, the 30-day interest window and
+    # ``saved_days`` used to follow the clock, so a save crossing a boundary
+    # at noon reshuffled (and reworded) the picks within one UTC day.
+    client = environment.client
+    user_id, _ = _register(client, "alice")
+    path = environment.database_path
+    day = datetime(2026, 10, 21, tzinfo=UTC)
+    noon = timedelta(hours=12)
+    agent, rag = _tag(client, "Agent"), _tag(client, "RAG")
+
+    def saved(url: str, created_at: datetime, tags: list[str]) -> str:
+        site_id = str(_site(client, url, tag_ids=tags)["id"])
+        _set(path, site_id, created_at=_stamp(created_at))
+        return site_id
+
+    for index in range(2):
+        saved(f"https://fresh-{index}.example/", day - timedelta(days=1), [agent])
+    # Turns three days old at noon today and carries a current interest.
+    crossing = saved("https://crossing.example/", day - timedelta(days=3) + noon, [agent])
+    # Leave the 30-day interest window at noon today.
+    fading = [
+        saved(f"https://fading-{index}.example/", day - timedelta(days=30) + noon, [rag])
+        for index in range(2)
+    ]
+    old = saved("https://old.example/", day - timedelta(days=9) + noon, [])
+    database = Database(environment.database_url)
+
+    async def picks(at: datetime) -> list[tuple[str, int, str]]:
+        async with database.sessions() as session:
+            result = await service.rediscover(session, user_id, limit=12, shuffle=0, now=at)
+        return [(item.site.id, item.saved_days, item.reason) for item in result.items]
+
+    async def scenario() -> None:
+        morning = await picks(day + timedelta(hours=1))
+        assert await picks(day + timedelta(hours=23, minutes=59)) == morning
+        by_id = {site_id: (days, reason) for site_id, days, reason in morning}
+        assert set(by_id) == {*fading, old}
+        assert by_id[old] == (9, "9 天前收藏，一次都没打开过")
+        for site_id in fading:
+            assert by_id[site_id] == (
+                30,
+                "30 天前收藏，一次都没打开过；和你最近常收藏的「RAG」相关",
+            )
+        # The crossing save joins the next day's picks, led by its interest tag.
+        tomorrow = await picks(day + timedelta(days=1, hours=1))
+        assert tomorrow[0][0] == crossing
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(database.dispose())
+
+
 def test_rediscover_ranks_by_interest_overlap_count_and_cards_keep_their_tags(
     environment: Environment,
 ) -> None:
