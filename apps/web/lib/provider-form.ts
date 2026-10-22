@@ -54,16 +54,28 @@ export const PROVIDER_KIND_SECTIONS: readonly ProviderKindSection[] = [
     title: "向量服务",
     description: "网址库语义检索使用的向量模型。启用后可在“语义索引”页面补齐向量并增强相关度排序。",
   },
+  {
+    kind: "code_host",
+    title: "代码托管",
+    description:
+      "可选。分析 GitHub 仓库时读取星数、语言与 README。不配置时匿名访问（每小时约 60 次），配置个人令牌后按你的账号额度。",
+  },
 ];
 
 const KIND_LABELS: Record<ProviderKind, string> = {
   model: "模型服务",
   search: "搜索服务",
   embedding: "向量服务",
+  code_host: "代码托管",
 };
 
 export function providerKindLabel(kind: ProviderKind): string {
   return KIND_LABELS[kind];
+}
+
+/** 只有模型与向量服务需要模型名称；搜索与代码托管没有这一项。 */
+export function providerKindUsesModelName(kind: ProviderKind): boolean {
+  return kind === "model" || kind === "embedding";
 }
 
 const MAX_DISPLAY_NAME_LENGTH = 80;
@@ -205,8 +217,8 @@ export function validateProviderDraft({
   }
 
   const modelName = draft.modelName.trim();
-  if (kind === "search") {
-    if (modelName && !testing) errors.modelName = "搜索服务不需要填写模型名称";
+  if (!providerKindUsesModelName(kind)) {
+    if (modelName && !testing) errors.modelName = `${KIND_LABELS[kind]}不需要填写模型名称`;
   } else if (Array.from(modelName).length > MAX_MODEL_NAME_LENGTH) {
     errors.modelName = `模型名称不能超过 ${MAX_MODEL_NAME_LENGTH} 个字符`;
   } else if (!modelName && draft.enabled && !testing) {

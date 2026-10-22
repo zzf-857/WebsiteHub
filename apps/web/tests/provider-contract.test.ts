@@ -226,3 +226,54 @@ test("失败的连接测试仍是一个合法响应，status 为 failed", () => 
   assert.equal(result.code, "provider_auth_failed");
   assert.deepEqual(result.models, []);
 });
+
+test("Q45：注册表与配置接受代码托管（GitHub 令牌）类型", () => {
+  const [github] = normalizeProviderRegistry({
+    items: [
+      {
+        provider: "github",
+        label: "GitHub",
+        kinds: ["code_host"],
+        secret_required: true,
+        base_url_required: false,
+        allows_private_base_url: false,
+        application_url: "https://github.com/settings/personal-access-tokens",
+        connection_test_supported: true,
+        search_bulk_supported: true,
+        usage_notice: "可选。",
+        fixed_base_url: true,
+        default_base_url: "https://api.github.com",
+      },
+    ],
+  });
+  assert.deepEqual(github.kinds, ["code_host"]);
+  assert.equal(github.fixedBaseUrl, true);
+
+  const config = normalizeProviderConfig({
+    id: "cfg-gh",
+    kind: "code_host",
+    provider: "github",
+    display_name: "GitHub",
+    base_url: null,
+    model_name: null,
+    enabled: true,
+    has_secret: true,
+    secret_mask: SECRET_MASK,
+    version: 1,
+    created_at: "2026-10-22T08:00:00Z",
+    updated_at: "2026-10-22T08:00:00Z",
+  });
+  assert.equal(config.kind, "code_host");
+  assert.equal(config.secretMask, SECRET_MASK);
+  assert.equal(
+    normalizeProviderConnectionTest({
+      status: "ok",
+      code: "connection_test_ok",
+      message: "连接成功，令牌有效。",
+      kind: "code_host",
+      provider: "github",
+      models: [],
+    }).kind,
+    "code_host",
+  );
+});

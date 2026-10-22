@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Cpu, Plus, RefreshCw, Search, Waypoints, X } from "lucide-react";
+import { AlertTriangle, Cpu, FolderGit2, Plus, RefreshCw, Search, Waypoints, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 
@@ -48,6 +48,7 @@ const KIND_ICONS: Record<ProviderKind, ComponentType<{ "aria-hidden"?: boolean }
   model: Cpu,
   search: Search,
   embedding: Waypoints,
+  code_host: FolderGit2,
 };
 
 function isAbortError(error: unknown): boolean {

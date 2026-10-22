@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.agent.access import DatabaseConversationAccess
 from webhub.agent.langgraph_runner import build_agent_runner
+from webhub.agent.provider_binding import resolve_github_credential
 from webhub.agent.site_enrichment import AgentSiteEnricher
 from webhub.agent.turns import close_expired_turns
 from webhub.agent_access.mcp_server import install_mcp
@@ -12,6 +14,7 @@ from webhub.bookmarks.admission import BookmarkUploadAdmissionManager
 from webhub.config import Settings, get_settings
 from webhub.db.database import Database
 from webhub.ingestion import worker as ingestion_worker
+from webhub.ingestion.github import GitHubCredential, GitHubRepositoryEnricher
 from webhub.routes import router
 
 
@@ -30,9 +33,20 @@ def create_app(
         # Recovery is bounded so stale history cannot delay service startup
         # indefinitely. Account-scoped request entry continues cleanup later.
         await close_expired_turns(selected_database, limit=500)
+        async def github_credential(
+            session: AsyncSession,
+            user_id: str,
+        ) -> GitHubCredential | None:
+            return await resolve_github_credential(
+                session,
+                selected_settings,
+                user_id=user_id,
+            )
+
         ingestion_worker.start(
             selected_database,
             site_enricher=AgentSiteEnricher(selected_database, selected_settings),
+            repository_enricher=GitHubRepositoryEnricher(credentials=github_credential),
         )
         # The homepage batch task is durable rather than an in-memory queue.
         # Resume its active leases before serving requests so a browser tab is

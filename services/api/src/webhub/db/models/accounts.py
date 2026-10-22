@@ -91,7 +91,9 @@ class ProviderConfig(Base):
     __tablename__ = "provider_configs"
     __table_args__ = (
         UniqueConstraint("user_id", "kind", "display_name", name="provider_name_per_user_kind"),
-        CheckConstraint("kind IN ('model', 'search', 'embedding')", name="valid_kind"),
+        CheckConstraint(
+            "kind IN ('model', 'search', 'embedding', 'code_host')", name="valid_kind"
+        ),
         Index(
             "uq_provider_configs_enabled_per_user_kind",
             "user_id",

@@ -161,3 +161,21 @@ def test_provider_failure_policy_separates_temporary_unavailable_and_internal() 
         internal.provider_failure,
         internal.failure_reason,
     ) == (True, False, "internal_error")
+
+
+def test_repository_evidence_reaches_the_model_payload_only_when_present() -> None:
+    import json
+    from dataclasses import replace
+
+    request = replace(_request(), page_text="", meta_description="")
+    plain = json.loads(site_enrichment._page_payload(request, request.categories, ()))
+    assert "repository" not in plain["page_evidence"]
+    # A repository page without readable copy would otherwise need web search.
+    assert request.has_substantial_page_evidence is False
+
+    evidence = "GitHub 仓库：o/r\n仓库简介：A fast tool\nREADME 摘录：\n" + "Usage notes. " * 8
+    enriched = replace(request, repository_evidence=evidence)
+    payload = json.loads(site_enrichment._page_payload(enriched, enriched.categories, ()))
+    assert payload["page_evidence"]["repository"] == evidence
+    assert enriched.has_substantial_page_evidence is True
+    assert "repository" in site_enrichment._SYSTEM_PROMPT

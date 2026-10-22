@@ -12,6 +12,7 @@ from webhub.db.models import ProviderConfig, new_id, utc_now
 from webhub.providers.connectivity import (
     ProviderProbeError,
     probe_base_url,
+    probe_code_host,
     probe_models,
     probe_search,
 )
@@ -145,6 +146,8 @@ def _prepare(
     normalized_model_name = _model_name(model_name)
     if kind == "search" and normalized_model_name is not None:
         raise ProviderValidationError("搜索 Provider 不能设置模型名称")
+    if kind == "code_host" and normalized_model_name is not None:
+        raise ProviderValidationError("代码托管 Provider 不能设置模型名称")
     return _PreparedConfig(definition, normalized_base_url, normalized_model_name)
 
 
@@ -216,7 +219,7 @@ async def _owned_config(
 
 
 def registry() -> ProviderRegistryResponse:
-    kind_order = {"model": 0, "search": 1, "embedding": 2}
+    kind_order = {"model": 0, "search": 1, "embedding": 2, "code_host": 3}
     return ProviderRegistryResponse(
         items=[
             ProviderRegistryItem(
@@ -584,8 +587,9 @@ async def test_connection(
             kind=kind,
             prepared=prepared,
             has_secret=secret_value is not None,
-            # Neither probe needs a model name: model probes list the catalogue,
-            # while search probes use the Provider's search endpoint directly.
+            # No probe needs a model name: model probes list the catalogue,
+            # search probes use the search endpoint and code hosts read the
+            # free rate-limit endpoint.
             require_model_name=False,
         )
 
@@ -607,6 +611,23 @@ async def test_connection(
             raise ProviderValidationError(error.message, code=error.code) from error
 
         try:
+            if kind == "code_host":
+                code_host_result = await probe_code_host(
+                    prepared.definition,
+                    base_url=probe_base,
+                    api_key=secret_value,
+                    timeout_seconds=settings.provider_test_timeout_seconds,
+                )
+                return ProviderConnectionTestResponse(
+                    status="ok",
+                    code="connection_test_ok",
+                    message=(
+                        "连接成功，令牌有效。当前每小时额度 "
+                        f"{code_host_result.limit} 次，剩余 {code_host_result.remaining} 次"
+                    ),
+                    kind=kind,
+                    provider=provider,
+                )
             if kind == "search":
                 search_result = await probe_search(
                     prepared.definition,

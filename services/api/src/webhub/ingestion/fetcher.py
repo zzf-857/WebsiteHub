@@ -30,7 +30,7 @@ import logging
 import re
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from ipaddress import IPv4Address, IPv6Address
@@ -477,6 +477,28 @@ async def _pinned_stream(
         extensions={"sni_hostname": target.hostname},
     ) as response:
         yield target.url, response
+
+
+def pinned_public_stream(
+    url: str,
+    *,
+    timeout_seconds: int,
+    headers: Mapping[str, str],
+) -> AbstractAsyncContextManager[tuple[str, httpx.Response]]:
+    """One pinned, public-only, non-redirecting GET for other enrichers.
+
+    This is the same outbound path page analysis uses: the target is resolved
+    and checked against the SSRF rules, the connection is pinned to the
+    approved address, environment proxies are ignored, and redirects are left
+    to the caller to validate.
+    """
+
+    return _pinned_stream(
+        url,
+        timeout_seconds=timeout_seconds,
+        allow_private=False,
+        headers=headers,
+    )
 
 
 def _detected_image_content_type(prefix: bytes) -> str | None:
@@ -1006,4 +1028,5 @@ __all__ = [
     "FetchOutcome",
     "SiteMetadata",
     "fetch_site_metadata",
+    "pinned_public_stream",
 ]

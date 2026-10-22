@@ -13,6 +13,8 @@ import {
   effectiveHasSecret,
   hasProviderDraftError,
   providerFieldErrorFor,
+  providerKindLabel,
+  providerKindUsesModelName,
   providerTestTone,
   validateProviderDraft,
   type ProviderDraft,
@@ -74,10 +76,10 @@ function draft(overrides: Partial<ProviderDraft> = {}): ProviderDraft {
   };
 }
 
-test("三个 kind 分区齐全且顺序固定", () => {
+test("四个 kind 分区齐全且顺序固定", () => {
   assert.deepEqual(
     PROVIDER_KIND_SECTIONS.map((section) => section.kind),
-    ["model", "search", "embedding"],
+    ["model", "search", "embedding", "code_host"],
   );
 });
 
@@ -465,4 +467,53 @@ test("测试连接仍然要求 Key 与合法 Base URL", () => {
     mode: "test",
   });
   assert.equal(unsafe.baseUrl, "该服务商不允许指向本机或局域网地址");
+});
+
+test("Q45：代码托管分区存在，启用时不要求模型名称，也不接受模型名称", () => {
+  const section = PROVIDER_KIND_SECTIONS.find((item) => item.kind === "code_host");
+  assert.ok(section);
+  assert.equal(section.title, "代码托管");
+  assert.equal(providerKindLabel("code_host"), "代码托管");
+  assert.equal(providerKindUsesModelName("code_host"), false);
+  assert.equal(providerKindUsesModelName("search"), false);
+  assert.equal(providerKindUsesModelName("embedding"), true);
+
+  const github = registryItem({
+    provider: "github",
+    label: "GitHub",
+    kinds: ["code_host"],
+    fixedBaseUrl: true,
+    connectionTestSupported: true,
+    defaultBaseUrl: "https://api.github.com",
+  });
+  const enabled = validateProviderDraft({
+    kind: "code_host",
+    definition: github,
+    draft: draft({ provider: "github", displayName: "GitHub", baseUrl: "", modelName: "", enabled: true }),
+    secretIntent: "write",
+    hasStoredSecret: false,
+  });
+  assert.equal(hasProviderDraftError(enabled), false);
+
+  assert.equal(
+    validateProviderDraft({
+      kind: "code_host",
+      definition: github,
+      draft: draft({ provider: "github", modelName: "gpt" }),
+      secretIntent: "write",
+      hasStoredSecret: false,
+    }).modelName,
+    "代码托管不需要填写模型名称",
+  );
+
+  assert.equal(
+    validateProviderDraft({
+      kind: "code_host",
+      definition: github,
+      draft: draft({ provider: "github", enabled: true }),
+      secretIntent: "keep",
+      hasStoredSecret: false,
+    }).secret,
+    "启用前必须填写 API Key",
+  );
 });

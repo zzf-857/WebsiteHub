@@ -11,6 +11,7 @@ import {
   estimateCardHeight,
   estimateCoverHeight,
   formatStars,
+  githubRepoMeta,
   heroSummaryText,
   isSafePreviewUrl,
   repoCoordinates,
@@ -270,4 +271,104 @@ test("kind labels name the code host for repositories", () => {
   assert.equal(resourceKindLabel(siteFixture({ kind: "article" })), "帖子与文章");
   assert.equal(resourceKindLabel(siteFixture({ kind: "video" })), "视频");
   assert.equal(resourceKindLabel(siteFixture()), "工具与网站");
+});
+
+test("Q45: star counts format to k / 万 / 亿 without rounding up", () => {
+  assert.equal(formatStars(999), "999");
+  assert.equal(formatStars(9_999), "9.9k");
+  assert.equal(formatStars(12_000), "1.2 万");
+  assert.equal(formatStars(1_234_567), "123.4 万");
+  assert.equal(formatStars(99_999_999), "9999.9 万");
+  assert.equal(formatStars(100_000_000), "1 亿");
+  assert.equal(formatStars(123_456_789), "1.2 亿");
+  assert.equal(formatStars(12.9), "12");
+  assert.equal(formatStars(Number.NaN), "0");
+});
+
+test("Q45: meta.github parses into a typed record for covers and the detail page", () => {
+  assert.equal(githubRepoMeta({}), null);
+  assert.equal(githubRepoMeta({ github: "broken" }), null);
+  assert.deepEqual(
+    githubRepoMeta({
+      host: "github.com",
+      owner: "langchain-ai",
+      repo: "langgraph",
+      github: {
+        stars: 52_310,
+        forks: 9_000,
+        language: "Python",
+        topics: ["agents", 3, "", "llm"],
+        license: "MIT",
+        pushed_at: "2026-10-20T00:00:00Z",
+        archived: true,
+        description: "Build agents as graphs.",
+        homepage: "javascript:alert(1)",
+        fetched_at: "2026-10-22T08:00:00Z",
+        etag: '"abc"',
+      },
+    }),
+    {
+      stars: 52_310,
+      forks: 9_000,
+      language: "Python",
+      topics: ["agents", "llm"],
+      license: "MIT",
+      pushedAt: "2026-10-20T00:00:00Z",
+      archived: true,
+      description: "Build agents as graphs.",
+      homepage: null,
+      fetchedAt: "2026-10-22T08:00:00Z",
+      notFound: false,
+      rateLimitedAt: null,
+    },
+  );
+  const missing = githubRepoMeta({ github: { not_found: true, fetched_at: "2026-10-22T08:00:00Z" } });
+  assert.equal(missing?.notFound, true);
+  assert.equal(missing?.stars, null);
+  assert.deepEqual(repoStats({ github: { not_found: true } }), { language: null, stars: null });
+  const limited = githubRepoMeta({ github: { stars: 10, rate_limited_at: "2026-10-22T09:00:00Z" } });
+  assert.equal(limited?.rateLimitedAt, "2026-10-22T09:00:00Z");
+  assert.deepEqual(repoStats({ github: { stars: 10, rate_limited_at: "x" } }), { language: null, stars: "10" });
+});
+
+test("Q45: GitHub's auto-generated social card yields to the repo cover once stats exist", () => {
+  const autoCard = "https://opengraph.githubassets.com/1/langchain-ai/langgraph";
+  const withStats = coverModel(
+    siteFixture({
+      kind: "repo",
+      originalUrl: "https://github.com/langchain-ai/langgraph",
+      previewUrl: autoCard,
+      meta: { host: "github.com", owner: "langchain-ai", repo: "langgraph", github: { stars: 52_310, language: "Python" } },
+    }),
+    "card",
+  );
+  assert.equal(withStats.type, "repo");
+  if (withStats.type === "repo") {
+    assert.equal(withStats.stars, "5.2 万");
+    assert.equal(withStats.language, "Python");
+  }
+
+  // Without numbers the GitHub card still carries more than the generated one.
+  const withoutStats = coverModel(
+    siteFixture({
+      kind: "repo",
+      originalUrl: "https://github.com/langchain-ai/langgraph",
+      previewUrl: autoCard,
+      meta: { host: "github.com", owner: "langchain-ai", repo: "langgraph", github: { rate_limited_at: "x" } },
+    }),
+    "card",
+  );
+  assert.equal(withoutStats.type, "image");
+
+  // A preview the author uploaded is real artwork and keeps priority.
+  const customPreview = coverModel(
+    siteFixture({
+      kind: "repo",
+      originalUrl: "https://github.com/langchain-ai/langgraph",
+      previewUrl: "https://repository-images.githubusercontent.com/1/abc",
+      meta: { host: "github.com", owner: "langchain-ai", repo: "langgraph", github: { stars: 1 } },
+    }),
+    "card",
+  );
+  assert.equal(customPreview.type, "image");
 });

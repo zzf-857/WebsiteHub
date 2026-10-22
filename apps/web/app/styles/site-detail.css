@@ -345,6 +345,54 @@
   color: var(--accent-strong);
 }
 
+/* Q45 仓库面板：GitHub 星数 / fork / 语言 / 许可证 / 推送时间与 topics */
+.sd-repo-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  list-style: none;
+}
+
+.sd-repo-facts li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sd-repo-facts strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sd-repo-label {
+  color: var(--text-subtle);
+}
+
+.sd-repo-topics {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sd-repo-archived {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sd-repo-notice {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .sd-related-list {
   display: flex;
   flex-direction: column;

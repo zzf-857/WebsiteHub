@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.config import Settings
 from webhub.db.models import ProviderConfig
+from webhub.ingestion.github import GitHubCredential
 from webhub.providers.registry import (
     PROVIDER_REGISTRY,
     ProviderDefinition,
@@ -220,6 +221,48 @@ async def resolve_optional_binding(
         return await resolve_binding(session, settings, user_id=user_id, kind=kind)
     except AgentProviderError:
         return None
+
+
+async def resolve_github_credential(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    user_id: str,
+) -> GitHubCredential | None:
+    """Decrypt the account's enabled GitHub token for repository enrichment.
+
+    ``None`` means anonymous access.  Unlike ``resolve_binding`` the origin is
+    not resolved here: the GitHub adapter is pinned to its official HTTPS
+    origin, and every enrichment request goes through the pinned public
+    fetcher, which resolves and checks that exact target per request (with the
+    same Fake-IP recovery page analysis uses).
+    """
+
+    config = await load_enabled_config(session, user_id, "code_host")
+    if config is None or config.user_id != user_id or config.provider != "github":
+        return None
+    try:
+        definition = provider_definition("code_host", config.provider)
+    except ValueError:
+        return None
+    if not definition.fixed_base_url:
+        return None
+    if config.secret_ciphertext is None or config.secret_nonce is None:
+        return None
+    try:
+        token = decrypt_secret(
+            settings,
+            config.secret_ciphertext,
+            config.secret_nonce,
+            config.key_version,
+            user_id=user_id,
+            config_id=config.id,
+            kind=config.kind,
+            provider=config.provider,
+        )
+    except (ProviderSecretUnavailableError, ProviderSecretInvalidError) as error:
+        raise AgentProviderCredentialsUnavailableError from error
+    return GitHubCredential(config_id=config.id, token=token)
 
 
 def build_chat_model(
