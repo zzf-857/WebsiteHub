@@ -11,7 +11,7 @@ from webhub.db import models as _models  # noqa: F401
 from webhub.db.base import Base
 
 ALEMBIC_VERSION_TABLE = "alembic_version"
-WEBHUB_MANAGED_TABLES = frozenset(Base.metadata.tables) | {"site_search"}
+WEBHUB_MANAGED_TABLES = frozenset(Base.metadata.tables) | {"site_search", "site_content_search"}
 
 
 class MigrationPreflightError(RuntimeError):

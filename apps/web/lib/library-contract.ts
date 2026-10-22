@@ -219,7 +219,33 @@ export type LibrarySitePage = {
     matchedCount: number;
     pinnedCount: number;
   };
+  /**
+   * 只靠正文快照（页面正文 / README）命中搜索词的条目 → 命中片段（Q48）。
+   * 不在其中的条目是标题、网址、描述、分类或标签命中；没有搜索词时为空。
+   */
+  contentMatches: Readonly<Record<string, string>>;
 };
+
+/** 片段由服务端截取（约 120 字）；这里再兜一道上限，防止异常长文本撑破卡片。 */
+const MAX_CONTENT_SNIPPET_CHARS = 400;
+
+function normalizeContentMatches(
+  value: unknown,
+  siteIds: ReadonlySet<string>,
+): Record<string, string> {
+  // 旧版后端没有这个字段：按“没有正文命中”处理。
+  if (value === undefined || value === null) return {};
+  const candidate = record(value, "sites.content_matches");
+  const matches: Record<string, string> = {};
+  for (const [siteId, snippet] of Object.entries(candidate)) {
+    if (typeof snippet !== "string") {
+      throw new LibraryContractError("sites.content_matches 的片段必须是字符串");
+    }
+    if (!siteIds.has(siteId)) continue;
+    matches[siteId] = snippet.trim().slice(0, MAX_CONTENT_SNIPPET_CHARS);
+  }
+  return matches;
+}
 
 export type LibraryAnalysisBackfill = {
   queuedCount: number;
@@ -1224,13 +1250,18 @@ export function normalizeLibrarySitePage(value: unknown): LibrarySitePage {
     throw new LibraryContractError("sites.next_cursor 必须是非空字符串或 null");
   }
 
+  const items = candidate.items.map(normalizeLibrarySite);
   return {
-    items: candidate.items.map(normalizeLibrarySite),
+    items,
     nextCursor: typeof nextCursor === "string" ? nextCursor.trim() : null,
     aggregate: {
       matchedCount: count(aggregate.matched_count, "sites.aggregate.matched_count"),
       pinnedCount: count(aggregate.pinned_count, "sites.aggregate.pinned_count"),
     },
+    contentMatches: normalizeContentMatches(
+      candidate.content_matches,
+      new Set(items.map((item) => item.id)),
+    ),
   };
 }
 

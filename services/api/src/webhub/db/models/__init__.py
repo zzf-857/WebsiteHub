@@ -53,8 +53,10 @@ from webhub.db.models.bookmark_staging import (
     BookmarkStagingOccurrence,
 )
 from webhub.db.models.library import (
+    SITE_CONTENT_SOURCES,
     Category,
     Site,
+    SiteContent,
     SiteEmbedding,
     SiteImportOrigin,
     SiteTag,
@@ -105,7 +107,9 @@ __all__ = [
     "DEFAULT_CATEGORY_NAME",
     "LoginSession",
     "ProviderConfig",
+    "SITE_CONTENT_SOURCES",
     "Site",
+    "SiteContent",
     "SiteEmbedding",
     "SiteImportOrigin",
     "SiteMetadataBackfillItem",

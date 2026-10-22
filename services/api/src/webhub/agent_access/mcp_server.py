@@ -152,13 +152,17 @@ def build_mcp_server(database: Database) -> FastMCP:
             "Search the user's saved resources by keywords and/or filters. Use this first "
             "whenever the user refers to something they saved or asks for resources on a "
             "topic. Matching is literal, not semantic: every keyword must appear "
-            "(case-insensitive) in the title, URL, description, category or tags, so pass "
+            "(case-insensitive) in the title, URL, description, category or tags, or in the "
+            "saved page text / README snapshot, so pass "
             "one to three distinctive words such as a name, product or topic rather than a "
             "sentence. If nothing matches, retry with fewer or different keywords, or their "
             "Chinese/English equivalent (much of the library is in Chinese). An empty query "
             "lists the most recently saved items. Returns "
             "{total, items: [{id, title, url, kind, summary, category, tags, saved_at, "
-            "opened, starred}]}, best matches first; call get_resource for full details."
+            "opened, starred, matched_in, snippet?}]}, best matches first; with a query, "
+            "matched_in is 'title' (matched the item's own fields) or 'content' (matched "
+            "only its page text, with a short snippet), and title matches come first. "
+            "Call get_resource for full details."
         ),
         annotations=_READ,
         structured_output=False,
@@ -169,7 +173,7 @@ def build_mcp_server(database: Database) -> FastMCP:
             Field(
                 max_length=300,
                 description="Space-separated keywords; every one must appear in the "
-                "title, URL, description, category or tags. Leave empty to browse.",
+                "title, URL, description, category, tags or page text. Leave empty to browse.",
             ),
         ] = "",
         kind: KindArgument = None,
@@ -199,15 +203,29 @@ def build_mcp_server(database: Database) -> FastMCP:
         description=(
             "Get everything stored about one saved resource: title, URL, kind, summary, "
             "long description, category, tags, kind-specific meta (e.g. repo owner/name), "
-            "open_count, last_opened_at, seen, starred and analysis status."
+            "open_count, last_opened_at, seen, starred and analysis status. With "
+            "include_content=true it also returns content: {text, chars, source "
+            "(page|readme), extracted_at} — the saved page text or README excerpt (up to "
+            "12,000 characters), or null when none was captured yet."
         ),
         annotations=_READ,
         structured_output=False,
     )
-    async def get_resource(id: ResourceId) -> str:  # noqa: A002 - MCP argument name
+    async def get_resource(
+        id: ResourceId,  # noqa: A002 - MCP argument name
+        include_content: Annotated[
+            bool,
+            Field(
+                description="Also return the saved page text / README snapshot. "
+                "Long; request it only when the summary is not enough."
+            ),
+        ] = False,
+    ) -> str:
         return await run(
             "get_resource",
-            lambda session, identity: tools.get_resource(session, identity, resource_id=id),
+            lambda session, identity: tools.get_resource(
+                session, identity, resource_id=id, include_content=include_content
+            ),
             write=False,
         )
 

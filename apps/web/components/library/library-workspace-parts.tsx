@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
   ChevronsDown,
   ChevronsUp,
+  FileText,
   GripVertical,
   Pencil,
   Pin,
@@ -102,6 +103,8 @@ export type SiteCollectionProps = {
   viewMode: ViewMode;
   /** 相对时间（“3 天前收藏”）的基准时刻，取数时记录。 */
   now: number;
+  /** 只靠正文命中搜索词的条目 → 片段（Q48），卡片据此显示“正文命中”。 */
+  contentMatches: Readonly<Record<string, string>>;
   selectionMode: boolean;
   selectionBusy: boolean;
   selectedSiteIds: ReadonlySet<string>;
@@ -121,8 +124,13 @@ export type SiteCollectionProps = {
   onDropBefore: (draggedId: string, beforeSiteId: string | null) => void;
 };
 
-type LibrarySiteCardProps = Omit<SiteCollectionProps, "sites" | "selectedSiteIds" | "quickActionId"> & {
+type LibrarySiteCardProps = Omit<
+  SiteCollectionProps,
+  "sites" | "selectedSiteIds" | "quickActionId" | "contentMatches"
+> & {
   site: LibrarySite;
+  /** 正文命中片段；标题等字段命中或没有搜索词时为 undefined。 */
+  contentMatch: string | undefined;
   isSelected: boolean;
   isBusy: boolean;
   isFirst: boolean;
@@ -134,6 +142,7 @@ type LibrarySiteCardProps = Omit<SiteCollectionProps, "sites" | "selectedSiteIds
    卡片是键盘快捷键的一项（j / k 移动，o / s / e / z 作用于它）。 */
 function LibrarySiteCard({
   site,
+  contentMatch,
   viewMode,
   now,
   selectionMode,
@@ -298,6 +307,14 @@ function LibrarySiteCard({
             {site.pinned && <Pin className="library-pinned-mark" aria-label="已置顶" />}
           </div>
           {summary && <p className="library-site-description">{summary}</p>}
+          {contentMatch !== undefined && (
+            <p className="library-site-content-match">
+              <span className="library-content-match-badge">
+                <FileText aria-hidden="true" />正文命中
+              </span>
+              {contentMatch && <span className="library-content-match-snippet">{contentMatch}</span>}
+            </p>
+          )}
         </div>
       </div>
 
@@ -393,6 +410,7 @@ export function SiteCollection({
   sites,
   selectedSiteIds,
   quickActionId,
+  contentMatches,
   ...cardProps
 }: Readonly<SiteCollectionProps>) {
   return (
@@ -401,6 +419,7 @@ export function SiteCollection({
         <LibrarySiteCard
           key={site.id}
           site={site}
+          contentMatch={contentMatches[site.id]}
           isSelected={selectedSiteIds.has(site.id)}
           isBusy={quickActionId === site.id}
           isFirst={index === 0}

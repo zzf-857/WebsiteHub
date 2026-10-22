@@ -8,13 +8,14 @@ import unicodedata
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import and_, case, exists, func, or_, select, text, update
+from sqlalchemy import and_, bindparam, case, exists, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.db.locking import reserve_account_taxonomy
 from webhub.db.models import (
     Category,
     Site,
+    SiteContent,
     SiteTag,
     SpaceMember,
     Tag,
@@ -158,9 +159,13 @@ def _fts_query(query: str) -> str | None:
     return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
 
 
-def _like_token_condition(user_id: str, token: str):
+def _like_pattern(token: str) -> str:
     escaped = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    pattern = f"%{escaped}%"
+    return f"%{escaped}%"
+
+
+def _like_token_condition(user_id: str, token: str):
+    pattern = _like_pattern(token)
     tag_match = exists(
         select(SiteTag.site_id)
         .join(
@@ -183,22 +188,156 @@ def _like_token_condition(user_id: str, token: str):
     )
 
 
-def _search_condition(user_id: str, query: str):
+def _like_content_condition(user_id: str, token: str):
+    return exists(
+        select(SiteContent.site_id).where(
+            SiteContent.user_id == user_id,
+            SiteContent.site_id == Site.id,
+            func.lower(SiteContent.content).like(_like_pattern(token), escape="\\"),
+        )
+    )
+
+
+def _fts_token_condition(
+    table: Literal["site_search", "site_content_search"],
+    user_id: str,
+    token: str,
+):
+    # Unique bind names: the same token can appear in several conditions of
+    # one statement (match filter plus the title-hit ranking flag).
+    phrase = f'"{token.replace(chr(34), chr(34) * 2)}"'
+    return text(
+        f"sites.id IN (SELECT site_id FROM {table} "
+        f"WHERE user_id = :fts_user_id AND {table} MATCH :fts_query)"
+    ).bindparams(
+        bindparam("fts_user_id", user_id, unique=True),
+        bindparam("fts_query", phrase, unique=True),
+    )
+
+
+def _query_terms(query: str) -> tuple[list[str], bool]:
+    """Search terms and whether LIKE (substring) matching applies.
+
+    FTS5's unicode61 tokenizer cannot segment CJK and drops very short
+    tokens' usefulness, so any such term switches the whole query to LIKE —
+    the same rule for the title fields and the content snapshot.
+    """
+
     tokens = _search_tokens(query)
     if not tokens:
-        normalized_query = unicodedata.normalize("NFKC", query).casefold()
-        return _like_token_condition(user_id, normalized_query)
-    if any(len(token) <= 2 or _CJK_CHARACTER.search(token) for token in tokens):
-        return and_(*(_like_token_condition(user_id, token) for token in tokens))
-    fts_query = _fts_query(query)
-    if fts_query is None:
-        raise AssertionError("non-empty search tokens must produce an FTS query")
-    return text(
-        "sites.id IN ("
-        "SELECT site_id FROM site_search "
-        "WHERE user_id = :fts_user_id AND site_search MATCH :fts_query"
-        ")"
-    ).bindparams(fts_user_id=user_id, fts_query=fts_query)
+        return [unicodedata.normalize("NFKC", query).casefold()], True
+    use_like = any(len(token) <= 2 or _CJK_CHARACTER.search(token) for token in tokens)
+    return tokens, use_like
+
+
+def _metadata_token_condition(user_id: str, token: str, *, use_like: bool):
+    if use_like:
+        return _like_token_condition(user_id, token)
+    return _fts_token_condition("site_search", user_id, token)
+
+
+def _content_token_condition(user_id: str, token: str, *, use_like: bool):
+    if use_like:
+        return _like_content_condition(user_id, token)
+    return _fts_token_condition("site_content_search", user_id, token)
+
+
+def _metadata_search_condition(user_id: str, query: str):
+    """Every term appears in the title, URL, description, category or tags."""
+
+    terms, use_like = _query_terms(query)
+    return and_(*(_metadata_token_condition(user_id, term, use_like=use_like) for term in terms))
+
+
+def _search_condition(user_id: str, query: str):
+    """Every term appears in the record's own fields or in its content snapshot (Q48)."""
+
+    terms, use_like = _query_terms(query)
+    return and_(
+        *(
+            or_(
+                _metadata_token_condition(user_id, term, use_like=use_like),
+                _content_token_condition(user_id, term, use_like=use_like),
+            )
+            for term in terms
+        )
+    )
+
+
+SNIPPET_RADIUS = 60
+
+
+def content_snippet(content: str, query: str) -> str:
+    """A short excerpt of ``content`` around the first query term."""
+
+    flat = " ".join(unicodedata.normalize("NFKC", content).split())
+    lowered = flat.casefold()
+    if len(lowered) != len(flat):
+        # Rare expanding case folds (e.g. "ß") would shift offsets.
+        lowered = flat.lower()
+    terms, _ = _query_terms(query)
+    hits = [
+        (position, len(term))
+        for term in terms
+        if term and len(lowered) == len(flat) and (position := lowered.find(term)) >= 0
+    ]
+    if not hits:
+        end = min(len(flat), SNIPPET_RADIUS * 2)
+        return flat[:end] + ("…" if end < len(flat) else "")
+    position, length = min(hits)
+    start = max(0, position - SNIPPET_RADIUS)
+    end = min(len(flat), position + length + SNIPPET_RADIUS)
+    return (
+        ("…" if start > 0 else "")
+        + flat[start:end].strip()
+        + ("…" if end < len(flat) else "")
+    )
+
+
+async def content_matches(
+    session: AsyncSession,
+    user_id: str,
+    q: str | None,
+    site_ids: list[str],
+) -> dict[str, str]:
+    """Snippets for the given matched sites that matched only through content.
+
+    Callers pass ids that already satisfied ``_search_condition``; those that
+    do not also satisfy the title-field condition are content hits.
+    """
+
+    query = (q or "").strip()
+    if not query or not site_ids:
+        return {}
+    title_hits = set(
+        (
+            await session.scalars(
+                select(Site.id)
+                .join(
+                    Category,
+                    and_(Category.user_id == Site.user_id, Category.id == Site.category_id),
+                )
+                .where(
+                    Site.user_id == user_id,
+                    Site.id.in_(site_ids),
+                    _metadata_search_condition(user_id, query),
+                )
+            )
+        ).all()
+    )
+    content_ids = [site_id for site_id in site_ids if site_id not in title_hits]
+    if not content_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(SiteContent.site_id, SiteContent.content).where(
+                SiteContent.user_id == user_id,
+                SiteContent.site_id.in_(content_ids),
+            )
+        )
+    ).all()
+    snippets = {site_id: content_snippet(content, query) for site_id, content in rows}
+    return {site_id: snippets[site_id] for site_id in content_ids if site_id in snippets}
 
 
 def _site_filters(
@@ -453,6 +592,7 @@ async def list_sites(
         await _site_response(session, user_id, site, category, tags_by_site[site.id])
         for site, category in selected_rows
     ]
+    snippets = await content_matches(session, user_id, q, site_ids)
     next_cursor = None
     if has_more and selected_rows:
         last_site = selected_rows[-1][0]
@@ -485,6 +625,7 @@ async def list_sites(
             matched_count=matched_count,
             pinned_count=pinned_count,
         ),
+        content_matches=snippets,
     )
 
 
@@ -678,22 +819,26 @@ async def _relevance_page(
     if not q or not q.strip():
         raise LibraryValidationError("按相关度排序时必须提供搜索词")
 
+    # 标题/名称等记录字段命中排在只靠正文命中之前（Q48）：先按这个标志取候选，
+    # 正文命中不会把标题命中挤出候选上限；融合之后再按它稳定分区。
+    title_hit = case((_metadata_search_condition(user_id, q.strip()), 1), else_=0)
     rows = (
         await session.execute(
-            select(Site, Category)
+            select(Site, Category, title_hit)
             .join(Category, and_(Category.user_id == Site.user_id, Category.id == Site.category_id))
             .where(*filters)
             # 关键词侧没有 FTS 排名可用，这里沿用全站默认的「最近更新在前」作为
             # 关键词次序。fusion 会把精确命中提到最前，所以标题完全匹配的那条
             # 不会因为旧就被埋掉。
-            .order_by(Site.updated_at.desc(), Site.id)
+            .order_by(title_hit.desc(), Site.updated_at.desc(), Site.id)
             .limit(MAX_RELEVANCE_CANDIDATES)
         )
     ).all()
 
-    by_id = {site.id: (site, category) for site, category in rows}
-    keyword_ids = [site.id for site, _ in rows]
-    candidates = [Candidate(site.id, site.name) for site, _ in rows]
+    by_id = {site.id: (site, category) for site, category, _ in rows}
+    title_hit_ids = {site.id for site, _, flag in rows if flag}
+    keyword_ids = [site.id for site, _, _ in rows]
+    candidates = [Candidate(site.id, site.name) for site, _, _ in rows]
     fused = await hybrid_search(
         session,
         user_id,
@@ -705,7 +850,10 @@ async def _relevance_page(
 
     # 语义召回可能带回本页过滤条件之外的站点（向量索引不认识分类/标签筛选），
     # 丢掉它们而不是显示出来——否则加了筛选反而看到不符合筛选的结果。
-    ordered = [hit.site_id for hit in fused.hits if hit.site_id in by_id]
+    fused_ids = [hit.site_id for hit in fused.hits if hit.site_id in by_id]
+    ordered = [site_id for site_id in fused_ids if site_id in title_hit_ids] + [
+        site_id for site_id in fused_ids if site_id not in title_hit_ids
+    ]
 
     offset = _decode_relevance_cursor(cursor) if cursor else 0
     window = ordered[offset : offset + limit]
@@ -730,8 +878,24 @@ async def _relevance_page(
         site, category = by_id[site_id]
         items.append(await _site_response(session, user_id, site, category, tags_by_site[site_id]))
 
+    content_ids = [site_id for site_id in window if site_id not in title_hit_ids]
+    snippets: dict[str, str] = {}
+    if content_ids:
+        snippet_rows = (
+            await session.execute(
+                select(SiteContent.site_id, SiteContent.content).where(
+                    SiteContent.user_id == user_id,
+                    SiteContent.site_id.in_(content_ids),
+                )
+            )
+        ).all()
+        snippets = {site_id: content_snippet(content, q) for site_id, content in snippet_rows}
+
     return SiteListResponse(
         items=items,
+        content_matches={
+            site_id: snippets[site_id] for site_id in content_ids if site_id in snippets
+        },
         next_cursor=_encode_relevance_cursor(offset + limit) if has_more else None,
         # SiteListAggregate 只有 matched_count / pinned_count 两个字段，
         # 多传的键会被 pydantic 静默丢掉——别再加 total_count 这种看起来生效的参数。

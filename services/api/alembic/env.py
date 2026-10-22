@@ -35,7 +35,10 @@ def include_object(
         reflected
         and type_ == "table"
         and name is not None
-        and (name == "site_search" or name.startswith("site_search_"))
+        and (
+            name in {"site_search", "site_content_search"}
+            or name.startswith(("site_search_", "site_content_search_"))
+        )
     )
 
 

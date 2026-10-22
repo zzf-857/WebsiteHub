@@ -315,3 +315,36 @@ class SiteEmbedding(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
     )
+
+
+SITE_CONTENT_SOURCES = ("page", "readme")
+
+
+class SiteContent(Base):
+    """每条收藏最新一份正文快照（Q48）：分析流程已读到的可见正文或 README 片段。
+
+    派生数据：只由分析流程写入（不改 ``version`` / ``updated_at``），删除收藏时
+    随外键级联删除。全文索引 ``site_content_search`` 是 FTS5 虚表，由迁移
+    20261022_0023 的触发器随本表同步，ORM 不声明它。
+    """
+
+    __tablename__ = "site_contents"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "site_id"],
+            ["sites.user_id", "sites.id"],
+            name="site_content_site_same_account",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("source IN ('page', 'readme')", name="valid_source"),
+        CheckConstraint("char_count >= 0", name="non_negative_char_count"),
+    )
+
+    site_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    char_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )

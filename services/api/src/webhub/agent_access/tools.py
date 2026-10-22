@@ -25,6 +25,7 @@ from webhub.agent_access.tokens import AgentIdentity, record_write
 from webhub.db.database import Database
 from webhub.db.locking import reserve_account_taxonomy
 from webhub.db.models import Category, Site, SiteTag, Tag
+from webhub.ingestion.content import load_content
 from webhub.ingestion.enrichment import normalize_site_tag_name
 from webhub.library import service
 from webhub.library.analysis_queue import schedule_site_enrichment
@@ -253,9 +254,18 @@ async def search_resources(
         kind=kind,
         state=state,
     )
+    items = [compact_resource(site) for site in result.items]
+    if q:
+        for item in items:
+            snippet = result.content_matches.get(item["id"])
+            # Q48: say why an item matched, so an Agent can tell a title hit
+            # from a page that merely mentions the words.
+            item["matched_in"] = "content" if snippet is not None else "title"
+            if snippet is not None:
+                item["snippet"] = snippet
     payload: dict[str, Any] = {
         "total": result.aggregate.matched_count,
-        "items": [compact_resource(site) for site in result.items],
+        "items": items,
     }
     if q and not result.items:
         # Keyword search ANDs every keyword; a sentence-like query from an LLM
@@ -274,8 +284,22 @@ async def get_resource(
     identity: AgentIdentity,
     *,
     resource_id: str,
+    include_content: bool = False,
 ) -> dict[str, Any]:
-    return resource_detail(await service.get_site(session, identity.user_id, resource_id))
+    detail = resource_detail(await service.get_site(session, identity.user_id, resource_id))
+    if include_content:
+        snapshot = await load_content(session, identity.user_id, resource_id)
+        detail["content"] = (
+            None
+            if snapshot is None
+            else {
+                "text": snapshot.content,
+                "chars": snapshot.char_count,
+                "source": snapshot.source,
+                "extracted_at": _iso(snapshot.extracted_at),
+            }
+        )
+    return detail
 
 
 async def get_rediscover(
