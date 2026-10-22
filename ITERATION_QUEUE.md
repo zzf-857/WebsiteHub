@@ -2149,7 +2149,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q48 · 正文快照与按内容检索
 
-状态: 待做
+状态: 已完成 · e3a5a78（已合并）。旧收藏不批量重抓，下次分析时补正文快照；“正文命中”徽标待真实浏览器验收。
 对应: IDEAS I-07
 
 - 数据：迁移新建 `site_contents`（`site_id` 主键、账号、正文、字数、来源 `page|readme`、提取时间，随收藏删除级联）与
@@ -2194,7 +2194,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q50 · RSS / 播客订阅流（只展示，不入库）
 
-状态: 待做
+状态: 已完成 · fb21ff1 + b33d34c（合并 3f6ed6e），待真实订阅源与 /feeds 页面验收（含自部署 RSSHub，见 docs/feeds-rsshub.md）
 对应: IDEAS I-10；依赖 Q49
 
 - 数据：`feeds`（账号、URL、标题、类型 rss|podcast、站点地址、启用、最近拉取、ETag、Last-Modified、连续失败数）与
@@ -2372,8 +2372,8 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-当前证据基线（2026-10-22 · Q43 / Q44 合并后）：后端完整 pytest **919 passed / 2 skipped**、Ruff 通过；前端 Node 测试
-**365 项（364 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。注意 `pyproject` 已设 `addopts = "-q"`，
+当前证据基线（2026-10-22 · Q43 / Q44 合并后）：后端完整 pytest **951 passed / 2 skipped**、Ruff 通过；前端 Node 测试
+**378 项（377 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。注意 `pyproject` 已设 `addopts = "-q"`，
 门禁再加 `-q` 会隐藏汇总行，需要计数时去掉 `-q` 运行。本轮新增功能必须带测试，已确认的基线只能涨不能降。
 
 ## 不可动摇的约束
