@@ -33,7 +33,7 @@ export function withSiteState(
 }
 
 /**
- * 画廊就地替换只接收使用信号（打开 / 已看 / 星标 / 静音）。服务端的状态响应是整条收藏，
+ * 画廊就地替换只接收使用信号（打开 / 已看 / 星标 / 静音 / 推迟）。服务端的状态响应是整条收藏，
  * 可能带着后台刚整理好的类型、简介或预览图；整条替换会换掉封面、改变估算高度，
  * 瀑布流按新高度重排，已经放好的卡片整体跳列。内容字段留到下次取数再更新。
  */
@@ -47,5 +47,7 @@ export function withSiteUsage(current: LibrarySite, incoming: LibrarySite): Libr
     starred: incoming.starred,
     starredAt: incoming.starredAt,
     resurfaceMuted: incoming.resurfaceMuted,
+    resurfaceCount: incoming.resurfaceCount,
+    resurfaceDueAt: incoming.resurfaceDueAt,
   };
 }

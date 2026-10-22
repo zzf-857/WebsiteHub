@@ -1,15 +1,19 @@
 "use client";
 
 import {
+  AlarmClock,
   ArrowLeft,
   ArrowUpRight,
   Box,
   Check,
   ChevronRight,
   CircleAlert,
+  Ellipsis,
+  Eye,
   Pencil,
   Pin,
   RefreshCw,
+  Star,
   Trash2,
   WandSparkles,
   X,
@@ -19,8 +23,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ResourceCover } from "@/components/discover/resource-cover";
+import { useShortcutTarget } from "@/components/keyboard/shortcut-target";
 import { LibraryDialog } from "@/components/library/library-dialog";
 import { SiteForm } from "@/components/library/site-form";
+import { useSiteQuickActions } from "@/components/library/use-site-quick-actions";
 import { Spinner } from "@/components/react-bits/spinner";
 import { SiteFavicon } from "@/components/site-favicon";
 import {
@@ -43,21 +50,29 @@ import type {
   LibrarySiteUpdateInput,
   LibraryTag,
 } from "@/lib/library-contract";
+import { subscribeSiteUpdated } from "@/lib/library-events";
+import { formatRelativeTime } from "@/lib/relative-time";
+import { isSafePreviewUrl, resourceKindLabel, resourceTitle } from "@/lib/resource-cover";
 import {
   siteAnalysisProgressRows,
   type SiteAnalysisDisplayPhase,
 } from "@/lib/site-analysis-progress";
+import { isUnopened, withSiteUsage } from "@/lib/site-usage";
 
-import { ActivityCard } from "./activity-card";
 import { AgentHelpCard } from "./agent-help-card";
 import { JoinSpaceDialog } from "./join-space-dialog";
-import { ANALYSIS_STATUS_LABELS, formatDay, hostOf, SOURCE_LABELS } from "./meta";
+import { formatDay, hostOf, SOURCE_LABELS } from "./meta";
 import { RelatedSitesCard } from "./related-sites-card";
+import { RepoPanel } from "./repo-panel";
+import { TaxonomyEditor } from "./taxonomy-editor";
+import { UsageCard } from "./usage-card";
+import { useDismissable } from "./use-dismissable";
 
-/* 网站详情页（设计稿 1d）。
-   数据链路与旧版保持一致：getLibrarySite 取数、非法/404/错误三种兜底、
-   编辑与删除都带 expectedVersion 做乐观并发；预览图作为主信息内的紧凑字段展示，
-   放大层只负责查看已保存的公开预览图，不会额外请求或跳转。 */
+/* 收藏详情页（Q46，2026-10 D5 / D6）。
+   顶部是复用发现页的大封面；标题下一行是“类型 · 域名 · 收藏时间 · 来源”，再下是操作行
+   （打开 / 星标 / 已看 / 推迟 / 编辑 / 更多）。星标、已看、推迟乐观更新并给 5 秒撤销；
+   删除收进“更多”菜单并二次确认。分类与标签就地编辑，仓库面板只在有 GitHub 数据时出现。
+   编辑与删除都带 expectedVersion 做乐观并发；版本冲突时载入最新版本让用户再确认。 */
 
 type SiteDetailPageProps = {
   siteId: string;
@@ -96,6 +111,12 @@ function isLibraryErrorCode(error: unknown, code: string): error is LibraryApiEr
 
 function isLibraryNotFound(error: unknown): error is LibraryApiError {
   return error instanceof LibraryApiError && (error.code === "not_found" || error.status === 404);
+}
+
+/** 同一条收藏的新快照：内容版本更新时整条替换，否则只接收使用信号（打开 / 星标 / 已看 / 推迟）。 */
+function mergeSite(current: LibrarySite, incoming: LibrarySite): LibrarySite {
+  if (current.id !== incoming.id) return current;
+  return incoming.version >= current.version ? incoming : withSiteUsage(current, incoming);
 }
 
 function SiteAnalysisProgress({
@@ -148,35 +169,125 @@ function DetailStatus({ state, onRetry }: Readonly<{ state: StatusState; onRetry
     <main className="sd-page">
       <Link href="/library" className="sd-back-link">
         <ArrowLeft size={16} aria-hidden="true" />
-        返回网址库
+        返回收藏库
       </Link>
-      <section className="sd-status" aria-live="polite" aria-busy={loading}>
-        <span className="sd-status-icon" aria-hidden="true">
-          {loading ? <Spinner size={16} /> : <CircleAlert size={16} />}
-        </span>
-        <h1 className="sd-status-title">
-          {loading ? "正在读取网站" : state.status === "not-found" ? "网站不存在" : "暂时无法读取网站"}
-        </h1>
-        <p className="sd-status-text">
-          {loading ? "正在同步当前账号网址库中的收录信息。" : state.message}
-        </p>
-        {state.status === "error" && (
-          <button type="button" className="sd-btn sd-btn-primary sd-status-retry" onClick={onRetry}>
-            <RefreshCw size={16} aria-hidden="true" />
-            重新加载
-          </button>
-        )}
-      </section>
+      {loading ? (
+        <div className="sd-skeleton" aria-busy="true" aria-label="正在读取收藏">
+          <span className="sd-skeleton-block sd-skeleton-cover" />
+          <span className="sd-skeleton-block sd-skeleton-title" />
+          <span className="sd-skeleton-block sd-skeleton-line" />
+        </div>
+      ) : (
+        <section className="sd-status" aria-live="polite">
+          <span className="sd-status-icon" aria-hidden="true">
+            <CircleAlert size={16} />
+          </span>
+          <h1 className="sd-status-title">
+            {state.status === "not-found" ? "收藏不存在" : "暂时无法读取收藏"}
+          </h1>
+          <p className="sd-status-text">{state.message}</p>
+          {state.status === "error" && (
+            <button type="button" className="sd-btn sd-btn-primary sd-status-retry" onClick={onRetry}>
+              <RefreshCw size={16} aria-hidden="true" />
+              重新加载
+            </button>
+          )}
+        </section>
+      )}
     </main>
+  );
+}
+
+type MoreMenuProps = {
+  analyzing: boolean;
+  analyzeLabel: string;
+  onAnalyze: () => void;
+  onJoinSpace: () => void;
+  onDelete: () => void;
+};
+
+/** “更多”菜单：低频操作与唯一的破坏性操作（删除，二次确认）。 */
+function MoreMenu({ analyzing, analyzeLabel, onAnalyze, onJoinSpace, onDelete }: Readonly<MoreMenuProps>) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useDismissable(open, rootRef, triggerRef, () => setOpen(false));
+
+  useEffect(() => {
+    if (open) menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
+  }, [open]);
+
+  const select = (action: () => void) => {
+    setOpen(false);
+    action();
+  };
+
+  return (
+    <div className="sd-picker" ref={rootRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="sd-btn sd-btn-secondary sd-btn-icon"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="更多操作"
+        title="更多操作"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Ellipsis size={16} aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          ref={menuRef}
+          className="sd-popover sd-popover-menu"
+          role="menu"
+          aria-label="更多操作"
+          data-shortcut-block
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+            event.preventDefault();
+            const items = Array.from(
+              event.currentTarget.querySelectorAll<HTMLElement>("[role='menuitem']:not(:disabled)"),
+            );
+            const index = items.indexOf(document.activeElement as HTMLElement);
+            const next = event.key === "ArrowDown" ? index + 1 : index - 1;
+            items[(next + items.length) % items.length]?.focus();
+          }}
+        >
+          <button type="button" role="menuitem" className="sd-popover-option" disabled={analyzing} onClick={() => select(onAnalyze)}>
+            <WandSparkles size={14} aria-hidden="true" />
+            {analyzeLabel}
+          </button>
+          <button type="button" role="menuitem" className="sd-popover-option" onClick={() => select(onJoinSpace)}>
+            <Box size={14} aria-hidden="true" />
+            加入 Space
+          </button>
+          <div className="sd-popover-divider" aria-hidden="true" />
+          <button
+            type="button"
+            role="menuitem"
+            className="sd-popover-option sd-popover-danger"
+            onClick={() => select(onDelete)}
+          >
+            <Trash2 size={14} aria-hidden="true" />
+            删除收藏…
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
 export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
   const router = useRouter();
   const normalizedSiteId = validSiteId(siteId);
+  const quickActions = useSiteQuickActions();
 
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [loadAttempt, setLoadAttempt] = useState(0);
+  // 相对时间的基准：取数时记录，避免渲染期读时钟
+  const [now, setNow] = useState(0);
 
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [busy, setBusy] = useState(false);
@@ -207,21 +318,38 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
     const controller = new AbortController();
 
     void getLibrarySite(normalizedSiteId, controller.signal)
-      .then((site) => setState({ status: "ready", site }))
+      .then((site) => {
+        setState({ status: "ready", site });
+        setNow(Date.now());
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         if (isLibraryNotFound(error)) {
-          setState({ status: "not-found", message: "这个网站可能已被删除，或不属于当前登录账号。" });
+          setState({ status: "not-found", message: "这条收藏可能已被删除，或不属于当前登录账号。" });
           return;
         }
         setState({
           status: "error",
-          message: error instanceof Error ? error.message : "网址库服务暂时不可用，请稍后重试。",
+          message: error instanceof Error ? error.message : "收藏库服务暂时不可用，请稍后重试。",
         });
       });
 
     return () => controller.abort();
   }, [loadAttempt, normalizedSiteId]);
+
+  // 星标 / 已看 / 推迟（含快捷键与撤销）都经 announceSiteUpdated 广播，这里就地合并
+  useEffect(
+    () =>
+      subscribeSiteUpdated((incoming) => {
+        setState((current) =>
+          current.status === "ready" && current.site.id === incoming.id
+            ? { status: "ready", site: mergeSite(current.site, incoming) }
+            : current,
+        );
+        setNow(Date.now());
+      }),
+    [],
+  );
 
   const analysisRefreshEnabled = !analyzing && state.status === "ready"
     ? hasRefreshableSiteAnalysis([state.site])
@@ -324,7 +452,8 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
     return result.tag;
   };
 
-  const previewUrl = state.status === "ready" ? state.site.previewUrl : null;
+  const readySite = state.status === "ready" ? state.site : null;
+  const previewUrl = readySite && isSafePreviewUrl(readySite.previewUrl) ? readySite.previewUrl : null;
   const previewAvailable = Boolean(previewUrl && previewUrl !== failedPreviewUrl);
   const lightboxOpen = previewOpen && previewAvailable;
 
@@ -352,6 +481,16 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
     setFailedPreviewUrl(url);
     setPreviewOpen(false);
   };
+
+  // 快捷键 o / s / e / z 作用于这条收藏（焦点不在别的列表项上时）
+  const shortcutRef = useShortcutTarget<HTMLElement>((command) => {
+    if (!readySite) return;
+    if (command === "open") quickActions.open(readySite);
+    else if (command === "star") void quickActions.toggleStar(readySite);
+    else if (command === "seen") {
+      void (readySite.seenAt ? quickActions.unmarkSeen(readySite) : quickActions.markSeen(readySite));
+    } else void quickActions.snooze(readySite);
+  });
 
   const openDialog = (kind: Exclude<DialogKind, null>) => {
     setMutationError(null);
@@ -415,13 +554,13 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
       setState({ status: "ready", site: latest });
       setMutationError(
         action === "edit"
-          ? "该网站刚被其他操作更新，已载入最新版本，请核对后再次保存。"
-          : "该网站刚被其他操作更新，已载入最新版本，请再次确认删除。",
+          ? "这条收藏刚被其他操作更新，已载入最新版本，请核对后再次保存。"
+          : "这条收藏刚被其他操作更新，已载入最新版本，请再次确认删除。",
       );
     } catch (error) {
       if (isLibraryNotFound(error)) {
         setDialog(null);
-        setState({ status: "not-found", message: "该网站已在其他页面被删除。" });
+        setState({ status: "not-found", message: "这条收藏已在其他页面被删除。" });
         return;
       }
       setMutationError(error instanceof Error ? error.message : "读取最新版本失败，请稍后重试。");
@@ -437,18 +576,53 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
       const updated = await updateLibrarySite(id, input);
       setState({ status: "ready", site: updated });
       setDialog(null);
-      setNotice({ tone: "success", message: "网站信息已更新" });
+      setNotice({ tone: "success", message: "收藏信息已更新" });
     } catch (error) {
       if (isLibraryErrorCode(error, "version_conflict")) {
         await recoverConflict(id, "edit");
       } else if (isLibraryNotFound(error)) {
         setDialog(null);
-        setState({ status: "not-found", message: "该网站已在其他页面被删除。" });
+        setState({ status: "not-found", message: "这条收藏已在其他页面被删除。" });
       } else {
         setMutationError(error instanceof Error ? error.message : "保存失败，请稍后重试。");
       }
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** 分类 / 标签就地编辑：只发被改的字段；冲突时载入最新版本并提示重试。 */
+  const handleInlineUpdate = async (input: LibrarySiteUpdateInput): Promise<boolean> => {
+    if (state.status !== "ready") return false;
+    const id = state.site.id;
+    setNotice(null);
+    try {
+      const updated = await updateLibrarySite(id, input);
+      setState({ status: "ready", site: updated });
+      setNotice({
+        tone: "success",
+        message: input.categoryId !== undefined ? `已移到「${updated.category.name}」` : "标签已更新",
+      });
+      return true;
+    } catch (error) {
+      if (isLibraryNotFound(error)) {
+        setState({ status: "not-found", message: "这条收藏已在其他页面被删除。" });
+        return false;
+      }
+      if (isLibraryErrorCode(error, "version_conflict")) {
+        try {
+          setState({ status: "ready", site: await getLibrarySite(id) });
+        } catch {
+          // 保留当前页面，提示里仍然要求用户重试
+        }
+        setNotice({ tone: "warning", message: "这条收藏刚被其他操作更新，已载入最新版本，请再改一次。" });
+        return false;
+      }
+      setNotice({
+        tone: "error",
+        message: error instanceof Error ? error.message : "没有保存成功，请稍后重试。",
+      });
+      return false;
     }
   };
 
@@ -477,7 +651,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
   if (!normalizedSiteId) {
     return (
       <DetailStatus
-        state={{ status: "not-found", message: "这个网址库链接无效，请返回网址库重新选择网站。" }}
+        state={{ status: "not-found", message: "这个收藏链接无效，请返回收藏库重新选择。" }}
         onRetry={retry}
       />
     );
@@ -486,17 +660,139 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
 
   const { site } = state;
   const host = hostOf(site.identityUrl || site.originalUrl);
+  const title = resourceTitle(site);
+  const saved = formatRelativeTime(site.createdAt, now);
+  const unopened = isUnopened(site);
+  const seen = site.seenAt !== null;
+  const analyzeLabel = analyzing
+    ? "AI 分析中"
+    : site.analysisStatus === "not_analyzed" || site.analysisStatus === "failed"
+      ? "AI 分析入库"
+      : "重新 AI 分析";
 
   return (
-    <main className="sd-page">
-      {/* 面包屑：网址库当前没有按分类筛选的 URL 参数，分类一级先同样指向网址库 */}
+    <main className="sd-page" ref={shortcutRef} data-shortcut-default>
       <nav className="sd-breadcrumb" aria-label="面包屑">
-        <Link href="/library">网址库</Link>
+        <Link href="/library">收藏库</Link>
         <ChevronRight size={16} aria-hidden="true" />
-        <Link href="/library">{site.category.name}</Link>
+        <Link href={`/library?category=${encodeURIComponent(site.category.id)}`}>{site.category.name}</Link>
         <ChevronRight size={16} aria-hidden="true" />
-        <span className="sd-breadcrumb-current">{site.name}</span>
+        <span className="sd-breadcrumb-current">{title}</span>
       </nav>
+
+      <div className="sd-cover">
+        <ResourceCover site={site} size="hero" />
+        {previewAvailable && previewUrl && (
+          <button
+            ref={previewTriggerRef}
+            type="button"
+            className="sd-cover-zoom"
+            aria-label={`放大查看 ${title} 的网页预览图`}
+            title="放大查看预览图"
+            onClick={() => setPreviewOpen(true)}
+          >
+            <ZoomIn size={16} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+
+      <header className="sd-heading">
+        <div className="sd-heading-copy">
+          <h1 id="sd-title" className="sd-title">{title}</h1>
+          <p className="sd-meta-line">
+            <span>{resourceKindLabel(site)}</span>
+            <span aria-hidden="true">·</span>
+            <span className="sd-meta-host">
+              <SiteFavicon url={site.faviconUrl} name={site.name} size={16} />
+              {host}
+            </span>
+            {saved && (
+              <>
+                <span aria-hidden="true">·</span>
+                <time dateTime={site.createdAt} title={formatDay(site.createdAt)}>{saved}收藏</time>
+              </>
+            )}
+            <span aria-hidden="true">·</span>
+            <span>{SOURCE_LABELS[site.source]}</span>
+          </p>
+          {(unopened || site.pinned) && (
+            <p className="sd-badges">
+              {unopened && (
+                <span className="sd-badge sd-badge-accent">
+                  <span className="sd-badge-dot" aria-hidden="true" />
+                  未打开
+                </span>
+              )}
+              {site.pinned && (
+                <span className="sd-badge">
+                  <Pin size={12} aria-hidden="true" />
+                  已置顶
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+
+        <div className="sd-actions" role="group" aria-label="收藏操作">
+          <a
+            className="sd-btn sd-btn-primary"
+            href={site.originalUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => quickActions.recordOpen(site)}
+            onAuxClick={(event) => {
+              if (event.button === 1) quickActions.recordOpen(site);
+            }}
+            title="打开原站（o）"
+          >
+            打开
+            <ArrowUpRight size={16} aria-hidden="true" />
+            <span className="sr-only">（在新标签页打开原站）</span>
+          </a>
+          <button
+            type="button"
+            className="sd-btn sd-btn-secondary"
+            aria-pressed={site.starred}
+            data-active={site.starred || undefined}
+            onClick={() => void quickActions.toggleStar(site)}
+            title={site.starred ? "取消星标（s）" : "加星标（s）"}
+          >
+            <Star size={16} aria-hidden="true" fill={site.starred ? "currentColor" : "none"} />
+            {site.starred ? "已星标" : "星标"}
+          </button>
+          <button
+            type="button"
+            className="sd-btn sd-btn-secondary"
+            aria-pressed={seen}
+            data-active={seen || undefined}
+            onClick={() => void (seen ? quickActions.unmarkSeen(site) : quickActions.markSeen(site))}
+            title={seen ? "改回未看（e）" : "标记已看（e）"}
+          >
+            {seen ? <Check size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+            {seen ? "已看过" : "已看"}
+          </button>
+          <button
+            type="button"
+            className="sd-btn sd-btn-secondary"
+            onClick={() => void quickActions.snooze(site)}
+            title="推迟到下周再提醒（z）"
+          >
+            <AlarmClock size={16} aria-hidden="true" />
+            推迟
+          </button>
+          <button type="button" className="sd-btn sd-btn-secondary" onClick={() => openDialog("edit")}>
+            <Pencil size={16} aria-hidden="true" />
+            编辑
+          </button>
+          <MoreMenu
+            analyzing={analyzing}
+            analyzeLabel={analyzeLabel}
+            onAnalyze={() => void handleAnalyze(site.id)}
+            onJoinSpace={() => openDialog("space")}
+            onDelete={() => openDialog("delete")}
+          />
+        </div>
+      </header>
 
       {notice && (
         <p
@@ -515,170 +811,48 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
 
       <div className="sd-layout">
         <div className="sd-main">
-          <section className="sd-card sd-hero" aria-labelledby="sd-title">
-            <div className="sd-hero-top">
-              <span className="sd-hero-icon">
-                <SiteFavicon url={site.faviconUrl} name={site.name} size={40} />
-              </span>
-              <div className="sd-hero-heading">
-                <div className="sd-hero-title-row">
-                  <h1 id="sd-title" className="sd-hero-title">
-                    {site.name}
-                  </h1>
-                  {site.pinned && (
-                    <span className="sd-pin-badge">
-                      <Pin size={16} aria-hidden="true" />
-                      已置顶
-                    </span>
-                  )}
-                </div>
-                <p className="sd-hero-domain">
-                  {host}
-                </p>
-                {site.summary && <p className="sd-hero-desc">{site.summary}</p>}
-              </div>
-              <div className="sd-hero-actions">
-                <a
-                  className="sd-btn sd-btn-primary"
-                  href={site.originalUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  访问官网
-                  <ArrowUpRight size={16} aria-hidden="true" />
-                  <span className="sr-only">（在新标签页打开）</span>
-                </a>
-                <button type="button" className="sd-btn sd-btn-secondary" onClick={() => openDialog("edit")}>
-                  <Pencil size={16} aria-hidden="true" />
-                  编辑
-                </button>
-                <button type="button" className="sd-btn sd-btn-secondary" onClick={() => openDialog("space")}>
-                  <Box size={16} aria-hidden="true" />
-                  加入 Space
-                </button>
-                <button
-                  type="button"
-                  className="sd-btn sd-btn-danger-ghost"
-                  onClick={() => openDialog("delete")}
-                  aria-label="删除网站"
-                  title="删除网站"
-                >
-                  <Trash2 size={16} aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-
-            {previewAvailable && previewUrl && (
-              <div className="sd-preview-row">
-                <h2 className="sd-preview-label">网站预览</h2>
-                <button
-                  ref={previewTriggerRef}
-                  type="button"
-                  className="sd-preview-trigger"
-                  aria-label={`放大查看 ${site.name} 的网站预览`}
-                  title="放大查看网站预览"
-                  onClick={() => setPreviewOpen(true)}
-                >
-                  {/* Remote preview hosts are discovered at runtime and cannot use a static next/image allowlist. */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={previewUrl}
-                    alt={`${site.name} 网站预览`}
-                    width={400}
-                    height={225}
-                    referrerPolicy="no-referrer"
-                    onError={() => handlePreviewError(previewUrl)}
-                  />
-                  <span className="sd-preview-zoom" aria-hidden="true">
-                    <ZoomIn size={18} />
-                  </span>
-                </button>
-              </div>
-            )}
-
-            <div className="sd-hero-meta">
-              <div>
-                <div className="sd-meta-label">分类</div>
-                <span className="sd-chip sd-chip-solid">
-                  {site.category.name}
-                  {site.category.isDefault && <span className="sd-meta-default">默认</span>}
-                </span>
-              </div>
-              <div>
-                <div className="sd-meta-label">标签</div>
-                {site.tags.length > 0 ? (
-                  <div className="sd-chip-row">
-                    {site.tags.map((tag) => (
-                      <span key={tag.id} className="sd-chip sd-chip-outline">
-                        {tag.name}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="sd-meta-empty">暂无标签</span>
-                )}
-              </div>
-              {/* 设计稿中的「所属 Space」列：后端没有站点→Space 的反查接口，
-                  逐个拉全部 Space 的成员来判断代价过高，先不展示，避免造假 */}
-              <div className="sd-meta-fill" aria-hidden="true" />
-              <div className="sd-meta-times">
-                <div>
-                  添加于 <time dateTime={site.createdAt}>{formatDay(site.createdAt)}</time> · 更新于{" "}
-                  <time dateTime={site.updatedAt}>{formatDay(site.updatedAt)}</time>
-                </div>
-                <div>
-                  <span>
-                    来源：{SOURCE_LABELS[site.source]} · 内容分析：
-                    {ANALYSIS_STATUS_LABELS[site.analysisStatus]}
-                  </span>
-                  <button
-                    className="sd-ai-analysis-action"
-                    type="button"
-                    disabled={analyzing}
-                    aria-busy={analyzing}
-                    onClick={() => void handleAnalyze(site.id)}
-                    title="重新抓取公开网页，并用模型分析分类、标签、简介和详细介绍；人工内容不会被覆盖"
-                  >
-                    {analyzing ? (
-                      <Spinner size={13} />
-                    ) : (
-                      <WandSparkles size={13} aria-hidden="true" />
-                    )}
-                    {analyzing
-                      ? "AI 分析中"
-                      : site.analysisStatus === "not_analyzed" || site.analysisStatus === "failed"
-                        ? "AI 分析入库"
-                        : "重新 AI 分析"}
-                  </button>
-                </div>
-              </div>
-            </div>
+          <section className="sd-card sd-section" aria-labelledby="sd-desc-title">
+            <header className="sd-section-head">
+              <h2 id="sd-desc-title" className="sd-section-title">简介与详细介绍</h2>
+              <button
+                className="sd-ai-analysis-action"
+                type="button"
+                disabled={analyzing}
+                aria-busy={analyzing}
+                onClick={() => void handleAnalyze(site.id)}
+                title="重新抓取公开网页，并用模型分析分类、标签、简介和详细介绍；人工内容不会被覆盖"
+              >
+                {analyzing ? <Spinner size={13} /> : <WandSparkles size={13} aria-hidden="true" />}
+                {analyzeLabel}
+              </button>
+            </header>
             {analyzing && (
               <SiteAnalysisProgress
                 phase={site.analysisPhase ?? "queued"}
                 elapsedSeconds={analysisElapsedSeconds}
               />
             )}
-          </section>
-
-          <section className="sd-card sd-section" aria-labelledby="sd-desc-title">
-            <h2 id="sd-desc-title" className="sd-section-title">
-              详细介绍
-            </h2>
+            {site.summary ? (
+              <p className="sd-summary">{site.summary}</p>
+            ) : (
+              <p className="sd-desc sd-desc-empty">还没有简介。</p>
+            )}
             {site.description ? (
               <p className="sd-desc">{site.description}</p>
             ) : (
               <p className="sd-desc sd-desc-empty">
-                暂无详细介绍，可以点击「AI 分析入库」让 LLM 根据网页公开内容补全。
+                暂无详细介绍，可以点击「{analyzeLabel}」让模型根据网页公开内容补全。
               </p>
             )}
           </section>
 
-          <ActivityCard site={site} />
+          <TaxonomyEditor site={site} onUpdate={handleInlineUpdate} />
+          <RepoPanel site={site} now={now} />
+          <UsageCard site={site} now={now} />
         </div>
 
         <aside className="sd-side" aria-label="相关信息">
-          {/* key：编辑改分类后重挂载，回到 loading 态重新拉同分类网站 */}
+          {/* key：改分类后重挂载，回到 loading 态重新拉同分类收藏 */}
           <RelatedSitesCard
             key={site.category.id}
             siteId={site.id}
@@ -691,8 +865,8 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
 
       <LibraryDialog
         open={dialog === "edit"}
-        title="编辑网站"
-        description="修改会立即保存到当前账号的网址库。"
+        title="编辑收藏"
+        description="修改会立即保存到当前账号的收藏库。"
         size="wide"
         closeDisabled={busy}
         onClose={closeDialog}
@@ -735,8 +909,8 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
 
       <LibraryDialog
         open={dialog === "delete"}
-        title="删除网站"
-        description="此操作会从当前账号的网址库中移除该网站。"
+        title="删除收藏"
+        description="此操作会从当前账号的收藏库中移除这条收藏。"
         closeDisabled={busy}
         onClose={closeDialog}
       >
@@ -745,11 +919,11 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
             <div className="sd-delete-site">
               <SiteFavicon url={site.faviconUrl} name={site.name} size={28} />
               <div className="sd-delete-info">
-                <strong>{site.name}</strong>
+                <strong>{title}</strong>
                 <span>{host}</span>
               </div>
             </div>
-            <p className="sd-dialog-text">删除后将无法恢复，该网站会从网址库和相关视图中消失。</p>
+            <p className="sd-dialog-text">删除后无法恢复：打开记录、星标和它在 Space 里的位置都会一起移除。</p>
             {mutationError && (
               <p className="sd-form-error" role="alert">
                 {mutationError}
@@ -797,7 +971,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
             className="sd-preview-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label={`${site.name} 网站预览`}
+            aria-label={`${title} 网页预览图`}
             tabIndex={-1}
             onKeyDown={(event) => {
               if (event.key === "Tab") {
@@ -810,7 +984,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
               ref={previewCloseRef}
               type="button"
               className="sd-preview-close"
-              aria-label="关闭网站预览"
+              aria-label="关闭预览图"
               title="关闭"
               onClick={() => setPreviewOpen(false)}
             >
@@ -819,7 +993,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={previewUrl}
-              alt={`${site.name} 网站预览大图`}
+              alt={`${title} 网页预览大图`}
               width={1200}
               height={675}
               referrerPolicy="no-referrer"

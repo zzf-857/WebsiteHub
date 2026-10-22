@@ -51,7 +51,7 @@ export function RelatedSitesCard({ siteId, categoryId, categoryName }: Readonly<
         if (controller.signal.aborted) return;
         setState({
           status: "error",
-          message: error instanceof Error ? error.message : "相关网站加载失败，请稍后重试。",
+          message: error instanceof Error ? error.message : "相似收藏加载失败，请稍后重试。",
         });
       });
 
@@ -62,7 +62,7 @@ export function RelatedSitesCard({ siteId, categoryId, categoryName }: Readonly<
     <section className="sd-card sd-side-card" aria-labelledby="sd-related-title">
       <header className="sd-side-head">
         <h2 id="sd-related-title" className="sd-side-title">
-          相关网站
+          相似收藏
         </h2>
         <span className="sd-side-badge">同分类</span>
         <span className="sd-side-spacer" aria-hidden="true" />
@@ -75,7 +75,7 @@ export function RelatedSitesCard({ siteId, categoryId, categoryName }: Readonly<
       {state.status === "loading" && (
         <p className="sd-hint" role="status">
           <Spinner size={16} />
-          正在加载同分类网站…
+          正在加载同分类收藏…
         </p>
       )}
 
@@ -116,7 +116,7 @@ export function RelatedSitesCard({ siteId, categoryId, categoryName }: Readonly<
             ))}
           </ul>
         ) : (
-          <p className="sd-hint">「{categoryName}」分类下暂时没有其他网站。</p>
+          <p className="sd-hint">「{categoryName}」分类下暂时没有其他收藏。</p>
         ))}
     </section>
   );

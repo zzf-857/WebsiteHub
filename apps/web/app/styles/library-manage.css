@@ -1,0 +1,400 @@
+/* library-manage：收藏库管理模式（Q46，方向稿 A「克制工具」）。只使用 globals.css 中的设计令牌。
+   本文件在 globals.css 顶部被导入，排在旧的收藏库规则之前；所以这里的选择器都以
+   .library-workspace 打头，多一级类名来覆盖旧规则，不依赖书写顺序。 */
+
+/* ---------- 筛选条：类型 / 阅读状态 / Space ---------- */
+
+.library-workspace .library-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-top: 12px;
+}
+
+.library-workspace .library-kind-filter,
+.library-workspace .library-state-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.library-workspace .library-filter-chip,
+.library-workspace .library-segment {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    border-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.library-workspace .library-filter-chip small,
+.library-workspace .library-segment small {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.library-workspace .library-filter-chip:hover,
+.library-workspace .library-segment:hover {
+  background: var(--surface-hover);
+}
+
+.library-workspace .library-filter-chip[aria-pressed="true"] {
+  border-color: var(--action);
+  background: var(--action);
+  color: var(--on-action);
+}
+
+.library-workspace .library-filter-chip[aria-pressed="true"] small {
+  color: inherit;
+  opacity: 0.72;
+}
+
+/* 状态是一组互斥的分段按钮：连成一体，当前项用强调色浅底 */
+.library-workspace .library-state-filter {
+  gap: 0;
+}
+
+.library-workspace .library-segment {
+  border-radius: 0;
+}
+
+.library-workspace .library-segment + .library-segment {
+  margin-left: -1px;
+}
+
+.library-workspace .library-segment:first-child {
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+
+.library-workspace .library-segment:last-child {
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.library-workspace .library-segment[aria-pressed="true"] {
+  position: relative;
+  z-index: 1;
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.library-workspace .library-filter-chip:focus-visible,
+.library-workspace .library-segment:focus-visible {
+  position: relative;
+  z-index: 2;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.library-workspace .library-filter-bar .library-filter-select {
+  flex: 0 1 220px;
+}
+
+/* ---------- 网格视图：方向稿 A 的统一卡片（紧凑封面 + 文字区） ---------- */
+
+.library-workspace .library-loading-grid,
+.library-workspace .library-site-collection[data-view="grid"] {
+  grid-template-columns: repeat(auto-fill, minmax(min(272px, 100%), 1fr));
+  gap: 16px;
+}
+
+.library-workspace .library-site-collection[data-view="grid"] .library-site-card {
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.library-workspace .library-site-collection[data-view="grid"] .library-site-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+.library-workspace .library-site-cover {
+  height: 136px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-subtle);
+}
+
+.library-workspace .library-site-cover > .resource-cover {
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+  gap: 8px;
+  padding-block: 14px;
+}
+
+.library-workspace .library-site-cover > .resource-cover[data-type="image"] {
+  padding: 0;
+}
+
+.library-workspace .library-site-cover .resource-cover-repo-name {
+  font-size: 22px;
+}
+
+.library-workspace .library-site-cover .resource-cover-hook {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 15px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.library-workspace .library-site-cover > .resource-cover[data-type="article"] {
+  justify-content: center;
+}
+
+.library-workspace .library-site-cover .resource-cover-quote,
+.library-workspace .library-site-cover .resource-cover-label {
+  display: none;
+}
+
+.library-workspace .library-site-collection[data-view="grid"] .library-site-card-main,
+.library-workspace .library-site-collection[data-view="grid"] .library-site-taxonomy,
+.library-workspace .library-site-collection[data-view="grid"] .library-site-card-footer {
+  margin-inline: 16px;
+}
+
+.library-workspace .library-site-collection[data-view="grid"] .library-site-card-main {
+  margin-top: 14px;
+}
+
+.library-workspace .library-site-collection[data-view="grid"] .library-site-taxonomy {
+  padding-top: 12px;
+}
+
+.library-workspace .library-site-collection[data-view="grid"] .library-site-card-footer {
+  margin-top: 12px;
+  margin-bottom: 10px;
+  border-top-color: var(--line-soft);
+}
+
+/* 选择模式下复选框浮在封面右上角，卡片不再为它留右边距 */
+.library-workspace .library-site-collection[data-view="grid"] .library-site-card[data-selection-mode="true"] {
+  padding-right: 0;
+}
+
+/* 自定义顺序的移动按钮浮在封面左上角 */
+.library-workspace .library-site-collection[data-view="grid"] .library-site-reorder {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 8px;
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+/* ---------- 文字区（两种视图共用） ---------- */
+
+.library-workspace .library-site-host {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.library-workspace .library-site-host .site-favicon {
+  border-radius: var(--radius-xs);
+}
+
+.library-workspace .library-site-host-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-workspace .library-site-kind {
+  flex: 0 0 auto;
+}
+
+.library-workspace .library-site-title {
+  display: -webkit-box;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.library-workspace .library-site-description {
+  min-height: 0;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.library-workspace .library-category-chip,
+.library-workspace .library-tag-chip,
+.library-workspace .library-tag-overflow {
+  min-height: 22px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.library-workspace .library-site-updated {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.library-workspace .library-site-unopened {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-strong);
+  font-weight: 500;
+}
+
+.library-workspace .library-site-unopened-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.library-workspace .library-site-via {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.library-workspace .library-star-action[data-active="true"] {
+  color: var(--accent-strong);
+}
+
+/* 键盘 j / k 落在卡片上时，整张卡给出焦点环（链接本身是透明覆盖层） */
+.library-workspace .library-site-card:has(> .library-site-card-link:focus-visible) {
+  border-color: var(--focus);
+}
+
+/* ---------- 列表视图：一行一条的高密度条目 ---------- */
+
+.library-workspace .library-site-collection[data-view="list"] {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-card {
+  min-height: 0;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  box-shadow: none;
+  transform: none;
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-card:last-child {
+  border-bottom: 0;
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-card:hover {
+  background: var(--surface-hover);
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-card-main {
+  display: flex;
+  align-items: center;
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-host {
+  order: 2;
+  margin: 2px 0 0;
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-title {
+  font-size: 14px;
+  -webkit-line-clamp: 1;
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-description {
+  display: none;
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-updated {
+  display: flex;
+}
+
+.library-workspace .library-site-collection[data-view="list"] .library-site-card-link:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (max-width: 640px) {
+  .library-workspace .library-filter-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  /* 纵向排列时 flex-basis 会变成高度，这里改回按内容取高 */
+  .library-workspace .library-filter-bar .library-filter-select {
+    flex: 0 0 auto;
+  }
+
+  .library-workspace .library-kind-filter {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .library-workspace .library-filter-chip {
+    flex: 0 0 auto;
+  }
+
+  .library-workspace .library-state-filter {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .library-workspace .library-segment {
+    justify-content: center;
+    padding: 0 6px;
+  }
+
+  .library-workspace .library-site-collection[data-view="list"] .library-site-card {
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-workspace .library-filter-chip,
+  .library-workspace .library-segment {
+    transition: none;
+  }
+}

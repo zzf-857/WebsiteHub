@@ -29,6 +29,8 @@ export function siteFixture(overrides: Partial<LibrarySite> = {}): LibrarySite {
     starredAt: null,
     resurfaceMuted: false,
     meta: {},
+    resurfaceCount: 0,
+    resurfaceDueAt: null,
     ...overrides,
   };
 }

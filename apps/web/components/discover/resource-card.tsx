@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { ResourceCover } from "@/components/discover/resource-cover";
+import { useShortcutTarget } from "@/components/keyboard/shortcut-target";
 import { SiteFavicon } from "@/components/site-favicon";
 import type { LibrarySite } from "@/lib/library-contract";
 import { siteDetailHref } from "@/lib/quick-add";
@@ -25,6 +26,10 @@ type ResourceCardProps = {
   onOpen: (site: LibrarySite) => void;
   onToggleStar: (site: LibrarySite) => void;
   onMarkSeen: (site: LibrarySite) => void;
+  /** 键盘 z：推迟到下周再提醒（卡片上没有对应按钮，避免悬停层过挤）。 */
+  onSnooze: (site: LibrarySite) => void;
+  /** 键盘 j / k 的数据顺序。 */
+  shortcutOrder: number;
 };
 
 // motion 的 transition 读不到 CSS 变量，这里复写 --ease-standard 的数值
@@ -46,7 +51,15 @@ function StarGlyph({ starred }: Readonly<{ starred: boolean }>) {
   );
 }
 
-export function ResourceCard({ site, now, onOpen, onToggleStar, onMarkSeen }: Readonly<ResourceCardProps>) {
+export function ResourceCard({
+  site,
+  now,
+  onOpen,
+  onToggleStar,
+  onMarkSeen,
+  onSnooze,
+  shortcutOrder,
+}: Readonly<ResourceCardProps>) {
   const title = resourceTitle(site);
   const domain = siteDomain(site.originalUrl);
   const summary = cardOverlayText(site);
@@ -55,10 +68,25 @@ export function ResourceCard({ site, now, onOpen, onToggleStar, onMarkSeen }: Re
   const saved = formatRelativeTime(site.createdAt, now);
   // 只有点亮星标那一下才弹，初次渲染与取消星标保持静止
   const [starTouched, setStarTouched] = useState(false);
+  const shortcutRef = useShortcutTarget<HTMLElement>((command) => {
+    if (command === "open") onOpen(site);
+    else if (command === "star") {
+      setStarTouched(true);
+      onToggleStar(site);
+    } else if (command === "seen") {
+      if (!seen) onMarkSeen(site);
+    } else onSnooze(site);
+  });
 
   return (
-    <article className="resource-card" data-unopened={unopened || undefined}>
-      <Link className="resource-card-link" href={siteDetailHref(site.id)}>
+    <article
+      ref={shortcutRef}
+      className="resource-card"
+      data-unopened={unopened || undefined}
+      data-shortcut-item
+      data-shortcut-order={shortcutOrder}
+    >
+      <Link className="resource-card-link" href={siteDetailHref(site.id)} data-shortcut-focus>
         <div className="resource-card-media">
           <div className="resource-card-cover">
             <ResourceCover site={site} size="card" />

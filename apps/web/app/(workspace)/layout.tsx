@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { AuthGate } from "@/components/auth/auth-gate";
+import { GlobalShortcuts } from "@/components/keyboard/global-shortcuts";
 import { LibrarySearchTransitionProvider } from "@/components/library-search-transition";
 import { SiteHeader } from "@/components/site-header";
 import { ToastProvider } from "@/components/ui/toast";
@@ -14,6 +15,7 @@ export default function WorkspaceLayout({ children }: Readonly<{ children: React
           <div className="site-shell">
             <SiteHeader />
             {children}
+            <GlobalShortcuts />
           </div>
         </ToastProvider>
       </LibrarySearchTransitionProvider>

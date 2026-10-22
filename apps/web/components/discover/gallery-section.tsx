@@ -10,9 +10,8 @@ import {
   type GalleryEntrance,
 } from "@/components/discover/gallery-masonry";
 import { RediscoverNotice } from "@/components/discover/rediscover-parts";
-import { useSiteActions } from "@/components/discover/use-site-actions";
 import { LibraryAutoLoad } from "@/components/library/library-auto-load";
-import { useToast } from "@/components/ui/toast";
+import { useSiteQuickActions } from "@/components/library/use-site-quick-actions";
 import { ThemedSelect, type ThemedSelectOption } from "@/components/ui/themed-select";
 import { listLibrarySites } from "@/lib/library-client";
 import type {
@@ -118,8 +117,6 @@ export function GallerySection({ overview, revision }: Readonly<GallerySectionPr
   const generationRef = useRef(0);
   const entranceTimerRef = useRef<number | null>(null);
   const { ref: gridRef, grid } = useGalleryGrid();
-  const { openSite, changeSiteState } = useSiteActions();
-  const toast = useToast();
 
   const query = useCallback(
     (cursor?: string) => ({
@@ -219,41 +216,8 @@ export function GallerySection({ overview, revision }: Readonly<GallerySectionPr
     [],
   );
 
-  const handleOpen = useCallback((site: LibrarySite) => {
-    openSite(site);
-  }, [openSite]);
-
-  const handleToggleStar = useCallback(
-    (site: LibrarySite) => {
-      changeSiteState(site, { starred: !site.starred }).catch(() => {
-        toast.show({ message: "星标没有保存，请稍后重试", tone: "danger" });
-      });
-    },
-    [changeSiteState, toast],
-  );
-
-  const handleMarkSeen = useCallback(
-    (site: LibrarySite) => {
-      changeSiteState(site, { seen: true })
-        .then((saved) => {
-          toast.show({
-            message: "已标记为已看",
-            action: {
-              label: "撤销",
-              onAction: () => {
-                changeSiteState(saved, { seen: false }).catch(() => {
-                  toast.show({ message: "撤销没有成功，请稍后重试", tone: "danger" });
-                });
-              },
-            },
-          });
-        })
-        .catch(() => {
-          toast.show({ message: "没有标记成功，请稍后重试", tone: "danger" });
-        });
-    },
-    [changeSiteState, toast],
-  );
+  // 打开 / 星标 / 已看 / 推迟（键盘 z）与撤销提示和收藏库、详情页共用一套
+  const quickActions = useSiteQuickActions();
 
   const filtersActive = kind !== "all" || state !== "all";
   const kindCount = (value: KindFilter): number | null => {
@@ -352,9 +316,10 @@ export function GallerySection({ overview, revision }: Readonly<GallerySectionPr
             items={list.items}
             now={list.now}
             entrance={list.entrance}
-            onOpen={handleOpen}
-            onToggleStar={handleToggleStar}
-            onMarkSeen={handleMarkSeen}
+            onOpen={quickActions.open}
+            onToggleStar={quickActions.toggleStar}
+            onMarkSeen={quickActions.markSeen}
+            onSnooze={quickActions.snooze}
           />
         )}
 

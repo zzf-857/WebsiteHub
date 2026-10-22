@@ -23,6 +23,7 @@ import {
   DEFAULT_LIBRARY_PAGE_SIZE,
   deleteLibrarySites,
   deleteLibrarySite,
+  fetchLibraryOverview,
   getLibrarySite,
   listLibraryCategories,
   listLibrarySiteSelection,
@@ -40,14 +41,24 @@ import {
 import type {
   LibraryCategory,
   LibraryDirection,
+  LibraryOverview,
   LibrarySite,
   LibrarySiteCreateInput,
+  LibrarySiteKind,
+  LibrarySiteState,
   LibrarySiteQuery,
   LibrarySiteUpdateInput,
   LibrarySort,
   LibraryTag,
 } from "@/lib/library-contract";
-import { subscribeLibraryChanged, subscribeLibrarySearch } from "@/lib/library-events";
+import {
+  subscribeLibraryChanged,
+  subscribeLibrarySearch,
+  subscribeSiteUpdated,
+} from "@/lib/library-events";
+import { listSpaces, MAX_SPACE_PAGE_SIZE } from "@/lib/space-client";
+import type { Space } from "@/lib/space-contract";
+import { withSiteUsage } from "@/lib/site-usage";
 import { canStartLibraryPageLoad } from "@/lib/library-pagination";
 import {
   hasRefreshableSiteAnalysis,
@@ -64,8 +75,11 @@ import {
   isAbortError,
   isLibraryErrorCode,
   isLibraryNotFound,
+  readStoredViewMode,
+  storeViewMode,
 } from "@/components/library/library-workspace-parts";
 import { useLibrarySelection } from "@/components/library/use-library-selection";
+import { useSiteQuickActions } from "@/components/library/use-site-quick-actions";
 
 // 全站统一使用共享版网站图标（size 为像素值）；
 // 旧枚举尺寸按 small=20 / medium=24 / large=32 迁移
@@ -79,6 +93,7 @@ type AnalysisRefreshWaiter = {
 
 export function useLibraryWorkspace() {
   const [intent] = useState(initialIntent);
+  const quickActions = useSiteQuickActions();
   const [categories, setCategories] = useState<LibraryCategory[]>([]);
   const [tags, setTags] = useState<LibraryTag[]>([]);
   const [taxonomyLoading, setTaxonomyLoading] = useState(true);
@@ -87,7 +102,15 @@ export function useLibraryWorkspace() {
   const [searchInput, setSearchInput] = useState(intent.query);
   const [searchQuery, setSearchQuery] = useState(intent.query);
   const [categoryId, setCategoryId] = useState(intent.categoryId);
-  const [tagId, setTagId] = useState("");
+  const [tagId, setTagId] = useState(intent.tagId);
+  // 管理模式的新筛选（Q46）：资源类型、阅读状态、Space
+  const [kind, setKind] = useState<LibrarySiteKind | "">(intent.kind);
+  const [siteState, setSiteState] = useState<LibrarySiteState | "">(intent.state);
+  const [spaceId, setSpaceId] = useState(intent.spaceId);
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [overview, setOverview] = useState<LibraryOverview | null>(null);
+  // 相对时间（“3 天前收藏”）的基准时刻：每次取数时记录，避免渲染期读时钟
+  const [now, setNow] = useState(0);
   const [pinnedOnly, setPinnedOnly] = useState(intent.pinnedOnly);
   // 网址库初始没有搜索词；URL 即使传入 relevance 也不能向后端发出非法组合。
   const [sort, setSort] = useState<LibrarySort>(
@@ -105,7 +128,18 @@ export function useLibraryWorkspace() {
       searchInputRef.current?.focus({ preventScroll: true });
     }
   }, [intent.focusSearch]);
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [viewMode, setViewModeState] = useState<ViewMode>("grid");
+  // 网格 / 列表是每位访问者自己的偏好，记在本机；存储不可用时只在本次会话生效
+  useEffect(() => {
+    const stored = readStoredViewMode();
+    if (stored === null) return;
+    const frame = window.requestAnimationFrame(() => setViewModeState(stored));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+  const setViewMode = useCallback((next: ViewMode) => {
+    setViewModeState(next);
+    storeViewMode(next);
+  }, []);
 
   const [pinnedPage, setPinnedPage] = useState<SitePageState>(EMPTY_PAGE);
   const [regularPage, setRegularPage] = useState<SitePageState>(EMPTY_PAGE);
@@ -192,10 +226,34 @@ export function useLibraryWorkspace() {
     ...(searchQuery ? { q: searchQuery } : {}),
     ...(categoryId ? { categoryId } : {}),
     ...(tagId ? { tagId } : {}),
+    ...(spaceId ? { spaceId } : {}),
+    ...(kind ? { kind } : {}),
+    ...(siteState ? { state: siteState } : {}),
     sort,
     direction,
     limit: DEFAULT_LIBRARY_PAGE_SIZE,
-  }), [categoryId, direction, searchQuery, sort, tagId]);
+  }), [categoryId, direction, kind, searchQuery, siteState, sort, spaceId, tagId]);
+
+  // 类型计数与 Space 列表只是筛选的辅助信息：读失败时筛选照常可用，只是不显示计数
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchLibraryOverview(controller.signal)
+      .then(setOverview)
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [refreshVersion]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void listSpaces({ sort: "name", direction: "asc", limit: MAX_SPACE_PAGE_SIZE }, controller.signal)
+      .then((page) => {
+        setSpaces(page.items);
+        setSpaceId((current) => (
+          !current || page.items.some((space) => space.id === current) ? current : ""
+        ));
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
   const selectionScope = useMemo(
     () => JSON.stringify({ pinnedOnly, ...siteQuery }),
     [pinnedOnly, siteQuery],
@@ -344,6 +402,7 @@ export function useLibraryWorkspace() {
             loadingMore: false,
           } : EMPTY_PAGE,
         };
+        setNow(Date.now());
         const refreshedSites = [...pinnedItems, ...regularItems];
         if (!preserveLoadedSites) retainVisibleSelection(refreshedSites);
       } catch (error) {
@@ -420,12 +479,29 @@ export function useLibraryWorkspace() {
   // 顶栏快速收藏发生在本页时：新增后刷新列表与分类计数；
   // 重复网址时清掉其余筛选、用网址就地搜索，定位已有收藏
   useEffect(() => subscribeLibraryChanged(refreshAfterMutation), [refreshAfterMutation]);
+  // 星标 / 已看 / 推迟 / 打开（含键盘快捷键与撤销）就地替换使用信号，不重新取数
+  useEffect(
+    () =>
+      subscribeSiteUpdated((site) => {
+        const patch = (page: SitePageState): SitePageState => (
+          page.items.some((item) => item.id === site.id)
+            ? { ...page, items: page.items.map((item) => withSiteUsage(item, site)) }
+            : page
+        );
+        setPinnedPage(patch);
+        setRegularPage(patch);
+      }),
+    [],
+  );
   useEffect(
     () =>
       subscribeLibrarySearch((query) => {
         clearSelection();
         setCategoryId("");
         setTagId("");
+        setSpaceId("");
+        setKind("");
+        setSiteState("");
         setPinnedOnly(false);
         setSearchInput(query);
         setSearchQuery(query);
@@ -783,6 +859,9 @@ export function useLibraryWorkspace() {
     setSearchQuery("");
     setCategoryId("");
     setTagId("");
+    setSpaceId("");
+    setKind("");
+    setSiteState("");
     setPinnedOnly(false);
     setSort((current) => current === "relevance" ? "updated" : current);
   };
@@ -790,7 +869,9 @@ export function useLibraryWorkspace() {
   const totalMatched = pinnedPage.matchedCount + (pinnedOnly ? 0 : regularPage.matchedCount);
   const totalLibrarySites = categories.reduce((total, category) => total + category.siteCount, 0);
   const hasSites = pinnedPage.items.length > 0 || regularPage.items.length > 0;
-  const hasActiveFilters = Boolean(searchQuery || categoryId || tagId || pinnedOnly);
+  const hasActiveFilters = Boolean(
+    searchQuery || categoryId || tagId || spaceId || kind || siteState || pinnedOnly,
+  );
   // 只有「自定义顺序 + 选中单个分类」时才允许重排：跨分类或按名称排序时，
   // 「上移一位」没有可以落库的含义——写进哪个分类的哪个位置？说不清就不给按钮。
   const reorderable = sort === "custom" && Boolean(categoryId);
@@ -832,6 +913,11 @@ export function useLibraryWorkspace() {
 
   const collectionProps = {
     viewMode,
+    now,
+    onOpen: quickActions.open,
+    onToggleStar: (site: LibrarySite) => void quickActions.toggleStar(site),
+    onMarkSeen: (site: LibrarySite) => void quickActions.markSeen(site),
+    onSnooze: (site: LibrarySite) => void quickActions.snooze(site),
     selectionMode,
     selectionBusy: allMatchingSelectionBusy,
     selectedSiteIds,
@@ -873,6 +959,14 @@ export function useLibraryWorkspace() {
     handleUpdate,
     hasActiveFilters,
     hasSites,
+    kind,
+    overview,
+    setKind,
+    setSiteState,
+    setSpaceId,
+    siteState,
+    spaceId,
+    spaces,
     loadMore,
     loadTaxonomies,
     loadedSiteCount,

@@ -143,6 +143,7 @@ export function buildLibrarySiteSearchParams(query: LibrarySiteQuery = {}): URLS
   if (q) params.set("q", q);
   if (query.categoryId?.trim()) params.set("category_id", query.categoryId.trim());
   if (query.tagId?.trim()) params.set("tag_id", query.tagId.trim());
+  if (query.spaceId?.trim()) params.set("space_id", query.spaceId.trim());
   if (query.pinned !== undefined) params.set("pinned", String(query.pinned));
   if (query.kind !== undefined) params.set("kind", assertLibrarySiteKind(query.kind));
   if (query.state !== undefined) params.set("state", assertLibrarySiteState(query.state));

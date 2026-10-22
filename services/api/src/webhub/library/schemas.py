@@ -195,6 +195,10 @@ class SiteResponse(BaseModel):
     resurface_muted: bool
     # 由 ``meta_json`` 解析的按类型元数据（仓库为 host/owner/repo）；损坏时为 {}。
     meta: dict[str, Any]
+    # Q46 详情页“使用记录”：累计推迟次数与当前推迟到期时间（未推迟为 null）。
+    # 给默认值，让相似排查等只读快照不必伪造调度状态。
+    resurface_count: int = Field(default=0, ge=0)
+    resurface_due_at: datetime | None = None
 
 
 MAX_SNOOZE_DAYS = 90
