@@ -1,0 +1,257 @@
+/* 扩展页面读不到网站的 CSS，这里镜像 apps/web/app/globals.css 的同名令牌（浅色 :root、深色 data-theme="dark"）。
+   改网站令牌时同步这里；页面只用变量，不写死颜色。 */
+:root {
+  color-scheme: light;
+  --canvas: #f5f6f7;
+  --surface: #ffffff;
+  --surface-subtle: #f1f3f4;
+  --surface-input: #fbfcfc;
+  --text: #16181a;
+  --text-secondary: #3d444b;
+  --text-muted: #5e666e;
+  --line: #e3e6e8;
+  --line-strong: #c6cdd2;
+  --accent-soft: #edf6d4;
+  --focus: #a8d42c;
+  --action: #16181a;
+  --action-hover: #2b2f33;
+  --on-action: #ffffff;
+  --surface-hover: #eef1f2;
+  --success: #4f7a0b;
+  --warning: #aa6a14;
+  --danger: #c64c44;
+  --shadow-card: 0 1px 2px rgb(20 24 28 / 4%);
+  --radius-xs: 4px;
+  --radius-md: 7px;
+  --radius-lg: 8px;
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-hover: 120ms;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --canvas: #0e1012;
+    --surface: #16181b;
+    --surface-subtle: #202327;
+    --surface-input: #131518;
+    --text: #f2f3f5;
+    --text-secondary: #c6cbd1;
+    --text-muted: #9aa1a9;
+    --line: #26292d;
+    --line-strong: #3a3e43;
+    --accent-soft: #24300c;
+    --focus: #b9e845;
+    --action: #f0f2f4;
+    --action-hover: #dce0e4;
+    --on-action: #16181a;
+    --surface-hover: #24272b;
+    --success: #a3d63a;
+    --warning: #e3a44e;
+    --danger: #ea827a;
+    --shadow-card: none;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.options {
+  display: grid;
+  gap: 16px;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 40px 16px 56px;
+}
+
+.options-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.options-header img {
+  border-radius: var(--radius-xs);
+}
+
+h1 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.options-header p,
+.hint {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.hint {
+  font-size: 13px;
+}
+
+.panel {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.usage {
+  gap: 0;
+}
+
+.usage ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  color: var(--text-secondary);
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+label {
+  font-weight: 600;
+}
+
+input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--surface-input);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+}
+
+input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+input:focus-visible,
+.button:focus-visible,
+.link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.notice {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  background: var(--surface-subtle);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-xs);
+}
+
+.link {
+  justify-self: start;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-underline-offset: 3px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.button {
+  padding: 7px 14px;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--duration-hover) var(--ease-standard);
+}
+
+.button:hover {
+  background: var(--surface-hover);
+}
+
+.button.primary {
+  color: var(--on-action);
+  background: var(--action);
+  border-color: var(--action);
+}
+
+.button.primary:hover {
+  background: var(--action-hover);
+}
+
+.button.quiet {
+  color: var(--text-muted);
+  border-color: transparent;
+  background: transparent;
+}
+
+.button.quiet:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.status {
+  min-height: 1.6em;
+  margin: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.status[data-tone="success"] {
+  color: var(--success);
+}
+
+.status[data-tone="error"] {
+  color: var(--danger);
+}
+
+kbd {
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: none;
+  }
+}

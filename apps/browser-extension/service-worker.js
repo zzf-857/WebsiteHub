@@ -1,6 +1,6 @@
 "use strict";
 
-importScripts("protocol.js");
+importScripts("protocol.js", "save-core.js", "save-worker.js");
 
 const protocol = globalThis.WebHubProtocol;
 const MAX_TABS = 100;
