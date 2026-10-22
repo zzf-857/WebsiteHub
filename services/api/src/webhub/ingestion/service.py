@@ -1304,6 +1304,14 @@ async def _refresh_repository(
     refresh_stats = reference is not None and (
         force_refresh or not stats_are_fresh(previous, now)
     )
+    if (
+        not refresh_stats
+        and isinstance(previous, dict)
+        and previous.get("not_found") is True
+    ):
+        # GitHub answered 404 within the last week: the README request would
+        # fail the same way and only spend the (often anonymous) quota.
+        include_readme = False
     if reference is None or not (refresh_stats or include_readme):
         await session.rollback()
         return ""

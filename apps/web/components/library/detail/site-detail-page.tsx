@@ -53,6 +53,7 @@ import { AgentHelpCard } from "./agent-help-card";
 import { JoinSpaceDialog } from "./join-space-dialog";
 import { ANALYSIS_STATUS_LABELS, formatDay, hostOf, SOURCE_LABELS } from "./meta";
 import { RelatedSitesCard } from "./related-sites-card";
+import { RepoPanelCard } from "./repo-panel-card";
 
 /* 网站详情页（设计稿 1d）。
    数据链路与旧版保持一致：getLibrarySite 取数、非法/404/错误三种兜底、
@@ -678,6 +679,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
         </div>
 
         <aside className="sd-side" aria-label="相关信息">
+          <RepoPanelCard site={site} />
           {/* key：编辑改分类后重挂载，回到 loading 态重新拉同分类网站 */}
           <RelatedSitesCard
             key={site.category.id}

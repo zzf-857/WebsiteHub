@@ -199,8 +199,10 @@ def test_stats_are_stored_without_touching_version_or_updated_at(
         assert listed.status_code == 200
         assert listed.json()["meta"]["github"]["stars"] == 52_310
 
-        # A background pass within seven days reuses the stats: no request.
-        _analyze(tmp_path, site["id"], enricher, automatic=True)
+        # A background (batch) pass within seven days reuses the stats: no
+        # request.  The site still lacks an LLM analysis, so the batch claim
+        # really runs this analysis.
+        assert _analyze(tmp_path, site["id"], enricher, bulk=True) is not None
         assert len(enricher.calls) == 1
 
         # A person asking again refreshes, conditionally on the stored ETag.
@@ -325,3 +327,35 @@ def test_a_failing_repository_enricher_never_blocks_analysis(
         assert outcome is not None
         assert outcome.status == "complete"
         assert "github" not in json.loads(_row(tmp_path, site["id"])[3])
+
+
+def test_a_recent_not_found_skips_the_readme_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CapturingEnricher:
+        async def enrich(self, request: SiteEnrichmentRequest) -> object:
+            raise SiteEnrichmentUnavailableError("模型未返回可用结果")
+
+    enricher = FakeRepositoryEnricher(
+        [GitHubFetchResult("not_found")],
+        readme="never requested",
+    )
+    with _environment(tmp_path, monkeypatch) as client:
+        site = _create(client)
+        _analyze(tmp_path, site["id"], enricher)
+        assert json.loads(_row(tmp_path, site["id"])[3])["github"]["not_found"] is True
+
+        # A batch LLM pass within seven days reuses the 404: a README request
+        # for a missing or private repository would only spend quota.
+        outcome = _analyze(
+            tmp_path,
+            site["id"],
+            enricher,
+            bulk=True,
+            use_llm=True,
+            enricher=CapturingEnricher(),
+        )
+
+        assert outcome is not None
+        assert len(enricher.calls) == 1
