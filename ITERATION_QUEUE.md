@@ -1817,7 +1817,7 @@ PRD 第 0 节同步记录。讨论过程与未筛选想法见 `IDEAS.md`。本�
    统一更新状态和基线，避免冲突。并行条目之间约定文件归属：`site-header.tsx` 归 Q44，`/settings/agents` 归 Q43。
 3. 含界面的条目（Q43 设置页、Q44、Q46、Q50）合并前必须过**设计评审**（见下）。
 4. 本地会话不推送 GitHub；云端会话只推送到会话指定的 `claude/*` 分支。
-5. 2026-10-21 曾开始实现 Q42 与 Q49，因资源调整中止，未提交任何代码；两者均按本计划从头实现。
+5. Q42 与 Q49 已于 2026-10-22 完成并合并。为节省额度，后续每个条目只配 1 名审查员（兼修复），审查后由总负责人合并推送。
 
 ### 设计评审方法
 
@@ -1853,7 +1853,14 @@ PRD 第 0 节同步记录。讨论过程与未筛选想法见 `IDEAS.md`。本�
 
 ## Q42 · 收藏模型：资源类型、阅读状态与重温调度（后端 + 前端契约）
 
-状态: 待做
+状态: 已完成 · a4b0fe3 + 0a8dc00 + 059a6c3（单人审查修复：重温阈值按 UTC 日推进）
+实现说明（与下文规格的差异，以此为准）：
+- 路由沿用既有前缀：`POST /api/library/sites/{id}/open`、`PUT /api/library/sites/{id}/state`、`GET /api/library/sites`
+  的 `kind` / `state` / `sort=opened`；`GET /api/library/overview` 与 `GET /api/discover/rediscover` 与规格一致。
+- 类型推断放在 `Site.kind` / `meta_json` 的插入期默认值上，所有建站路径（手动、Agent、批量、书签导入）自动生效；
+  迁移内带一份冻结的推断规则副本（历史迁移不引用应用代码）。
+- “未打开”= 从未打开且未标记已看；`sort=opened` 空值始终排后；重温的“满 3 天”与兴趣窗口按 UTC 日起点计算，同日结果全天稳定。
+- SQLite 返回的时间不带时区偏移（与既有 created_at 一致），前端按 UTC 解析。
 对应: D1 / D3 的数据地基；IDEAS I-02、I-03
 
 迁移 `20261021_0020`（原生 `ADD COLUMN`，不要 batch 重建 `sites`——FTS 触发器会炸；降级参考 0019 先卸下
@@ -2149,7 +2156,10 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q49 · Linux ARM64 部署（单容器 + Compose + Tailscale 私网）
 
-状态: 待做
+状态: 代码完成 · ea533ec + fcaecf4（合并 d388201），待用户在 ARM64 服务器实测
+已验证：本机按生产环境变量跑通入口逻辑（迁移、双进程、经 Next 的健康检查、信号与异常退出、Host 白名单、
+模拟 tailscale serve 的 Origin 与 Secure Cookie，共 50/50 项）、备份与恢复、`docker compose config`、shellcheck、hadolint。
+未验证：真实 `docker build`（本环境无 Docker 守护进程）、ARM64 镜像、真实 Tailscale——按 README“部署到自己的服务器”章节验收。
 对应: D7；IDEAS I-11（可与 Q43、Q44 并行）
 
 - 镜像：仓库根 `Dockerfile` 多阶段构建，`linux/arm64` 与 `linux/amd64` 均可（官方多架构基础镜像：Node 24 与 Python 3.13；
@@ -2356,9 +2366,9 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-当前证据基线：前端完整 222/222、Q41 受影响后端六文件 127/127、后端完整 708/708；完整 Ruff/ESLint、
-TypeScript、Next.js 生产构建（静态页 12/12）与根级 `pnpm check` 已通过。本轮新增功能必须带测试，
-已确认的基线只能涨不能降。
+当前证据基线（2026-10-22 · Q42 合并后）：后端完整 pytest **845 passed / 2 skipped**、Ruff 通过；前端 Node 测试
+**235 项（234 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。注意 `pyproject` 已设 `addopts = "-q"`，
+门禁再加 `-q` 会隐藏汇总行，需要计数时去掉 `-q` 运行。本轮新增功能必须带测试，已确认的基线只能涨不能降。
 
 ## 不可动摇的约束
 
