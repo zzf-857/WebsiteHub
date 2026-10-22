@@ -1914,7 +1914,10 @@ API：
 
 ## Q43 · MCP 服务与 Agent 令牌
 
-状态: 待做
+状态: 已完成 · d0f7933 + 270540c（合并 5122700）
+实现说明：`/api/mcp` 无状态 JSON 端点（外部经 `/api/backend/mcp`），Bearer 令牌只存哈希、只读/读写、写操作审计、
+无删除工具；`search_resources` 为关键词全匹配，工具说明已提示 Agent 用 1–3 个关键词并在无结果时换词重试；
+`save_resource` 长标题自动截断到 160 字。真实 Hermes / grokbot 连接待用户实测。
 对应: D2 / D3；IDEAS I-05；依赖 Q42
 
 数据：迁移 `20261021_0021` 新建 `agent_tokens`（账号、名称 1–40 字、令牌 SHA-256、展示前缀、`scopes`、创建 /
@@ -1983,7 +1986,10 @@ Agent 活动列表（时间、令牌名、工具、摘要）。契约与客户�
 
 ## Q44 · 发现页（新首页）
 
-状态: 待做
+状态: 已完成 · d614b1e + ac9ca54（合并 2f108b8）+ 0a3a737（设计评审修正）
+实现说明：首页即发现页（今日重温 + 封面瀑布流 + 快速收藏）；站内对话迁到 `/chat`，旧 `/?c=` 与 `/?ask=` 深链 307 转到 `/chat`；
+顶栏账号菜单含“Agent 接入”。设计评审（浅/深 1440、手机 390 截图）后修正：主卡不再重复收藏天数、仓库封面无数据时不显示底行、
+窄屏类型标签在自身容器内横向滚动、深色站点底色降饱和。真实 Chrome 的悬停、键盘与动效由用户验收。
 对应: D4 / D5 / D6；IDEAS I-01、I-02、I-09；依赖 Q42
 
 路由与外框：
@@ -2366,8 +2372,8 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-当前证据基线（2026-10-22 · Q42 合并后）：后端完整 pytest **845 passed / 2 skipped**、Ruff 通过；前端 Node 测试
-**235 项（234 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。注意 `pyproject` 已设 `addopts = "-q"`，
+当前证据基线（2026-10-22 · Q43 / Q44 合并后）：后端完整 pytest **869 passed / 2 skipped**、Ruff 通过；前端 Node 测试
+**301 项（300 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。注意 `pyproject` 已设 `addopts = "-q"`，
 门禁再加 `-q` 会隐藏汇总行，需要计数时去掉 `-q` 运行。本轮新增功能必须带测试，已确认的基线只能涨不能降。
 
 ## 不可动摇的约束
