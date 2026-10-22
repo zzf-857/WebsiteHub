@@ -56,6 +56,7 @@ WebHub 不是在传统网址导航页旁边附加一个聊天框，而是让 Age
 - [Chrome / Edge Space 分组助手](#chrome--edge-space-分组助手)
 - [本地数据与隐私](#本地数据与隐私)
 - [部署到自己的服务器（Linux / ARM64）](#部署到自己的服务器linux--arm64)
+- [订阅流与自部署 RSSHub](./docs/feeds-rsshub.md)
 - [开发与验证](#开发与验证)
 - [项目状态与限制](#项目状态与限制)
 - [项目文档](#项目文档)

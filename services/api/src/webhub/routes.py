@@ -6,6 +6,7 @@ from webhub.auth.routes import router as auth_router
 from webhub.bookmarks.routes import router as bookmarks_router
 from webhub.chat.routes import router as chat_router
 from webhub.config import Settings
+from webhub.feeds.routes import router as feeds_router
 from webhub.library.engagement_routes import router as library_engagement_router
 from webhub.library.routes import router as library_router
 from webhub.providers.routes import router as providers_router
@@ -19,6 +20,7 @@ router.include_router(chat_router, prefix="")
 router.include_router(agent_router, prefix="")
 router.include_router(agent_access_router, prefix="")
 router.include_router(bookmarks_router, prefix="")
+router.include_router(feeds_router, prefix="")
 router.include_router(library_router, prefix="")
 router.include_router(library_engagement_router, prefix="")
 router.include_router(providers_router, prefix="")

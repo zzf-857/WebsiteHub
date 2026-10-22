@@ -25,6 +25,7 @@ from webhub.agent_access.tokens import AgentIdentity, record_write
 from webhub.db.database import Database
 from webhub.db.locking import reserve_account_taxonomy
 from webhub.db.models import Category, Site, SiteTag, Tag
+from webhub.feeds import service as feed_service
 from webhub.ingestion.enrichment import normalize_site_tag_name
 from webhub.library import service
 from webhub.library.analysis_queue import schedule_site_enrichment
@@ -556,3 +557,40 @@ async def mark_resource(
         summary=summary,
     )
     return {"action": action, "resource": resource_detail(final)}
+
+
+MAX_FEED_DIGEST_LIMIT = 20
+
+
+async def get_feed_digest(
+    session: AsyncSession,
+    identity: AgentIdentity,
+    *,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Today's picks from the user's RSS / podcast subscriptions (read-only)."""
+
+    picks = await feed_service.daily_picks(
+        session,
+        identity.user_id,
+        limit=max(1, min(limit, MAX_FEED_DIGEST_LIMIT)),
+    )
+    return {
+        "generated_at": _iso(datetime.now(UTC)),
+        "items": [
+            {
+                "title": pick.item.title,
+                "url": pick.item.url,
+                "source": pick.feed_title,
+                "kind": pick.feed_kind,
+                "summary": pick.item.summary[:280],
+                "author": pick.item.author,
+                "published_at": _iso(pick.item.published_at),
+                "audio_url": pick.item.audio_url,
+                "duration_seconds": pick.item.duration_seconds,
+                "saved_to_library": pick.item.saved_site_id is not None,
+                "reason": pick.reason,
+            }
+            for pick in picks
+        ],
+    }
