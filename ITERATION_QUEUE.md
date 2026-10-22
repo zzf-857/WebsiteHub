@@ -2101,7 +2101,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q45 · GitHub 仓库富化
 
-状态: 待做
+状态: 已完成 · 2bad2f3 + 4433cfd（合并 dd72142）。小尾巴：详情页仓库面板对 404 / 限流尚无提示文案。
 对应: IDEAS I-04；依赖 Q42
 
 - 时机：分析流程遇到 `kind=repo` 且主机为 github.com 时调用；详情页“重新分析”也会刷新；统计数据超过 7 天视为过期。
@@ -2120,7 +2120,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q46 · 详情页与收藏库管理改版、键盘操作
 
-状态: 待做
+状态: 已完成 · 931186b + 9424614（已合并），待真实浏览器验收与截图设计评审
 对应: D5 / D6；依赖 Q44
 
 - 详情页 `/library/[id]`：顶部大封面（复用 Q44 封面组件，最大高 360）；标题、`类型 · 域名 · 收藏时间 · 来源`；
@@ -2135,7 +2135,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q47 · 浏览器扩展「收藏当前页」
 
-状态: 待做
+状态: 已完成（合并 f0221a0），待 Chrome / Edge 侧载验收（清单见 apps/browser-extension/README.md）
 对应: IDEAS I-06；依赖 Q43
 
 - 在现有 MV3 扩展中新增：工具栏按钮、页面与链接右键菜单“收藏到 WebHub”、快捷键 `Alt+Shift+S`。权限增加
@@ -2372,8 +2372,8 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-当前证据基线（2026-10-22 · Q43 / Q44 合并后）：后端完整 pytest **869 passed / 2 skipped**、Ruff 通过；前端 Node 测试
-**301 项（300 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。注意 `pyproject` 已设 `addopts = "-q"`，
+当前证据基线（2026-10-22 · Q43 / Q44 合并后）：后端完整 pytest **919 passed / 2 skipped**、Ruff 通过；前端 Node 测试
+**365 项（364 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。注意 `pyproject` 已设 `addopts = "-q"`，
 门禁再加 `-q` 会隐藏汇总行，需要计数时去掉 `-q` 运行。本轮新增功能必须带测试，已确认的基线只能涨不能降。
 
 ## 不可动摇的约束
