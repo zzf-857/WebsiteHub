@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WebHub 扩展设置</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="options">
+      <header class="options-header">
+        <img src="icons/icon-48.png" alt="" width="32" height="32">
+        <div>
+          <h1>WebHub</h1>
+          <p>把正在看的网页一键收藏到你的 WebHub。</p>
+        </div>
+      </header>
+
+      <form id="settings-form" class="panel" novalidate>
+        <div class="field">
+          <label for="origin">WebHub 地址</label>
+          <input id="origin" name="origin" type="text" inputmode="url" autocomplete="url"
+            spellcheck="false" placeholder="https://<机器>.<tailnet>.ts.net"
+            aria-describedby="origin-hint origin-warning">
+          <p class="hint" id="origin-hint">填网站首页地址即可；本机开发用 http://localhost:3100。</p>
+          <p class="notice" id="origin-warning" hidden>
+            这是明文 HTTP 地址，令牌会不加密地经过网络。建议改用 Tailscale 提供的 https 地址。
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="token">读写令牌</label>
+          <input id="token" name="token" type="password" autocomplete="off" spellcheck="false"
+            placeholder="whk_…" aria-describedby="token-hint">
+          <p class="hint" id="token-hint">
+            在 WebHub「设置 → Agent 接入」创建<strong>读写</strong>令牌后粘贴到这里；只读令牌不能收藏。
+            令牌只保存在本机浏览器，不会同步到云端。
+          </p>
+          <a id="agents-link" class="link" target="_blank" rel="noopener noreferrer" hidden>
+            打开 WebHub 的 Agent 接入设置
+          </a>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="button primary">保存</button>
+          <button type="button" id="test" class="button">测试连接</button>
+          <button type="button" id="clear" class="button quiet">清除设置</button>
+        </div>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </form>
+
+      <section class="panel usage" aria-labelledby="usage-title">
+        <h2 id="usage-title">怎么收藏</h2>
+        <ul>
+          <li>点击浏览器工具栏上的 WebHub 按钮。</li>
+          <li>快捷键 <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>（可在浏览器的扩展快捷键设置里修改）。</li>
+          <li>在页面或链接上点右键，选「收藏到 WebHub」。</li>
+        </ul>
+        <p class="hint">
+          按钮上的标记：✓ 已收藏，= 之前收藏过，! 没有成功（系统通知会说明原因）。
+          收藏后 WebHub 会在一两分钟内自动补全简介、分类和封面。
+        </p>
+      </section>
+    </main>
+    <script src="save-core.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

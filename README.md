@@ -199,12 +199,12 @@ flowchart LR
 | **Web** | Next.js 16、React 19、TypeScript、Vercel AI SDK、Tailwind CSS 4、Motion、Streamdown |
 | **API** | Python 3.13、FastAPI、LangGraph、SQLAlchemy、Alembic；认证、Agent、书签、网址库、Provider、搜索、Space 同属一个业务服务 |
 | **数据** | 本地 SQLite + 全文检索 + 可重建站点向量；业务数据始终按账号隔离 |
-| **浏览器助手** | 原生 JavaScript MV3 扩展，只负责本机 WebHub 与浏览器标签组之间的受限桥接 |
+| **浏览器助手** | 原生 JavaScript MV3 扩展：「收藏当前页」（经 MCP 令牌）与本机 WebHub 标签组受限桥接 |
 
 ```text
 apps/
 ├── web/                    Next.js 界面、同源 API 代理与流式上传入口
-└── browser-extension/      可选的 Chrome / Edge Space 分组助手
+└── browser-extension/      可选的 Chrome / Edge 扩展（收藏当前页 + Space 分组）
 services/api/
 ├── src/webhub/             FastAPI 业务模块（auth / library / bookmarks / chat / agent / providers / spaces / search）
 ├── alembic/                SQLite schema 迁移
@@ -362,7 +362,9 @@ WebHub 不内置任何供应商密钥，模型访问一律走 per-account 的 Pr
 
 Chrome 和 Edge 需要分别安装。助手只接受本机 `localhost:3100` / `127.0.0.1:3100` 页面，使用局域网 IP 打开的客户端页面不能连接它；未连接时 WebHub 会明确降级为普通标签页打开。单次最多处理 100 个 HTTP(S) 地址。
 
-扩展清单只申请 `storage` 与 `tabGroups` 权限，不读取标签页正文、浏览历史、Cookie 或账号密钥。为了在响应丢失后安全恢复，网页与扩展会在本机保存 Space 名称、URL 集合和操作回执，最长保留 7 天。
+扩展（名称「WebHub」）申请 `storage`、`tabGroups`、`activeTab`、`contextMenus` 与 `notifications` 权限；访问你配置的 WebHub 地址所需的主机权限只在选项页点「保存 / 测试连接」时按需申请（`optional_host_permissions`），安装时不申请任何网站访问。扩展不读取标签页正文、浏览历史或 Cookie。为了在响应丢失后安全恢复，网页与扩展会在本机保存 Space 名称、URL 集合和操作回执，最长保留 7 天。
+
+「收藏当前页」（工具栏按钮、`Alt+Shift+S`、页面与链接右键菜单）只在你点击时读取当前页 URL 与标题，经 MCP `save_resource` 发给你配置的 WebHub；WebHub 地址与读写令牌只存 `chrome.storage.local`，不随浏览器账号同步。选项页设置与 Chrome / Edge 手动验收清单见 `apps/browser-extension/README.md`。
 
 ## 本地数据与隐私
 
