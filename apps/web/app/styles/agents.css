@@ -1,0 +1,412 @@
+/* agents：设置 → Agent 接入（Q43）。只用 globals.css 的设计令牌，圆角 ≤8px。
+   页面骨架、分区头、按钮、徽标、弹层与表单字段沿用 providers.css 的 provider-*，
+   本文件只补令牌列表、配置片段、权限单选与活动列表。命名一律 agent- 前缀。 */
+
+/* ============ 令牌列表 ============ */
+
+.agent-token-list,
+.agent-activity-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  list-style: none;
+}
+
+.agent-token-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.agent-token-row:first-child,
+.agent-activity-row:first-child {
+  border-top: 0;
+}
+
+.agent-token-main {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-token-name {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-token-prefix,
+.agent-endpoint-url,
+.agent-secret-value,
+.agent-snippet-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.agent-token-prefix {
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.agent-token-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ============ MCP 地址与配置片段 ============ */
+
+.agent-endpoint {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.agent-endpoint-label {
+  flex-shrink: 0;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.agent-endpoint-url {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.agent-snippet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.agent-snippet {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.agent-snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.agent-snippet-titles {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-snippet-title {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.agent-snippet-hint {
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-snippet-code {
+  flex: 1;
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.agent-snippet-code:focus-visible,
+.agent-secret-value:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--focus) 60%, transparent);
+  outline: none;
+}
+
+/* 复制按钮在反馈文字切换时不抖动宽度 */
+.agent-copy-btn {
+  flex-shrink: 0;
+  min-width: 76px;
+  justify-content: center;
+}
+
+/* ============ 创建对话框 ============ */
+
+.agent-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.agent-scope-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.agent-scope-group > legend {
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+/* 保留原生 radio 的键盘与读屏语义，只替换外观 */
+.agent-scope-option {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-hover) var(--ease-standard),
+    background-color var(--duration-hover) var(--ease-standard);
+}
+
+.agent-scope-option:hover {
+  border-color: var(--line-strong);
+}
+
+.agent-scope-option > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.agent-scope-mark {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface-input);
+}
+
+.agent-scope-option:has(> input:checked) {
+  border-color: var(--accent-mid);
+  background: var(--accent-tint);
+}
+
+.agent-scope-option > input:checked + .agent-scope-mark {
+  border-color: var(--accent-mid);
+}
+
+.agent-scope-option > input:checked + .agent-scope-mark::after {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-mid);
+  content: "";
+}
+
+.agent-scope-option:has(> input:focus-visible) {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent);
+}
+
+.agent-scope-group:disabled .agent-scope-option {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.agent-scope-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-scope-name {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.agent-scope-desc {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* 一次性明文：警示条 + 等宽可选中文本 */
+.agent-once-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  color: var(--warning);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-once-warning svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.agent-secret {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+}
+
+.agent-secret-value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+  user-select: all;
+}
+
+/* ============ 活动列表 ============ */
+
+.agent-activity-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 120px) auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px 14px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+
+.agent-activity-time {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-activity-token {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-activity-tool {
+  justify-self: start;
+}
+
+.agent-activity-summary {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* ============ 窄屏 ============ */
+
+@media (max-width: 767px) {
+  .agent-token-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .agent-token-meta {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    white-space: normal;
+  }
+
+  .agent-token-revoke {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .agent-endpoint {
+    flex-wrap: wrap;
+  }
+
+  .agent-endpoint-url {
+    flex-basis: 100%;
+    order: 2;
+  }
+
+  .agent-snippet-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-activity-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .agent-activity-summary {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [class*="agent-scope-"] {
+    transition: none !important;
+  }
+}

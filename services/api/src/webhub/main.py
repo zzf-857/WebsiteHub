@@ -6,6 +6,7 @@ from webhub.agent.access import DatabaseConversationAccess
 from webhub.agent.langgraph_runner import build_agent_runner
 from webhub.agent.site_enrichment import AgentSiteEnricher
 from webhub.agent.turns import close_expired_turns
+from webhub.agent_access.mcp_server import install_mcp
 from webhub.auth.rate_limit import LoginRateLimiter
 from webhub.bookmarks.admission import BookmarkUploadAdmissionManager
 from webhub.config import Settings, get_settings
@@ -24,7 +25,7 @@ def create_app(
     owns_database = database is None
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(app: FastAPI):
         await selected_database.assert_schema_current()
         # Recovery is bounded so stale history cannot delay service startup
         # indefinitely. Account-scoped request entry continues cleanup later.
@@ -38,7 +39,10 @@ def create_app(
         # not required to recover work after an API process restart.
         await ingestion_worker.resume_metadata_backfills(selected_database)
         try:
-            yield
+            # The MCP transport's session manager lives exactly as long as the
+            # app; one instance per create_app() because it can run only once.
+            async with app.state.mcp_server.session_manager.run():
+                yield
         finally:
             try:
                 await ingestion_worker.shutdown(selected_database)
@@ -73,6 +77,8 @@ def create_app(
         disk_check_interval_bytes=(selected_settings.bookmark_upload_disk_check_interval_bytes),
     )
     application.include_router(router)
+    # External Agents (Hermes, grokbot, …): bearer-token MCP at /api/mcp.
+    application.state.mcp_server = install_mcp(application, selected_database)
     return application
 
 

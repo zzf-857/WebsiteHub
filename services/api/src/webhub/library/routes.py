@@ -19,6 +19,7 @@ from webhub.ingestion import worker as ingestion_worker
 from webhub.ingestion.enrichment import AnalysisIntent
 from webhub.library import batch, service
 from webhub.library import similarity as site_similarity
+from webhub.library.analysis_queue import schedule_site_enrichment
 from webhub.library.kinds import SiteKind
 from webhub.library.schemas import (
     CategoryCreateRequest,
@@ -67,28 +68,7 @@ _MAX_ANALYSIS_BACKFILL_REQUEST = 5_000
 
 
 def _schedule_analysis(request: Request, *, user_id: str, site_id: str) -> None:
-    scheduled = ingestion_worker.schedule_analysis(
-        request.app.state.database,
-        user_id=str(user_id),
-        site_ids=(site_id,),
-        priority=True,
-        # A manual/Agent save is an explicit foreground action. Let it use the
-        # queue's single bounded overflow slot just like the detail-page AI
-        # action, instead of dropping its enrichment intent behind a large
-        # historical batch.
-        interactive=True,
-        intent=AnalysisIntent.SITE_ENRICHMENT,
-        bulk=False,
-    )
-    # When the foreground queue is full, leave the newly created/retargeted
-    # site to the database-driven sweep instead of silently giving up until a
-    # later list request happens to wake it.
-    if scheduled.rejected:
-        ingestion_worker.ensure_auto_backfill(
-            request.app.state.database,
-            user_id=str(user_id),
-            rescan_if_running=True,
-        )
+    schedule_site_enrichment(request.app.state.database, user_id=user_id, site_id=site_id)
 
 
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]

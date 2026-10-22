@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request
 
 from webhub.agent.routes import router as agent_router
+from webhub.agent_access.routes import router as agent_access_router
 from webhub.auth.routes import router as auth_router
 from webhub.bookmarks.routes import router as bookmarks_router
 from webhub.chat.routes import router as chat_router
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/api")
 router.include_router(auth_router, prefix="")
 router.include_router(chat_router, prefix="")
 router.include_router(agent_router, prefix="")
+router.include_router(agent_access_router, prefix="")
 router.include_router(bookmarks_router, prefix="")
 router.include_router(library_router, prefix="")
 router.include_router(library_engagement_router, prefix="")
