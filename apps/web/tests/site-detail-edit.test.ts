@@ -6,6 +6,7 @@ import { normalizeLibrarySite, type LibraryTag } from "../lib/library-contract.t
 import { formatPushedAgo, repoPanelModel } from "../lib/repo-panel.ts";
 import {
   categoryUpdateInput,
+  exactTagOption,
   filterTagOptions,
   MAX_TAG_PICKER_OPTIONS,
   sortCategoryOptions,
@@ -157,6 +158,16 @@ test("a new tag can be created only when no equivalent tag exists", () => {
   assert.equal(tagCreateCandidate(tags, "   "), null);
   assert.equal(tagCreateCandidate(tags, "x".repeat(41)), null, "超过 40 个字符");
   assert.equal(tagCreateCandidate(tags, "x".repeat(40)), "x".repeat(40));
+});
+
+test("Enter picks the existing tag under the same normalization that blocks creating it", () => {
+  for (const query of ["agent", "  AGENT ", "ＡＧＥＮＴ", "STRASSE"]) {
+    assert.equal(tagCreateCandidate(tags, query), null, query);
+    assert.ok(exactTagOption(tags, query), `回车应勾选已有标签：${query}`);
+  }
+  assert.equal(exactTagOption(tags, "ＡＧＥＮＴ")?.id, "t-agent");
+  assert.equal(exactTagOption(tags, "age"), null, "只认完整同名，不认前缀");
+  assert.equal(exactTagOption(tags, "   "), null);
 });
 
 test("toggling keeps the user's order", () => {

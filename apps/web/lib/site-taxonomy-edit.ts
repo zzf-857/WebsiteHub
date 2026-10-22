@@ -37,6 +37,16 @@ export function tagCreateCandidate(tags: readonly LibraryTagRef[], query: string
   return tags.some((tag) => libraryTagNameKey(tag.name) === key) ? null : name;
 }
 
+/**
+ * 输入框回车时要勾选的已有标签：与 tagCreateCandidate 同一套规范化（NFKC、空白、casefold），
+ * 否则“ＡＧＥＮＴ”“STRASSE”这类既不能新建、又匹配不上的输入会让回车什么也不做。
+ */
+export function exactTagOption<T extends LibraryTagRef>(tags: readonly T[], query: string): T | null {
+  const key = libraryTagNameKey(query);
+  if (!key) return null;
+  return tags.find((tag) => libraryTagNameKey(tag.name) === key) ?? null;
+}
+
 export function toggleTagSelection(ids: readonly string[], id: string): string[] {
   return ids.includes(id) ? ids.filter((current) => current !== id) : [...ids, id];
 }

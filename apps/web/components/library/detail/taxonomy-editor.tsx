@@ -19,6 +19,7 @@ import type {
 } from "@/lib/library-contract";
 import {
   categoryUpdateInput,
+  exactTagOption,
   filterTagOptions,
   sortCategoryOptions,
   tagCreateCandidate,
@@ -248,9 +249,7 @@ function TagPicker({ site, onUpdate }: Readonly<TaxonomyEditorProps>) {
               onKeyDown={(event) => {
                 if (event.key !== "Enter") return;
                 event.preventDefault();
-                const exact = options.find(
-                  (tag) => tag.name.toLowerCase() === query.trim().toLowerCase(),
-                );
+                const exact = exactTagOption(allTags, query);
                 if (exact) setDraft((current) => toggleTagSelection(current, exact.id));
                 else if (candidate) void createTag();
                 else if (!query.trim()) void commit();
