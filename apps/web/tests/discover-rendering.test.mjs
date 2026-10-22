@@ -57,6 +57,7 @@ test("the header carries discover navigation, quick add and the account menu ent
   assert.match(header, /\{ label: "发现", href: "\/", sections: \["\/"\] \}/u);
   assert.match(header, /\{ label: "收藏库", href: "\/library"/u);
   assert.match(header, /\{ label: "Space", href: "\/spaces"/u);
+  assert.match(header, /\{ label: "订阅", href: "\/feeds", sections: \["\/feeds"\] \}/u);
   assert.doesNotMatch(header, /网址库/u);
   assert.match(header, /<QuickAddButton \/>/u);
   for (const href of ["/settings/providers", "/settings/agents", "/settings/import", "/settings/search-index", "/chat"]) {

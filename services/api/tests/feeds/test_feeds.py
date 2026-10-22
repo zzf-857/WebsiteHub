@@ -721,3 +721,97 @@ def test_mcp_get_feed_digest(environment: Environment) -> None:
     assert [item["title"] for item in payload["items"]] == ["Digest item"]
     assert payload["items"][0]["source"] == "Example Blog"
     assert payload["items"][0]["saved_to_library"] is False
+
+
+# ------------------------------------------------- adversarial regressions
+
+
+def test_parser_does_not_expand_entities_or_read_local_files() -> None:
+    levels = "".join(
+        f'<!ENTITY l{n} "' + f"&l{n - 1};" * 10 + '">' for n in range(1, 10)
+    )
+    bomb = (
+        '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY l0 "lol">' + levels + "]>"
+        '<rss version="2.0"><channel><title>&l9;</title>'
+        "<item><title>t &l9;</title><guid>g</guid></item></channel></rss>"
+    ).encode()
+    parsed = parse_feed(bomb)
+    assert len(parsed.title) < 100
+    assert all(len(item.title) < 100 for item in parsed.items)
+
+    xxe = (
+        b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
+        b'<rss version="2.0"><channel><title>&x;</title>'
+        b"<item><title>a&x;</title><guid>g</guid></item></channel></rss>"
+    )
+    parsed = parse_feed(xxe)
+    assert "root:" not in parsed.title
+    assert all("root:" not in item.title for item in parsed.items)
+
+
+def test_every_redirect_hop_is_revalidated(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_stream(
+        monkeypatch,
+        {
+            "https://f.example/start": FakeResponse(302, {"location": "http://10.0.0.5/admin"}),
+            "http://10.0.0.5/admin": ProviderTargetError("resource_private", "private"),
+        },
+    )
+    result = asyncio.run(feed_fetch.fetch_feed("https://f.example/start", None, None))
+    assert result.status == "error" and result.error == "unsafe_target"
+
+
+def test_fetch_has_a_total_time_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Dripping(FakeResponse):
+        async def aiter_bytes(self) -> AsyncIterator[bytes]:
+            while True:
+                await asyncio.sleep(0.01)
+                yield b"x"
+
+    _install_stream(monkeypatch, {"https://f.example/slow": Dripping(200, {})})
+    monkeypatch.setattr(feed_fetch, "TOTAL_FETCH_SECONDS", 0.1)
+    result = asyncio.run(feed_fetch.fetch_feed("https://f.example/slow", None, None))
+    assert result.status == "error" and result.error == "network_error"
+
+
+def test_one_failing_feed_does_not_stop_the_poll_and_refresh_is_not_reentrant(
+    environment: Environment,
+) -> None:
+    env = environment
+    _use(env.client, _register(env.client, "robust"))
+    first = _add(env, "https://one.example/rss")
+    second = _add(env, "https://two.example/rss")
+    env.execute("UPDATE feeds SET next_fetch_at = ?", (NOW - timedelta(hours=1)).isoformat(" "))
+
+    seen: list[str] = []
+
+    async def exploding(url: str, etag: str | None, last_modified: str | None) -> FeedFetchResult:
+        seen.append(url)
+        if url == "https://one.example/rss":
+            raise RuntimeError("boom")
+        return _ok(rss([{"title": "Fine", "guid": "g"}]))
+
+    database = env.database()
+    try:
+        assert asyncio.run(feed_service.poll_due_feeds(database, fetcher=exploding)) == 2
+        assert sorted(seen) == ["https://one.example/rss", "https://two.example/rss"]
+
+        async def reentrant() -> tuple[str, str]:
+            gate = asyncio.Event()
+
+            async def slow(*_args: object) -> FeedFetchResult:
+                await gate.wait()
+                return _ok(rss([{"title": "Slow", "guid": "s"}]))
+
+            running = asyncio.create_task(
+                feed_service.refresh_feed(database, first["id"], fetcher=slow)
+            )
+            await asyncio.sleep(0.05)
+            second_call = await feed_service.refresh_feed(database, first["id"], fetcher=slow)
+            gate.set()
+            return (await running).status, second_call.status
+
+        assert asyncio.run(reentrant()) == ("ok", "busy")
+    finally:
+        asyncio.run(database.dispose())
+    assert second["id"]

@@ -8,6 +8,7 @@ and ``consecutive_failures``), so a restart simply resumes the schedule.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import re
 from collections.abc import Sequence
@@ -47,6 +48,10 @@ DIGEST_LIMIT = 10
 DIGEST_PER_SOURCE = 3
 MAX_KEYWORDS = 40
 _DECAY_HALF_LIFE_HOURS = 36.0
+_LOGGER = logging.getLogger(__name__)
+# Feeds being refreshed right now in this process: a manual refresh racing the
+# poller would otherwise insert the same guids twice and trip the unique index.
+_IN_FLIGHT: set[str] = set()
 _ASCII_WORD = re.compile(r"^[0-9a-z][0-9a-z .+#-]*$")
 
 
@@ -214,6 +219,22 @@ async def refresh_feed(
     The network call happens outside any database transaction.
     """
 
+    if feed_id in _IN_FLIGHT:
+        return RefreshOutcome("busy")
+    _IN_FLIGHT.add(feed_id)
+    try:
+        return await _refresh_feed(database, feed_id, fetcher=fetcher, now=now)
+    finally:
+        _IN_FLIGHT.discard(feed_id)
+
+
+async def _refresh_feed(
+    database: Database,
+    feed_id: str,
+    *,
+    fetcher: FeedFetcher | None,
+    now: datetime | None,
+) -> RefreshOutcome:
     async with database.sessions() as session:
         feed = await session.get(Feed, feed_id)
         if feed is None:
@@ -365,7 +386,12 @@ async def poll_due_feeds(
     moment = now or utc_now()
     feed_ids = await due_feed_ids(database, now=moment, limit=limit)
     for feed_id in feed_ids:
-        await refresh_feed(database, feed_id, fetcher=fetcher, now=moment)
+        try:
+            await refresh_feed(database, feed_id, fetcher=fetcher, now=moment)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - one broken feed must not starve the others
+            _LOGGER.exception("refreshing feed %s failed", feed_id)
     return len(feed_ids)
 
 

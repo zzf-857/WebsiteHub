@@ -9,6 +9,7 @@ as a short code, never raised, and vendor text never leaves this module.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
@@ -22,6 +23,9 @@ from webhub.providers.targets import ProviderTargetError
 MAX_REDIRECTS = 3
 MAX_FEED_BYTES = 2 * 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 10
+# Wall-clock budget for the whole fetch (all hops and the body): the per-read
+# timeout alone lets a server drip bytes forever.
+TOTAL_FETCH_SECONDS = 30
 _USER_AGENT = "WebHub-Feeds/0.1 (+https://github.com/webhub)"
 _ACCEPT = (
     "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.5"
@@ -103,36 +107,43 @@ async def fetch_feed(
     if last_modified:
         headers["if-modified-since"] = last_modified
     try:
-        for _hop in range(MAX_REDIRECTS + 1):
-            if not current.lower().startswith(("http://", "https://")):
-                return FeedFetchResult("error", error="unsafe_target")
-            async with _stream(current, headers) as (request_url, response):
-                status = response.status_code
-                if status == 304:
-                    return FeedFetchResult("not_modified", etag=etag, last_modified=last_modified)
-                if 300 <= status < 400:
-                    location = response.headers.get("location", "").strip()
-                    if not location:
-                        return FeedFetchResult("error", error="http_error")
-                    current = urljoin(request_url, location)
-                    continue
-                if status == 429 or status >= 500:
-                    return FeedFetchResult("error", error="http_unavailable")
-                if not 200 <= status < 300:
-                    return FeedFetchResult("error", error="http_error")
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > MAX_FEED_BYTES:
-                        return FeedFetchResult("error", error="too_large")
-                return FeedFetchResult(
-                    "ok",
-                    body=bytes(body),
-                    etag=_header(response.headers.get("etag"), 256),
-                    last_modified=_header(response.headers.get("last-modified"), 128),
-                )
-        return FeedFetchResult("error", error="too_many_redirects")
+        async with asyncio.timeout(TOTAL_FETCH_SECONDS):
+            return await _fetch(current, headers, etag, last_modified)
     except ProviderTargetError:
         return FeedFetchResult("error", error="unsafe_target")
     except Exception:  # noqa: BLE001 - network failures of every kind are one outcome
         return FeedFetchResult("error", error="network_error")
+
+
+async def _fetch(
+    current: str, headers: dict[str, str], etag: str | None, last_modified: str | None
+) -> FeedFetchResult:
+    for _hop in range(MAX_REDIRECTS + 1):
+        if not current.lower().startswith(("http://", "https://")):
+            return FeedFetchResult("error", error="unsafe_target")
+        async with _stream(current, headers) as (request_url, response):
+            status = response.status_code
+            if status == 304:
+                return FeedFetchResult("not_modified", etag=etag, last_modified=last_modified)
+            if 300 <= status < 400:
+                location = response.headers.get("location", "").strip()
+                if not location:
+                    return FeedFetchResult("error", error="http_error")
+                current = urljoin(request_url, location)
+                continue
+            if status == 429 or status >= 500:
+                return FeedFetchResult("error", error="http_unavailable")
+            if not 200 <= status < 300:
+                return FeedFetchResult("error", error="http_error")
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > MAX_FEED_BYTES:
+                    return FeedFetchResult("error", error="too_large")
+            return FeedFetchResult(
+                "ok",
+                body=bytes(body),
+                etag=_header(response.headers.get("etag"), 256),
+                last_modified=_header(response.headers.get("last-modified"), 128),
+            )
+    return FeedFetchResult("error", error="too_many_redirects")
