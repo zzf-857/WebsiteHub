@@ -24,6 +24,8 @@
 > [!IMPORTANT]
 > WebHub 当前定位是 **Windows 主机上的本地 / 可信家庭局域网 MVP**：网站可供局域网设备访问，FastAPI 只监听本机回环地址。
 > 它不是能直接暴露到公网的 SaaS 或生产部署方案，也没有做公网安全加固。
+> 也可以按[部署到自己的服务器](#部署到自己的服务器linux--arm64)以单容器运行在自己的 Linux（含 ARM64）服务器上、
+> 经 Tailscale 只在私网访问——这同样属于可信网络部署，不是公网上线。
 
 ---
 
@@ -53,6 +55,7 @@ WebHub 不是在传统网址导航页旁边附加一个聊天框，而是让 Age
 - [Provider 与联网边界](#provider-与联网边界)
 - [Chrome / Edge Space 分组助手](#chrome--edge-space-分组助手)
 - [本地数据与隐私](#本地数据与隐私)
+- [部署到自己的服务器（Linux / ARM64）](#部署到自己的服务器linux--arm64)
 - [开发与验证](#开发与验证)
 - [项目状态与限制](#项目状态与限制)
 - [项目文档](#项目文档)
@@ -207,6 +210,7 @@ services/api/
 ├── alembic/                SQLite schema 迁移
 └── tests/                  后端合同与行为测试
 packages/contracts/         跨栈流式协议夹具
+deploy/                     单容器私网部署：Compose、生产配置样例、进程入口与在线备份（Dockerfile 在仓库根）
 skills/                     书签导入与分类操作说明
 docs/screenshots/           README 界面截图
 ```
@@ -318,10 +322,13 @@ pnpm dev
 | `WEBHUB_DATABASE_URL` | 未设置时使用 `<WEBHUB_DATA_DIR>/main.sqlite3`。 |
 | `WEBHUB_API_INTERNAL_URL` | `http://127.0.0.1:8100`；Next.js 访问 FastAPI 的内部地址。 |
 | `WEBHUB_ALLOWED_HOSTS` | 为网站入口增加明确允许的主机名或别名。 |
+| `WEBHUB_ALLOWED_ORIGINS` | 额外允许执行登录态写操作的浏览器 Origin（含协议，逗号分隔）；同源请求不需要配置。 |
+| `WEBHUB_ENVIRONMENT` | `development`；设为 `production` 时必须提供 `WEBHUB_PROVIDER_MASTER_KEY`，否则 API 拒绝启动。 |
 | `WEBHUB_SESSION_COOKIE_SECURE` | 可信局域网 HTTP 默认 `false`；只有网站实际通过 HTTPS 提供时才设为 `true`。 |
 | `WEBHUB_PROVIDER_MASTER_KEY` | 生产环境必填的 32 字节 Base64 主密钥；开发环境未设置时会在数据目录生成并持久化。 |
 
 修改 `WEBHUB_API_INTERNAL_URL` 后，必须在相同配置下重新执行 `pnpm build`，再启动已构建网站。
+服务器（Docker）部署使用独立的 [`deploy/.env.production.example`](./deploy/.env.production.example)，见[部署到自己的服务器](#部署到自己的服务器linux--arm64)。
 
 ## Provider 与联网边界
 
@@ -369,6 +376,167 @@ Chrome 和 Edge 需要分别安装。助手只接受本机 `localhost:3100` / `1
 使用外部模型或搜索 Provider 时，完成请求所需的消息、上下文或查询会发送给对应服务商。站点分析会访问用户提交的目标网站；远程 favicon 和 preview 当前由浏览器直接加载，图片源会看到客户端请求。
 
 默认 SQLite 环境需要做主机级备份时，先停止 WebHub，再把整个 `.data` 目录作为一组保存，包括数据库的 WAL/SHM 文件、Provider 主密钥和书签源文件。该备份包含敏感数据，应按凭据备份保护；它不等同于尚未实现的产品级导出 / 恢复功能。
+
+服务器（Docker）部署时，数据在容器的 `/data` 卷里，Provider 主密钥在 `deploy/.env`；用 [`deploy/backup.sh`](./deploy/backup.sh) 不停服导出一致快照并连同主密钥一起保存，见[备份与恢复](#7-备份与恢复)。
+
+## 部署到自己的服务器（Linux / ARM64）
+
+> [!IMPORTANT]
+> 这是**可信私网部署**，不是公网 SaaS：容器只把网站发布到宿主机回环地址 `127.0.0.1:3100`，再由 Tailscale
+> 提供只有 tailnet 成员能访问的 HTTPS。不要把端口改成 `0.0.0.0` / `"3100:3100"` 发布，不要在云安全列表或防火墙
+> 放行 3100，也不要用 `tailscale funnel` 把它暴露到公网。公网上线前必须先完成
+> [SaaS-TODO 专项](./ITERATION_QUEUE.md)。
+
+目标机器是 Oracle Cloud Ampere A1（ARM64，4 核 / 24 GB / 200 GB），x86_64 Linux 同样适用；Windows 本机开发
+（`pnpm dev`）不受影响。
+
+```text
+tailnet 内的浏览器 / Hermes ──HTTPS──▶ tailscale serve ──┐
+同一台服务器上的 bot ──── http://127.0.0.1:3100 ─────────┤   宿主机只在回环地址发布 3100
+                                                          ▼
+┌──────────── 容器 webhub（uid 10001，restart: unless-stopped）────────────┐
+│ Next.js 网站 0.0.0.0:3100 ──回环──▶ FastAPI 127.0.0.1:8100（单 worker）  │
+│                                       └──▶ /data 卷（SQLite + 书签源文件）│
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**为什么是一个容器**：API 必须只在回环地址可达，Origin 校验也只信任来自回环的转发头；拆成两个容器就得让 API
+监听容器网卡，这个前提随之失效。容器启动时由 [`deploy/entrypoint.sh`](./deploy/entrypoint.sh) 先执行数据库迁移
+（失败则什么都不启动），再同时启动 API 与网站；任一进程退出，另一个也会被停止，容器以非零码退出，交给 Compose
+整体重启。`docker compose stop` 的 SIGTERM 会转发给两个进程，几秒内干净退出。
+
+| 文件 | 作用 |
+| --- | --- |
+| [`Dockerfile`](./Dockerfile) | 多阶段构建：官方多架构镜像 Node 24 + Python 3.13，corepack 固定 pnpm 11.1.3，`uv sync --frozen --no-dev`；以非 root（uid 10001）运行，数据卷 `/data` |
+| [`deploy/compose.yaml`](./deploy/compose.yaml) | 单服务编排：只发布 `127.0.0.1:3100`，数据卷、健康检查、日志轮转、`init` 与最小权限 |
+| [`deploy/.env.production.example`](./deploy/.env.production.example) | 生产配置样例，复制为 `deploy/.env`（已被 Git 与 Docker 构建上下文忽略） |
+| [`deploy/entrypoint.sh`](./deploy/entrypoint.sh) | 进程入口：迁移 → 双进程 → 信号转发 → 任一退出即整体退出（为何不用 `concurrently` 见脚本头部） |
+| [`deploy/backup.sh`](./deploy/backup.sh) | 不停服导出一致的数据库快照，连同 Provider 主密钥按时间戳保存，保留最近 N 份 |
+
+### 前置条件
+
+- Linux ARM64 或 x86_64，Docker Engine 24+ 及 Compose v2、Buildx 插件（按 Docker 官方文档安装 `docker-ce`、
+  `docker-compose-plugin`、`docker-buildx-plugin`；`docker compose version` 与 `docker buildx version` 都能输出版本）。
+  Dockerfile 用到 BuildKit 的缓存挂载，缺 Buildx 时构建会失败。镜像在服务器上原生构建，不需要交叉编译或 QEMU。
+- 构建时能访问 Docker Hub、npm 与 PyPI；镜像约 1 GB，首次构建需要几分钟。
+- 宿主机已安装并登录 Tailscale，tailnet 管理后台已开启 MagicDNS 与 HTTPS Certificates。
+- 执行 `docker` 的用户在 `docker` 组里，否则下文命令前加 `sudo`。
+
+### 1. 获取代码并生成配置
+
+```bash
+sudo install -d -o "$USER" -g "$(id -gn)" /opt/WebsiteHub   # /opt 归 root：先建好归当前用户的目录
+git clone <仓库地址> /opt/WebsiteHub && cd /opt/WebsiteHub
+cp deploy/.env.production.example deploy/.env && chmod 600 deploy/.env
+openssl rand -base64 32                                       # 生成 Provider 主密钥
+# 得到 <机器>.<tailnet>.ts.net（也可在 Tailscale 管理后台 Machines 页复制完整域名）：
+tailscale status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'
+```
+
+在 `deploy/.env` 中填写：
+
+| 变量 | 值 |
+| --- | --- |
+| `WEBHUB_ENVIRONMENT` | `production`（样例已填）。 |
+| `WEBHUB_PROVIDER_MASTER_KEY` | 上一步生成的 32 字节 Base64。**只生成一次**：缺失时容器拒绝启动；丢失或中途更换会让库里已保存的 Provider API Key 全部无法解密，必须和数据库一起备份。 |
+| `WEBHUB_ALLOWED_HOSTS` | `<机器>.<tailnet>.ts.net`。同机 bot 使用的 `127.0.0.1` / `localhost` 已默认允许。 |
+| `WEBHUB_ALLOWED_ORIGINS` | `https://<机器>.<tailnet>.ts.net`。 |
+| `WEBHUB_SESSION_COOKIE_SECURE` | `true`：网站经 HTTPS 提供，登录 Cookie 只走 HTTPS。 |
+
+`WEBHUB_DATA_DIR=/data` 与 `WEBHUB_API_INTERNAL_URL=http://127.0.0.1:8100` 由 `compose.yaml` 固定，不要写进
+`.env`；后者在构建期固化进网站的 `/api/backend/*` 代理规则。
+
+> [!NOTE]
+> `tailscale serve` 转发时保留原始 Host，网站据此写入 `X-Forwarded-Host`，同源校验本身就能通过：按这种转发方式
+> 模拟的注册、登录态写入均已验证，不配 `WEBHUB_ALLOWED_ORIGINS` 也能工作。仍建议显式写上——若以后换成会改写
+> Host 的反向代理，网页上的登录、保存不会因此一律 403。
+
+### 2. 构建并启动
+
+```bash
+docker compose -f deploy/compose.yaml up -d --build
+docker compose -f deploy/compose.yaml ps              # STATUS 变为 (healthy)
+docker compose -f deploy/compose.yaml logs -f webhub  # 依次出现迁移、启动 API、启动网站
+curl -fsS http://127.0.0.1:3100/api/health            # {"status":"ok",...}
+```
+
+健康检查经网站访问 `/api/health`，网站再调用回环上的 API，所以两个进程任一不可用都会显示 unhealthy。
+
+### 3. 用 Tailscale 提供私网 HTTPS
+
+```bash
+sudo tailscale serve --bg 3100    # https://<机器>.<tailnet>.ts.net → http://127.0.0.1:3100
+tailscale serve status
+# 撤销：sudo tailscale serve --https=443 off
+```
+
+- 只有同一 tailnet 且被 ACL 允许的设备能访问；证书由 Tailscale 自动签发和续期。
+- OCI 安全列表与主机防火墙**不需要也不应该**放行 3100；Tailscale 只靠出站连接即可工作。
+- 不要使用 `tailscale funnel`，它会把网站暴露到公网。
+
+### 4. 首次注册
+
+在 tailnet 内的设备上打开 `https://<机器>.<tailnet>.ts.net` 注册账号。注册对所有能打开网站的人开放：部署后请
+立即注册自己的账号，并用 tailnet ACL 控制谁能访问这台机器。忘记密码时在服务器上重置：
+
+```bash
+docker compose -f deploy/compose.yaml exec webhub webhub-account reset-password <用户名>
+```
+
+### 5. 接入同机 bot 与 Hermes
+
+| 调用方 | 地址 |
+| --- | --- |
+| 同一台服务器上的 bot | `http://127.0.0.1:3100` |
+| Hermes 等 tailnet 内的外部 Agent | `https://<机器>.<tailnet>.ts.net/api/backend/mcp` |
+
+外部 Agent 只经 MCP 令牌访问：令牌按账号签发、只存哈希、可吊销，`write` 只开放可逆的增量操作并记审计日志。
+MCP 服务与令牌签发由 Q43 提供，合并后在网站设置页签发令牌，再填进 Hermes 的 MCP 配置。
+
+### 6. 升级
+
+```bash
+cd /opt/WebsiteHub
+deploy/backup.sh                                                   # 升级前先备份
+git pull && docker compose -f deploy/compose.yaml up -d --build    # 启动时自动迁移数据库
+docker image prune -f                                              # 可选：清理旧镜像
+```
+
+需要基础镜像的安全更新时，先 `docker compose -f deploy/compose.yaml build --pull` 再 `up -d`。
+`docker compose down` 会保留数据卷；**不要加 `-v`**，否则会删除 `/data` 里的全部数据。
+
+### 7. 备份与恢复
+
+[`deploy/backup.sh`](./deploy/backup.sh) 经 `docker compose exec` 在运行中的容器里调用 Python `sqlite3` 的在线
+备份接口，导出一致快照（兼容 WAL，不停服、不阻塞写入），连同 Provider 主密钥写入带 UTC 时间戳的目录，默认
+保留最近 14 份：
+
+```bash
+sudo install -d -m 700 -o "$USER" -g "$(id -gn)" /srv/webhub-backups   # 只需一次：/srv 归 root
+WEBHUB_BACKUP_DIR=/srv/webhub-backups WEBHUB_BACKUP_KEEP=30 deploy/backup.sh
+
+# crontab -e：每天 03:17 备份
+17 3 * * * WEBHUB_BACKUP_DIR=/srv/webhub-backups /opt/WebsiteHub/deploy/backup.sh >> "$HOME/webhub-backup.log" 2>&1
+```
+
+每份备份包含 `main.sqlite3`（已通过 `PRAGMA integrity_check`）、`provider-master-key.env` 与 `SHA256SUMS`；
+设置 `WEBHUB_BACKUP_INCLUDE_BOOKMARK_SOURCES=1` 时另含 `bookmark-imports.tar`。备份含凭据与私人数据：目录权限
+700、文件 600，请再同步到另一台机器，并按凭据保护。
+
+恢复的完整命令写在脚本头部注释里，顺序是：`sha256sum -c SHA256SUMS` 校验 → `docker compose down`（不加 `-v`）
+→ 把 `provider-master-key.env` 的两行写回 `deploy/.env` → 用 `docker compose run` 写回 `/data/main.sqlite3`
+并删除旧的 `-wal` / `-shm` → `up -d`，启动时自动迁移到当前 schema。主密钥必须与数据库配套恢复。
+
+### 8. 首次部署验收清单
+
+在目标服务器上逐项确认，结果记入 [PROGRESS.md](./PROGRESS.md)：
+
+- [ ] `uname -m` 为 `aarch64`，`docker compose -f deploy/compose.yaml up -d --build` 原生构建成功；
+- [ ] `ps` 显示 `(healthy)`；`docker compose -f deploy/compose.yaml exec webhub id` 显示 `uid=10001`；
+- [ ] 宿主机 `curl http://127.0.0.1:3100/api/health` 返回 `ok`；从公网访问 `<公网 IP>:3100` 不通；
+- [ ] 另一台 tailnet 设备经 `https://<机器>.<tailnet>.ts.net` 注册、登录并保存一条收藏；
+- [ ] `docker compose -f deploy/compose.yaml restart` 数秒内完成，日志出现「已停止」，重启后数据仍在；
+- [ ] `deploy/backup.sh` 生成备份，备份目录里 `sha256sum -c SHA256SUMS` 通过。
 
 ## 开发与验证
 
@@ -435,7 +603,7 @@ pnpm start
 - Agent 对话内直接确认书签导入（当前需转到「导入书签」页面）；
 - 分类图标选择器和确定性的近义标签合并；
 - 100,000 条书签与 Site 的完整性能门禁；
-- 多 API worker、Docker / NAS / Linux 常驻部署和公网安全加固；
+- 多 API worker、NAS 常驻部署和公网安全加固（Linux / ARM64 单容器私网部署已提供，真实 ARM64 构建与 Tailscale 待在目标服务器按[验收清单](#8-首次部署验收清单)确认）；
 - 受控的远程 favicon / preview 代理缓存。
 
 网址库页面的“相关度”排序会使用可选 Embedding，但 Agent 的站内检索只使用关键词路径。Agent 的
