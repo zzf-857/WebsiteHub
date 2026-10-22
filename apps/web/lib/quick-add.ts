@@ -50,6 +50,20 @@ export function duplicateSiteHref(url: string): string {
   return `/library?q=${encodeURIComponent(url)}`;
 }
 
+export type DuplicateSiteTarget =
+  | { kind: "link"; href: string }
+  | { kind: "search"; query: string };
+
+/**
+ * “已经收藏过了”去哪看：别的页面链到 `/library?q=`；
+ * 已经在收藏库页时链接只改地址、页面不会重读 ?q=，改为就地搜索。
+ */
+export function duplicateSiteTarget(url: string, pathname: string | null): DuplicateSiteTarget {
+  return pathname === "/library"
+    ? { kind: "search", query: url }
+    : { kind: "link", href: duplicateSiteHref(url) };
+}
+
 export function siteDetailHref(siteId: string): string {
   return `/library/${encodeURIComponent(siteId)}`;
 }

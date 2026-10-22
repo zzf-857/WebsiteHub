@@ -19,9 +19,15 @@ import {
   layoutMasonry,
   masonryColumnCount,
 } from "../lib/masonry.ts";
-import { duplicateSiteHref, isDuplicateSiteError, parseQuickAddUrl } from "../lib/quick-add.ts";
+import {
+  duplicateSiteHref,
+  duplicateSiteTarget,
+  isDuplicateSiteError,
+  parseQuickAddUrl,
+} from "../lib/quick-add.ts";
 import { formatRelativeTime, formatSavedDays, parseServerTime } from "../lib/relative-time.ts";
-import { isUnopened, withSiteOpened, withSiteState } from "../lib/site-usage.ts";
+import { estimateCardHeight } from "../lib/resource-cover.ts";
+import { isUnopened, withSiteOpened, withSiteState, withSiteUsage } from "../lib/site-usage.ts";
 import { siteFixture } from "./discover-fixtures.ts";
 
 /* ── 瀑布流 ─────────────────────────────────────────────── */
@@ -277,6 +283,15 @@ test("duplicate detection and the fallback link for an existing save", () => {
   assert.equal(duplicateSiteHref("https://a.com/?x=1&y=2"), "/library?q=https%3A%2F%2Fa.com%2F%3Fx%3D1%26y%3D2");
 });
 
+test("a duplicate found while already on /library searches in place instead of a no-op link", () => {
+  const url = "https://a.com/post";
+  assert.deepEqual(duplicateSiteTarget(url, "/"), { kind: "link", href: duplicateSiteHref(url) });
+  assert.deepEqual(duplicateSiteTarget(url, "/library/site-1"), { kind: "link", href: duplicateSiteHref(url) });
+  assert.deepEqual(duplicateSiteTarget(url, null), { kind: "link", href: duplicateSiteHref(url) });
+  // 同路由的链接跳转不会重挂收藏库页，?q= 不会被重新读取
+  assert.deepEqual(duplicateSiteTarget(url, "/library"), { kind: "search", query: url });
+});
+
 /* ── 乐观更新 ───────────────────────────────────────────── */
 
 test("optimistic usage updates mirror the backend semantics", () => {
@@ -300,4 +315,32 @@ test("optimistic usage updates mirror the backend semantics", () => {
   assert.equal(isUnopened(seen), false);
   assert.equal(withSiteState(seen, { seen: false }, now).seenAt, null);
   assert.equal(withSiteState(site, { resurfaceMuted: true }, now).resurfaceMuted, true);
+});
+
+test("in-place gallery updates take usage signals only, so a card keeps its cover and column", () => {
+  const now = "2026-10-22T12:00:00Z";
+  const fresh = siteFixture({ id: "fresh", name: "example.com", originalUrl: "https://example.com/post" });
+  // 快速收藏后台整理完成后，星标接口返回的整条收藏已经是带要点的文章
+  const saved = {
+    ...withSiteState(fresh, { starred: true }, now),
+    kind: "article" as const,
+    summary: "后台整理出的要点，足够长，能把要点封面撑高好几行。".repeat(4),
+  };
+  assert.notEqual(estimateCardHeight(saved, 300), estimateCardHeight(fresh, 300), "整条替换会改变估算高度");
+
+  const merged = withSiteUsage(fresh, saved);
+  assert.equal(merged.starred, true);
+  assert.equal(merged.starredAt, now);
+  assert.equal(merged.kind, "website");
+  assert.equal(merged.summary, null);
+  assert.equal(estimateCardHeight(merged, 300), estimateCardHeight(fresh, 300));
+
+  const others = [siteFixture({ id: "a" }), siteFixture({ id: "b" }), siteFixture({ id: "c" })];
+  const place = (first: typeof fresh) =>
+    layoutMasonry([first, ...others].map((site) => ({ id: site.id, height: estimateCardHeight(site, 300) })), 2, 28)
+      .columns;
+  assert.notDeepEqual(place(saved), place(fresh), "整条替换时其余卡片会跳列");
+  assert.deepEqual(place(merged), place(fresh));
+
+  assert.equal(withSiteUsage(fresh, siteFixture({ id: "other", starred: true })), fresh, "不同 id 原样返回");
 });

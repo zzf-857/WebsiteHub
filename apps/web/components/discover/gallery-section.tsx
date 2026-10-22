@@ -22,6 +22,7 @@ import type {
   LibrarySiteState,
 } from "@/lib/library-contract";
 import { subscribeSiteUpdated } from "@/lib/library-events";
+import { withSiteUsage } from "@/lib/site-usage";
 
 // 发现页 B 区“全部收藏”：类型标签 + 状态分段 + 排序，封面瀑布流，静默无限加载。
 // 切换筛选时整页重置，并用请求代号丢弃过期响应（快速连点标签不会串结果）。
@@ -204,13 +205,14 @@ export function GallerySection({ overview, revision }: Readonly<GallerySectionPr
     }
   }, [list.loadingMore, list.nextCursor, list.status, query, scheduleEntranceClear]);
 
-  // 主卡与卡片上的操作广播到这里，就地替换，不重新取数（也不改变卡片位置）
+  // 主卡与卡片上的操作广播到这里，只就地更新使用信号，不重新取数：
+  // 内容字段不跟着换，封面与估算高度不变，卡片也就不会跳列
   useEffect(
     () =>
       subscribeSiteUpdated((site) => {
         setList((current) =>
           current.items.some((item) => item.id === site.id)
-            ? { ...current, items: current.items.map((item) => (item.id === site.id ? site : item)) }
+            ? { ...current, items: current.items.map((item) => withSiteUsage(item, site)) }
             : current,
         );
       }),

@@ -18,6 +18,17 @@ const nextConfig: NextConfig = {
     // This remains a synchronous flow, so the rewrite must outlive that backend-owned hard bound.
     proxyTimeout: EXTERNAL_REWRITE_PROXY_TIMEOUT_MS,
   },
+  // Q44 前站内对话嵌在首页，地址栏里的会话链接一直是 /?c=<id>，“让 Agent 帮你”
+  // 预填是 /?ask=；书签与历史记录里还留着这些地址。首页改成发现页后转到 /chat，
+  // Next 的 redirect 默认原样带上查询参数，面板挂载时照旧读 ?c= / ?ask=。
+  async redirects() {
+    return ["c", "ask"].map((key) => ({
+      source: "/",
+      has: [{ type: "query" as const, key }],
+      destination: "/chat",
+      permanent: false,
+    }));
+  },
   async rewrites() {
     return [
       {

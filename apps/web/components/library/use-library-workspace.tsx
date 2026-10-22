@@ -47,6 +47,7 @@ import type {
   LibrarySort,
   LibraryTag,
 } from "@/lib/library-contract";
+import { subscribeLibraryChanged, subscribeLibrarySearch } from "@/lib/library-events";
 import { canStartLibraryPageLoad } from "@/lib/library-pagination";
 import {
   hasRefreshableSiteAnalysis,
@@ -415,6 +416,22 @@ export function useLibraryWorkspace() {
     refreshSites();
     void loadTaxonomies().catch(() => undefined);
   }, [loadTaxonomies, refreshSites]);
+
+  // 顶栏快速收藏发生在本页时：新增后刷新列表与分类计数；
+  // 重复网址时清掉其余筛选、用网址就地搜索，定位已有收藏
+  useEffect(() => subscribeLibraryChanged(refreshAfterMutation), [refreshAfterMutation]);
+  useEffect(
+    () =>
+      subscribeLibrarySearch((query) => {
+        clearSelection();
+        setCategoryId("");
+        setTagId("");
+        setPinnedOnly(false);
+        setSearchInput(query);
+        setSearchQuery(query);
+      }),
+    [clearSelection],
+  );
 
   const handleCreateTag = useCallback(async (name: string): Promise<LibraryTag> => {
     const result = await createLibraryTagResolvingConflict(name);

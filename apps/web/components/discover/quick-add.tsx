@@ -7,9 +7,9 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Spinner } from "@/components/react-bits/spinner";
 import { useToast } from "@/components/ui/toast";
 import { createLibrarySite } from "@/lib/library-client";
-import { announceLibraryChanged } from "@/lib/library-events";
+import { announceLibraryChanged, announceLibrarySearch } from "@/lib/library-events";
 import {
-  duplicateSiteHref,
+  duplicateSiteTarget,
   isDuplicateSiteError,
   parseQuickAddUrl,
   siteDetailHref,
@@ -28,6 +28,7 @@ export function QuickAddForm({ variant, autoFocus = false, onDone }: Readonly<Qu
   const id = useId();
   const inputId = `${id}-url`;
   const errorId = `${id}-error`;
+  const pathname = usePathname();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +59,12 @@ export function QuickAddForm({ variant, autoFocus = false, onDone }: Readonly<Qu
     } catch (failure) {
       if (isDuplicateSiteError(failure)) {
         setValue("");
-        toast.show({ message: "已经收藏过了", link: { label: "去看看", href: duplicateSiteHref(parsed.url) } });
+        const target = duplicateSiteTarget(parsed.url, pathname);
+        toast.show(
+          target.kind === "link"
+            ? { message: "已经收藏过了", link: { label: "去看看", href: target.href } }
+            : { message: "已经收藏过了", action: { label: "去看看", onAction: () => announceLibrarySearch(target.query) } },
+        );
         onDone?.();
       } else {
         setError(failure instanceof Error && failure.message.trim() ? failure.message : "收藏失败，请稍后重试");

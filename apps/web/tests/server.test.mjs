@@ -36,6 +36,18 @@ test("keeps the Next external rewrite proxy open for long-running API work", asy
   assert.ok(proxyTimeout >= MIN_EXTERNAL_REWRITE_PROXY_TIMEOUT_MS);
 });
 
+test("pre-Q44 chat deep links on / (?c= and ?ask=) are redirected to /chat", async () => {
+  const { default: nextConfig } = await import("../next.config.ts");
+  const redirects = await nextConfig.redirects();
+  for (const key of ["c", "ask"]) {
+    const rule = redirects.find((item) => item.has?.some((condition) => condition.type === "query" && condition.key === key));
+    assert.ok(rule, `missing redirect for /?${key}=`);
+    assert.equal(rule.source, "/");
+    assert.equal(rule.destination, "/chat");
+    assert.equal(rule.permanent, false);
+  }
+});
+
 function deferred() {
   let resolve;
   let reject;

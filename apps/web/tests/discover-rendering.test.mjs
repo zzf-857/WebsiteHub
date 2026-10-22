@@ -73,7 +73,8 @@ test("quick add validates inline, reports duplicates and refreshes discover data
   assert.match(quickAdd, /announceLibraryChanged\(\)/u);
   assert.match(quickAdd, /"已收藏，正在整理…"/u);
   assert.match(quickAdd, /"已经收藏过了"/u);
-  assert.match(quickAdd, /duplicateSiteHref\(parsed\.url\)/u);
+  assert.match(quickAdd, /duplicateSiteTarget\(parsed\.url, pathname\)/u);
+  assert.match(quickAdd, /announceLibrarySearch\(target\.query\)/u);
   assert.match(quickAdd, /role="alert"/u);
   assert.match(quickAdd, /event\.key !== "Escape"/u);
   assert.match(quickAdd, /aria-expanded=\{open\}/u);
@@ -142,4 +143,15 @@ test("the library keeps the moved backfill toolbar and pinned section under the 
   assert.match(intent, /query: params\.get\("q"\)/u);
   const helpCard = await read("components/library/detail/agent-help-card.tsx");
   assert.match(helpCard, /href=\{`\/chat\?ask=\$\{encodeURIComponent\(text\)\}`\}/u);
+});
+
+test("the library page follows quick add: refresh on new saves, in-place search on duplicates", async () => {
+  const workspace = await read("components/library/use-library-workspace.tsx");
+  assert.match(workspace, /subscribeLibraryChanged\(refreshAfterMutation\)/u);
+  assert.match(workspace, /subscribeLibrarySearch\(\(query\) => \{[\s\S]*?setSearchInput\(query\);\s*setSearchQuery\(query\);/u);
+});
+
+test("gallery in-place updates only take usage signals so cards never jump columns", async () => {
+  const gallery = await read("components/discover/gallery-section.tsx");
+  assert.match(gallery, /subscribeSiteUpdated\(\(site\) => \{[\s\S]*?withSiteUsage\(item, site\)/u);
 });
