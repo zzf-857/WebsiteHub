@@ -12,7 +12,7 @@ const AGENT_STYLES = new URL("app/styles/agent-panel.css", ROOT);
 const SITE_HEADER = new URL("components/site-header.tsx", ROOT);
 
 const SELECT_CONSUMERS = [
-  "components/home/category-sections.tsx",
+  "components/discover/gallery-section.tsx",
   "components/library/library-workspace.tsx",
   "components/library/site-form.tsx",
   "components/settings/provider-form.tsx",

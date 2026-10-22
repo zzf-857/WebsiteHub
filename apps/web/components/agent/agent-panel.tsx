@@ -94,7 +94,6 @@ export function AgentPanel({ onLibraryChanged }: Readonly<AgentPanelProps>) {
 
   return (
     <section
-      /* 跨任务契约：顶栏通过观察 #agent-panel 的位置切换吸顶态，id 不能改名 */
       id="agent-panel"
       className="agent-panel"
       data-state={conversationStarted ? "active" : "idle"}

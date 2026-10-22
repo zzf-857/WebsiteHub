@@ -36,6 +36,8 @@ import {
 import {
   SiteFavicon,
 } from "@/components/site-favicon";
+import { HomeMetadataBackfillToolbar } from "@/components/home/home-metadata-backfill-toolbar";
+import { PinnedSites } from "@/components/home/pinned-sites";
 import { Spinner } from "@/components/react-bits/spinner";
 import {
   SiteCollection,
@@ -60,6 +62,9 @@ export function LibraryWorkspace() {
   const [layoutReady, setLayoutReady] = useState(false);
   const [similarityOpen, setSimilarityOpen] = useState(false);
   const [similarityBusy, setSimilarityBusy] = useState(false);
+  // 顶栏按钮启动补全后重挂进度条，让它立即接上刚开始的任务
+  const [backfillToolbarKey, setBackfillToolbarKey] = useState(0);
+  const [pinnedKey, setPinnedKey] = useState(0);
   const {
     active: searchTransitionActive,
     finish: finishSearchTransition,
@@ -174,8 +179,8 @@ export function LibraryWorkspace() {
       <header className="workspace-page-header library-page-header">
         <div>
           <span className="page-kicker">WebHub</span>
-          <h1>网址库</h1>
-          <p>整理、检索并维护当前账号保存的网站。</p>
+          <h1>收藏库</h1>
+          <p>整理、检索并维护当前账号的全部收藏。</p>
         </div>
         <div className="library-page-actions">
           <div className="library-layout-toggle" role="group" aria-label="网址库页面宽度">
@@ -205,9 +210,11 @@ export function LibraryWorkspace() {
           <button
             className="library-button secondary"
             type="button"
-            onClick={() => void handleAnalysisBackfill()}
+            onClick={() => {
+              void handleAnalysisBackfill().then(() => setBackfillToolbarKey((key) => key + 1));
+            }}
             disabled={analysisBackfillBusy || totalLibrarySites === 0}
-            title="开始或加入全库网站信息补全任务，详细进度在首页显示"
+            title="开始或加入全库网站信息补全任务，详细进度显示在页面顶部"
           >
             {analysisBackfillBusy ? (
               <Spinner />
@@ -239,6 +246,19 @@ export function LibraryWorkspace() {
           </button>
         </div>
       </header>
+
+      {/* 管理模式的顶部：批量补全进度与置顶区（Q44 从旧首页移来，能力不丢） */}
+      <div className="library-management-top">
+        <HomeMetadataBackfillToolbar
+          // 两个兄弟节点各自用计数器重挂，key 必须带前缀区分，否则同为 0 会冲突
+          key={`backfill-${backfillToolbarKey}`}
+          onCompleted={() => {
+            refreshSites();
+            setPinnedKey((key) => key + 1);
+          }}
+        />
+        <PinnedSites key={`pinned-${pinnedKey}`} />
+      </div>
 
       <div className="library-layout">
         <aside className="library-sidebar" aria-label="网址库分类">

@@ -27,8 +27,7 @@ test("语义索引拥有独立设置页，不再挂在服务商页面的主内�
   assert.doesNotMatch(providersPage, /SemanticIndexPanel/);
   assert.match(searchIndexPage, /<main className="site-main">/);
   assert.match(searchIndexPage, /<SemanticIndexPanel \/>/);
-  assert.match(siteHeader, /href="\/settings\/search-index"/);
-  assert.match(siteHeader, /<span>语义索引<\/span>/);
+  assert.match(siteHeader, /\{ label: "语义索引", href: "\/settings\/search-index"/);
 });
 
 test("全部重建使用后端专用费用并保留文字确认按钮样式", async () => {

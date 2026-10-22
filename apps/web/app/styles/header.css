@@ -16,8 +16,6 @@
   border-bottom: 1px solid var(--line-header);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  /* 1c 吸顶紧凑态收放高度用面板时长，避免与 120ms hover 节奏混用 */
-  transition: height var(--duration-panel) var(--ease-standard);
 }
 
 /* ── 品牌 ─────────────────────────────── */
@@ -40,19 +38,12 @@
   color: var(--on-accent);
   background: var(--accent);
   border-radius: var(--radius-md);
-  /* 与 Header 高度收放同步（1c 紧凑态 30px → 28px） */
-  transition:
-    width var(--duration-panel) var(--ease-standard),
-    height var(--duration-panel) var(--ease-standard);
 }
 
 /* 品牌图标按设计稿放大到 18px，其余图标维持 16px 基准 */
 .app-brand-mark svg {
   width: 18px;
   height: 18px;
-  transition:
-    width var(--duration-panel) var(--ease-standard),
-    height var(--duration-panel) var(--ease-standard);
 }
 
 .app-brand-name {
@@ -140,94 +131,6 @@
   border-radius: var(--radius-xs);
 }
 
-/* ── 1c 吸顶紧凑态（仅首页；由 site-header 观察 #agent-panel 后加 data-compact） ── */
-
-.app-header[data-compact] {
-  height: 56px;
-  /* 常态 92%，紧凑态设计稿为 rgba(255,255,255,.96)：内容已滚到身后，
-     底色要更实才压得住，同样用令牌派生保证深色模式成立 */
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-}
-
-/* 紧凑态字标 17px → 16px（设计稿 1c） */
-.app-header[data-compact] .app-brand-name {
-  font-size: 16px;
-}
-
-/* 紧凑态导航纵向 padding 6px → 5px，随 Header 一起收 */
-.app-header[data-compact] .app-nav-link {
-  padding: 5px 14px;
-}
-
-.app-header[data-compact] .app-brand-mark {
-  width: 28px;
-  height: 28px;
-}
-
-/* 紧凑态品牌图标随方块缩到 16px，对齐设计稿 1c */
-.app-header[data-compact] .app-brand-mark svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* 「回到 Agent」：紧凑态下顶替搜索框位置的回跳入口（设计稿 1c） */
-.app-back-to-agent {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  padding: 6px 14px;
-  color: var(--accent-strong);
-  font-size: 13px;
-  /* 设计稿底色 #F7FBE9 介于 --accent-tint 与 --accent-soft 之间：
-     从 --accent-soft 向表面色折半派生，深色模式随令牌自动成立 */
-  background: color-mix(in srgb, var(--accent-soft) 50%, var(--surface));
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: border-color var(--duration-hover) var(--ease-standard);
-}
-
-.app-back-to-agent:hover {
-  border-color: var(--accent-hover);
-}
-
-/* 设计稿此处 sparkles 为 14px，与它顶替的搜索框图标同规格 */
-.app-back-to-agent svg {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  stroke-width: 2;
-}
-
-/* ── 34×34 图标按钮（主题切换复用） ───── */
-
-.header-icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  padding: 0;
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: border-color var(--duration-hover) var(--ease-standard);
-}
-
-.header-icon-btn:hover {
-  border-color: var(--accent);
-}
-
-.header-icon-btn svg {
-  width: 16px;
-  height: 16px;
-  stroke-width: 2;
-}
-
 /* ── 后端离线指示：只在异常时出现 ─────── */
 
 .header-health-dot {
@@ -237,12 +140,6 @@
   background: var(--danger);
   /* 4px 半径作用在 8px 盒上已是正圆，无需 50% —— 全站圆角上限 8px */
   border-radius: var(--radius-xs);
-}
-
-/* 「回到 Agent」用 scrollIntoView 定位，若不留出吸顶顶栏的高度，
-   面板标题行会被顶栏盖住。写在这里是因为该按钮属于顶栏。 */
-#agent-panel {
-  scroll-margin-top: calc(var(--header-height) + 8px);
 }
 
 /* ── 账号头像与浮层 ───────────────────── */
@@ -371,6 +268,69 @@
   flex-shrink: 0;
 }
 
+/* 账号菜单里的主题切换：三段图标按钮，替代原先顶栏上的独立主题按钮 */
+.header-account-theme {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 6px 6px 10px;
+  margin-top: 4px;
+}
+
+.header-account-theme-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.header-theme-switch {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-subtle);
+  border-radius: var(--radius-md);
+}
+
+.header-theme-option {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
+}
+
+.header-theme-option:hover {
+  color: var(--text);
+}
+
+.header-theme-option[data-active] {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.header-theme-option svg {
+  width: 15px;
+  height: 15px;
+}
+
+.header-account-divider {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--line-soft);
+}
+
+.header-account-item[aria-current="page"] {
+  color: var(--text);
+  background: var(--surface-subtle);
+}
+
 /* 登出中的加载图标改用 ReactBits Spinner（纯 CSS 圆环），不再自建旋转动画 */
 
 .header-account-error {
@@ -382,9 +342,9 @@
 /* 键盘可达性：所有可交互控件统一聚焦环 */
 .app-nav-link:focus-visible,
 .app-search-entry:focus-visible,
-.app-back-to-agent:focus-visible,
-.header-icon-btn:focus-visible,
-.header-account-item:focus-visible {
+.header-account-item:focus-visible,
+.header-theme-option:focus-visible,
+.quick-add-trigger:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
@@ -398,8 +358,22 @@
 }
 
 @media (max-width: 767px) {
+  /* 390 宽也要放下：字标收起只留标志，导航与按钮收紧间距，不出现横向滚动 */
   .app-header {
-    gap: 12px;
+    gap: 8px;
+  }
+
+  .app-brand-name {
+    display: none;
+  }
+
+  .app-nav {
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .app-nav-link {
+    padding: 6px 10px;
   }
 
   .app-search-entry {
@@ -417,19 +391,17 @@
 /* ── 降级：reduced-motion 下全部静态 ───── */
 
 @media (prefers-reduced-motion: reduce) {
-  /* 紧凑态收放（Header 高度 / 品牌方块）在此瞬时切换，不做过渡 */
-  .app-header,
-  .app-brand-mark,
-  .app-brand-mark svg,
   .app-nav-link,
   .app-search-entry,
-  .app-back-to-agent,
-  .header-icon-btn,
-  .header-account-item {
+  .header-account-item,
+  .header-theme-option,
+  .quick-add-trigger,
+  .quick-add-submit {
     transition: none;
   }
 
-  .header-account[open] .header-account-popover {
+  .header-account[open] .header-account-popover,
+  .quick-add-popover {
     animation: none;
   }
 }

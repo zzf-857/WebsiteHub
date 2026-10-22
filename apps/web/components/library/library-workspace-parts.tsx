@@ -328,7 +328,8 @@ export const LIBRARY_SORTS: readonly LibrarySort[] = [
 ];
 
 /**
- * 首页与顶栏用 query 参数把筛选意图带过来（?category= / ?pinned=1 / ?sort= / ?focus=search）。
+ * 首页与顶栏用 query 参数把筛选意图带过来（?category= / ?pinned=1 / ?sort= / ?focus=search /
+ * ?q=，快速收藏遇到重复网址时用它定位已有收藏）。
  * 只在挂载时读一次，之后由页内交互接管——做双向同步会让每次点筛选都写一条历史记录。
  * 直接读 window.location 而不用 useSearchParams，避免额外的 Suspense 边界。
  */
@@ -337,8 +338,15 @@ export function initialIntent(): {
   pinnedOnly: boolean;
   sort: LibrarySort;
   focusSearch: boolean;
+  query: string;
 } {
-  const empty = { categoryId: "", pinnedOnly: false, sort: "updated" as LibrarySort, focusSearch: false };
+  const empty = {
+    categoryId: "",
+    pinnedOnly: false,
+    sort: "updated" as LibrarySort,
+    focusSearch: false,
+    query: "",
+  };
   if (typeof window === "undefined") return empty;
   const params = new URLSearchParams(window.location.search);
   const sort = params.get("sort");
@@ -347,5 +355,6 @@ export function initialIntent(): {
     pinnedOnly: params.get("pinned") === "1",
     sort: LIBRARY_SORTS.includes(sort as LibrarySort) ? (sort as LibrarySort) : "updated",
     focusSearch: params.get("focus") === "search",
+    query: params.get("q")?.trim().slice(0, 500) ?? "",
   };
 }

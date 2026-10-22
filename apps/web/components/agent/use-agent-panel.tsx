@@ -870,10 +870,10 @@ export function useAgentPanel({ onLibraryChanged }: UseAgentPanelOptions = {}) {
     items[nextIndex]?.focus();
   };
 
-  // 历史项刻意不用 <Link href="/?c=...">：Agent 已内嵌在首页，同路由下 Next 只更新
+  // 历史项刻意不用 <Link href="/chat?c=...">：同路由下 Next 只更新
   // query、不会重挂组件，而 ?c 只在挂载时读取一次，跳转后画面并不会真正切换会话。
   // 改成按钮直接在面板内加载目标会话并 replaceState 同步地址，行为最可靠，
-  // 也不会打断页面其余部分（吸顶观察、分类滚动）的状态
+  // 也不会打断页面其余部分的状态
   const openConversation = useCallback(
     (id: string) => {
       if (busy || draftWorkflowBusy) return;
