@@ -143,6 +143,8 @@ export function useLibraryWorkspace() {
 
   const [pinnedPage, setPinnedPage] = useState<SitePageState>(EMPTY_PAGE);
   const [regularPage, setRegularPage] = useState<SitePageState>(EMPTY_PAGE);
+  // 只靠正文快照命中搜索词的条目 → 片段（Q48）；随列表重载替换、翻页合并。
+  const [contentMatches, setContentMatches] = useState<Readonly<Record<string, string>>>({});
   const loadedPagesRef = useRef({ pinned: pinnedPage, regular: regularPage });
   const preserveLoadedSitesOnRefresh = useRef(false);
   const refreshIntentRef = useRef(0);
@@ -334,6 +336,7 @@ export function useLibraryWorkspace() {
       if (!preserveLoadedSites) {
         setPinnedPage(EMPTY_PAGE);
         setRegularPage(EMPTY_PAGE);
+        setContentMatches({});
       }
       try {
         const previous = loadedPagesRef.current;
@@ -376,6 +379,10 @@ export function useLibraryWorkspace() {
           : preserveLoadedSites && previous.regular.items.length > 0
             ? previous.regular.nextCursor
             : regular.nextCursor;
+        const freshMatches = { ...pinned.contentMatches, ...regular?.contentMatches };
+        setContentMatches((current) => (
+          preserveLoadedSites ? { ...current, ...freshMatches } : freshMatches
+        ));
         setPinnedPage({
           items: pinnedItems,
           nextCursor: pinnedNextCursor,
@@ -592,6 +599,7 @@ export function useLibraryWorkspace() {
         || activeSiteQueryScope.current !== queryScope
       ) return;
       paginationFailedCursor.current[kind] = null;
+      setContentMatches((current) => ({ ...current, ...result.contentMatches }));
       setPage((current) => ({
         items: appendUniqueSites(current.items, result.items),
         nextCursor: result.nextCursor,
@@ -914,6 +922,7 @@ export function useLibraryWorkspace() {
   const collectionProps = {
     viewMode,
     now,
+    contentMatches,
     onOpen: quickActions.open,
     onToggleStar: (site: LibrarySite) => void quickActions.toggleStar(site),
     onMarkSeen: (site: LibrarySite) => void quickActions.markSeen(site),

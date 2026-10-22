@@ -1726,6 +1726,41 @@ textarea:focus-visible {
   -webkit-line-clamp: 2;
 }
 
+/* Q48：只靠正文快照命中搜索词的条目——标记 + 片段，说明它为什么出现在结果里。 */
+.library-site-content-match {
+  display: -webkit-box;
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.library-content-match-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  padding: 0 5px;
+  gap: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.library-content-match-badge svg {
+  width: 11px;
+  height: 11px;
+}
+
+.library-site-collection[data-view="list"] .library-site-content-match {
+  margin-top: 3px;
+  -webkit-line-clamp: 1;
+}
+
 .library-site-taxonomy {
   min-width: 0;
   flex-wrap: wrap;

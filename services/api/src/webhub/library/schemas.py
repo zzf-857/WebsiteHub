@@ -290,6 +290,10 @@ class SiteListResponse(BaseModel):
     items: list[SiteResponse]
     next_cursor: str | None
     aggregate: SiteListAggregate
+    # Q48: items of this page that matched the search only through their
+    # content snapshot (page text / README), mapped to a short excerpt. Items
+    # absent here matched on their own fields (title, URL, description, ...).
+    content_matches: dict[str, str] = Field(default_factory=dict)
 
 
 class SiteSelectionItem(BaseModel):

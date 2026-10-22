@@ -88,6 +88,26 @@ test("normalizes strict site and paginated list contracts", () => {
   assert.equal(page.items[0]?.id, "site-1");
   assert.equal(page.nextCursor, "next-page");
   assert.deepEqual(page.aggregate, { matchedCount: 12, pinnedCount: 4 });
+  assert.deepEqual(page.contentMatches, {});
+});
+
+test("keeps content-hit snippets only for items of the page", () => {
+  const page = normalizeLibrarySitePage({
+    items: [site],
+    next_cursor: null,
+    aggregate: { matched_count: 1, pinned_count: 0 },
+    content_matches: { "site-1": "  …长时间运行的智能体…  ", "other-site": "ignored" },
+  });
+  assert.deepEqual(page.contentMatches, { "site-1": "…长时间运行的智能体…" });
+  assert.throws(
+    () => normalizeLibrarySitePage({
+      items: [site],
+      next_cursor: null,
+      aggregate: { matched_count: 1, pinned_count: 0 },
+      content_matches: { "site-1": 3 },
+    }),
+    (error: unknown) => error instanceof LibraryContractError && /content_matches/.test(error.message),
+  );
 });
 
 test("accepts the collection envelope and the explicit category delete preview", () => {

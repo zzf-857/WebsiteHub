@@ -30,6 +30,7 @@ from webhub.db.models import (
     utc_now,
 )
 
+from .content import choose_snapshot, store_content_snapshot
 from .enrichment import (
     MAX_NEW_SITE_TAGS,
     MAX_SITE_TAGS,
@@ -1279,8 +1280,11 @@ async def _refresh_repository(
     *,
     force_refresh: bool,
     include_readme: bool,
-) -> str:
-    """Refresh GitHub facts for a github.com repository; return model evidence.
+) -> tuple[str, str]:
+    """Refresh GitHub facts for a github.com repository.
+
+    Returns ``(model evidence, README excerpt)``; both are empty when nothing
+    was read.
 
     Stats are stored as soon as they arrive, independently of the page/LLM
     outcome: they describe the repository behind the *current* URL, so the
@@ -1314,7 +1318,7 @@ async def _refresh_repository(
         include_readme = False
     if reference is None or not (refresh_stats or include_readme):
         await session.rollback()
-        return ""
+        return "", ""
     credential = await enricher.credential(session, claim.user_id)
     # Never hold a SQLite read snapshot across GitHub I/O.
     await session.rollback()
@@ -1350,9 +1354,42 @@ async def _refresh_repository(
         )
         await session.commit()
     if not include_readme:
-        return ""
+        return "", ""
     stats = stored_stats(update_value) or stored_stats(previous)
-    return repository_evidence(reference, stats, result.readme_excerpt)
+    return (
+        repository_evidence(reference, stats, result.readme_excerpt),
+        result.readme_excerpt,
+    )
+
+
+async def _store_content_snapshot(
+    session: AsyncSession,
+    claim: AnalysisClaim,
+    outcome: FetchOutcome,
+    readme_excerpt: str,
+) -> None:
+    """Keep the text this analysis read (Q48); never fails the analysis."""
+
+    snapshot = choose_snapshot(outcome.metadata.page_text, readme_excerpt)
+    if snapshot is None:
+        return
+    content, source = snapshot
+    try:
+        await store_content_snapshot(
+            session,
+            user_id=claim.user_id,
+            site_id=claim.site_id,
+            url=claim.url,
+            content=content,
+            source=source,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:  # noqa: BLE001 - the snapshot is optional search data
+        _LOGGER.warning(
+            "content snapshot failed for %s (%s)", claim.site_id, type(error).__name__
+        )
+        await session.rollback()
 
 
 async def analyze_site(
@@ -1443,10 +1480,11 @@ async def analyze_site(
             await session.rollback()
         outcome = await fetch_site_metadata(claim.url, timeout_seconds=timeout_seconds)
         repository_text = ""
+        readme_excerpt = ""
         if repository_enricher is not None:
             try:
                 async with asyncio.timeout(timeout_seconds * 3):
-                    repository_text = await _refresh_repository(
+                    repository_text, readme_excerpt = await _refresh_repository(
                         session,
                         claim,
                         repository_enricher,
@@ -1617,6 +1655,7 @@ async def analyze_site(
                 raise
         else:
             did_apply = await finalize_outcome()
+        await _store_content_snapshot(session, claim, outcome, readme_excerpt)
         if bulk and not did_apply:
             return None
         return effective_outcome

@@ -369,6 +369,7 @@ def test_mcp_round_trip_through_the_real_route(environment: Environment) -> None
             "saved_at": payload["items"][0]["saved_at"],
             "opened": False,
             "starred": False,
+            "matched_in": "title",
         }
     ]
     assert payload["items"][0]["saved_at"].endswith("Z")

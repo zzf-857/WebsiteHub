@@ -1,7 +1,7 @@
 """Add RSS / podcast subscriptions: ``feeds`` and ``feed_items`` (Q50).
 
 Revision ID: 20261022_0024
-Revises: 20261022_0022
+Revises: 20261022_0023
 Create Date: 2026-10-22
 
 Two new tables only; nothing existing is rebuilt.  ``feed_items.saved_site_id``
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20261022_0024"
-down_revision: str | None = "20261022_0022"
+down_revision: str | None = "20261022_0023"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
