@@ -190,9 +190,11 @@ def test_registry_auth_origin_and_exact_provider_scope(tmp_path: Path) -> None:
             "jina",
             "exa",
             "exa_mcp_free",
+            "github",
         }
         # Model vendors use a read-only catalogue; search vendors expose a
-        # clearly labelled minimal real-query test.
+        # clearly labelled minimal real-query test; code hosts read the free
+        # rate-limit endpoint.
         supported = {item["provider"] for item in items if item["connection_test_supported"]}
         assert supported == {
             "openai",
@@ -204,8 +206,15 @@ def test_registry_auth_origin_and_exact_provider_scope(tmp_path: Path) -> None:
             "tavily",
             "jina",
             "exa",
+            "github",
         }
         assert next(item for item in items if item["provider"] == "tavily")["kinds"] == ["search"]
+        github = next(item for item in items if item["provider"] == "github")
+        assert github["kinds"] == ["code_host"]
+        assert github["secret_required"] is True
+        assert github["fixed_base_url"] is True
+        assert github["default_base_url"] == "https://api.github.com"
+        assert github["usage_notice"]
         free_search = next(item for item in items if item["provider"] == "exa_mcp_free")
         assert free_search["secret_required"] is False
         assert free_search["search_bulk_supported"] is False

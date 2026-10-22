@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import { Spinner } from "@/components/react-bits/spinner";
 import type { ProviderConfig, ProviderRegistryItem } from "@/lib/provider-contract";
+import { providerKindUsesModelName } from "@/lib/provider-form";
 
 function formatMoment(value: string): string {
   const parsed = new Date(value);
@@ -67,7 +68,7 @@ export function ProviderConfigCard({
       </div>
 
       <dl className="provider-card-meta">
-        {config.kind !== "search" && (
+        {providerKindUsesModelName(config.kind) && (
           <MetaRow label="模型">{config.modelName ?? "未填写"}</MetaRow>
         )}
         <MetaRow label="地址">{displayedBaseUrl ?? "服务商默认地址"}</MetaRow>

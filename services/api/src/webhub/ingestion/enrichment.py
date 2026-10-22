@@ -188,6 +188,9 @@ class SiteEnrichmentRequest:
     categories: tuple[SiteCategoryOption, ...]
     existing_tags: tuple[SiteTagOption, ...]
     bulk: bool = False
+    # GitHub facts and a README excerpt for github.com repositories (Q45).
+    # Transient model evidence only; never written to the library as text.
+    repository_evidence: str = ""
 
     @property
     def has_substantial_page_evidence(self) -> bool:
@@ -195,6 +198,9 @@ class SiteEnrichmentRequest:
 
         meta_description = " ".join(self.meta_description.split())
         page_text = " ".join(self.page_text.split())
+        repository = " ".join(self.repository_evidence.split())
+        if len(repository) >= MIN_PAGE_TEXT_EVIDENCE_CHARS:
+            return True
         combined = unicodedata.normalize(
             "NFKC",
             " ".join((self.page_title, meta_description, page_text)),

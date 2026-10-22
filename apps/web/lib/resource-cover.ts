@@ -125,17 +125,20 @@ export function repoHostLabel(host: string): string | null {
   return REPO_HOST_LABELS[host.toLowerCase().replace(/^www\./u, "")] ?? null;
 }
 
-/** 星数格式：999 → “999”，1234 → “1.2k”，34567 → “3.4 万”（截断不进位）。 */
+/** 保留一位小数并截断不进位；整数时不带 “.0”。 */
+function truncatedTenths(value: number, unit: number): string {
+  const tenths = Math.floor(value / (unit / 10)) / 10;
+  return Number.isInteger(tenths) ? tenths.toFixed(0) : tenths.toFixed(1);
+}
+
+/** 星数格式：999 → “999”，1234 → “1.2k”，34567 → “3.4 万”，1.2 亿以上用 “亿”（截断不进位）。 */
 export function formatStars(value: number): string {
   if (!Number.isFinite(value) || value < 0) return "0";
   const whole = Math.floor(value);
   if (whole < 1000) return String(whole);
-  if (whole < 10_000) {
-    const thousands = Math.floor(whole / 100) / 10;
-    return `${Number.isInteger(thousands) ? thousands.toFixed(0) : thousands.toFixed(1)}k`;
-  }
-  const tenThousands = Math.floor(whole / 1000) / 10;
-  return `${Number.isInteger(tenThousands) ? tenThousands.toFixed(0) : tenThousands.toFixed(1)} 万`;
+  if (whole < 10_000) return `${truncatedTenths(whole, 1000)}k`;
+  if (whole < 100_000_000) return `${truncatedTenths(whole, 10_000)} 万`;
+  return `${truncatedTenths(whole, 100_000_000)} 亿`;
 }
 
 function readMetaRecord(meta: LibrarySiteMeta, key: string): Record<string, unknown> | null {
@@ -145,19 +148,78 @@ function readMetaRecord(meta: LibrarySiteMeta, key: string): Record<string, unkn
     : null;
 }
 
-/** 仓库语言与星数。Q45 写在 meta.github 下；这里两处都认，缺失就不显示。 */
-export function repoStats(meta: LibrarySiteMeta): { language: string | null; stars: string | null } {
-  const github = readMetaRecord(meta, "github") ?? {};
-  const language = [github.language, meta.language].find(
-    (value): value is string => typeof value === "string" && value.trim().length > 0,
-  );
-  const stars = [github.stars, meta.stars].find(
-    (value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0,
-  );
+function metaText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function metaCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+}
+
+/** Q45 写入 meta.github 的仓库数据（后端 ingestion/github.py）；字段缺失或类型不对时给空值。 */
+export type GithubRepoMeta = {
+  stars: number | null;
+  forks: number | null;
+  language: string | null;
+  topics: string[];
+  license: string | null;
+  /** ISO 8601（UTC），最近一次推送。 */
+  pushedAt: string | null;
+  archived: boolean;
+  description: string | null;
+  homepage: string | null;
+  /** 最近一次成功读取（含 304 未变化）的时间。 */
+  fetchedAt: string | null;
+  /** 仓库不存在、已改名或为私有（GitHub 返回 404）。 */
+  notFound: boolean;
+  /** 最近一次刷新被 GitHub 限流的时间；已有数据保留。 */
+  rateLimitedAt: string | null;
+};
+
+/** 解析 meta.github；没有这个键时返回 null。详情页的仓库面板（Q46）也读这里。 */
+export function githubRepoMeta(meta: LibrarySiteMeta): GithubRepoMeta | null {
+  const github = readMetaRecord(meta, "github");
+  if (!github) return null;
+  const topics = Array.isArray(github.topics)
+    ? github.topics.filter((topic): topic is string => typeof topic === "string" && topic.trim().length > 0)
+    : [];
+  const homepage = metaText(github.homepage);
   return {
-    language: language?.trim() ?? null,
-    stars: stars === undefined ? null : formatStars(stars),
+    stars: metaCount(github.stars),
+    forks: metaCount(github.forks),
+    language: metaText(github.language),
+    topics,
+    license: metaText(github.license),
+    pushedAt: metaText(github.pushed_at),
+    archived: github.archived === true,
+    description: metaText(github.description),
+    homepage: homepage && isSafePreviewUrl(homepage) ? homepage : null,
+    fetchedAt: metaText(github.fetched_at),
+    notFound: github.not_found === true,
+    rateLimitedAt: metaText(github.rate_limited_at),
   };
+}
+
+/** 仓库语言与星数。Q45 写在 meta.github 下，也认顶层的同名键；缺失就不显示。 */
+export function repoStats(meta: LibrarySiteMeta): { language: string | null; stars: string | null } {
+  const github = githubRepoMeta(meta);
+  const language = github?.language ?? metaText(meta.language);
+  const stars = github?.stars ?? metaCount(meta.stars);
+  return {
+    language,
+    stars: stars === null ? null : formatStars(stars),
+  };
+}
+
+/** GitHub 为每个仓库自动生成的社交卡片（不是作者上传的预览图）。 */
+const AUTO_REPO_CARD_HOSTS: ReadonlySet<string> = new Set(["opengraph.githubassets.com"]);
+
+function isAutoRepoCard(url: string): boolean {
+  try {
+    return AUTO_REPO_CARD_HOSTS.has(new URL(url.trim()).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function summaryText(site: Pick<CoverSite, "summary" | "description">): string | null {
@@ -191,7 +253,14 @@ export function coverModel(site: CoverSite, size: CoverSize): CoverModel {
   const domain = siteDomain(site.originalUrl);
   const hue = siteHue(domain);
   const fallback = generatedCover(site, size, domain, hue);
-  if (isSafePreviewUrl(site.previewUrl)) {
+  // 仓库已经有星数或语言时，GitHub 自动生成的社交卡片只是同样信息的另一种画法，
+  // 改用令牌绘制的仓库封面；作者自己上传的预览图仍然优先。
+  const preferRepoCover =
+    fallback.type === "repo" &&
+    Boolean(fallback.stars || fallback.language) &&
+    typeof site.previewUrl === "string" &&
+    isAutoRepoCard(site.previewUrl);
+  if (isSafePreviewUrl(site.previewUrl) && !preferRepoCover) {
     return {
       size,
       domain,

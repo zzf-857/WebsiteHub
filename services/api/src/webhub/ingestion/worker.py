@@ -18,6 +18,7 @@ from webhub.db.models import Site, SiteMetadataPreference, utc_now
 
 from . import backfill as metadata_backfill
 from .enrichment import AnalysisIntent, SiteEnricher
+from .github import RepositoryEnricher
 from .service import (
     AUTO_PENDING_STALE_AFTER,
     AnalysisClaim,
@@ -111,6 +112,7 @@ _METADATA_BACKFILLS: dict[_AccountKey, _MetadataBackfill] = {}
 _STOPPED_DATABASES: dict[int, ReferenceType[object]] = {}
 _STOPPED_STRONG_DATABASES: list[object] = []
 _SITE_ENRICHERS: dict[int, SiteEnricher] = {}
+_REPOSITORY_ENRICHERS: dict[int, RepositoryEnricher] = {}
 _GLOBAL_SEMAPHORE: asyncio.Semaphore | None = None
 _GLOBAL_SEMAPHORE_LOOP: asyncio.AbstractEventLoop | None = None
 _AUTO_SEMAPHORE: asyncio.Semaphore | None = None
@@ -228,6 +230,9 @@ async def _run_account(key: _AccountKey, state: _AccountQueue) -> None:
                             use_llm=True,
                             enricher=_SITE_ENRICHERS.get(id(state.database)),
                             enrichment_semaphore=_llm_semaphore(),
+                            repository_enricher=_REPOSITORY_ENRICHERS.get(
+                                id(state.database)
+                            ),
                         )
                 else:
                     async with _global_semaphore():
@@ -235,6 +240,9 @@ async def _run_account(key: _AccountKey, state: _AccountQueue) -> None:
                             state.database,
                             state.user_id,
                             site_id,
+                            repository_enricher=_REPOSITORY_ENRICHERS.get(
+                                id(state.database)
+                            ),
                         )
             except asyncio.CancelledError:
                 if not completion.done():
@@ -354,6 +362,7 @@ async def _consume_auto_backfill(state: _AutoBackfill) -> None:
                         site_id,
                         automatic=True,
                         stale_before=stale_before,
+                        repository_enricher=_REPOSITORY_ENRICHERS.get(id(state.database)),
                     )
             except asyncio.CancelledError:
                 if not completion.done():
@@ -583,6 +592,7 @@ async def _analyze_metadata_item_with_capacity(
                 if current_requires_llm
                 else None
             ),
+            repository_enricher=_REPOSITORY_ENRICHERS.get(id(state.database)),
         )
 
     if requires_llm:
@@ -876,7 +886,12 @@ async def resume_metadata_backfills(database: Database) -> None:
         ensure_metadata_backfill(database, user_id=user_id, run_id=run_id)
 
 
-def start(database: Database, *, site_enricher: SiteEnricher | None = None) -> None:
+def start(
+    database: Database,
+    *,
+    site_enricher: SiteEnricher | None = None,
+    repository_enricher: RepositoryEnricher | None = None,
+) -> None:
     """Allow a freshly started application to accept analysis work."""
 
     _mark_database_started(database)
@@ -884,6 +899,10 @@ def start(database: Database, *, site_enricher: SiteEnricher | None = None) -> N
         _SITE_ENRICHERS.pop(id(database), None)
     else:
         _SITE_ENRICHERS[id(database)] = site_enricher
+    if repository_enricher is None:
+        _REPOSITORY_ENRICHERS.pop(id(database), None)
+    else:
+        _REPOSITORY_ENRICHERS[id(database)] = repository_enricher
 
 
 def schedule_analysis(
@@ -1188,6 +1207,7 @@ async def shutdown(database: Database) -> None:
         if key[0] == database_id:
             _METADATA_BACKFILLS.pop(key, None)
     _SITE_ENRICHERS.pop(database_id, None)
+    _REPOSITORY_ENRICHERS.pop(database_id, None)
 
 
 __all__ = [

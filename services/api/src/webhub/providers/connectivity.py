@@ -61,6 +61,12 @@ class ProviderSearchProbeResult:
     result_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderCodeHostProbeResult:
+    limit: int
+    remaining: int
+
+
 # Every failure mode maps to a fixed pair here.  Nothing derived from the
 # vendor response is ever interpolated into these strings.
 _FAILURES: dict[str, str] = {
@@ -250,6 +256,65 @@ async def probe_models(
     return ProviderProbeResult(models=_model_names(payload, definition))
 
 
+def _rate_limit_numbers(payload: Any) -> ProviderCodeHostProbeResult:
+    if not isinstance(payload, Mapping):
+        raise _fail("provider_response_invalid")
+    resources = payload.get("resources")
+    core = resources.get("core") if isinstance(resources, Mapping) else None
+    if not isinstance(core, Mapping):
+        core = payload.get("rate")
+    if not isinstance(core, Mapping):
+        raise _fail("provider_response_invalid")
+    limit, remaining = core.get("limit"), core.get("remaining")
+    if not all(
+        isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        for value in (limit, remaining)
+    ):
+        raise _fail("provider_response_invalid")
+    return ProviderCodeHostProbeResult(limit=int(limit), remaining=int(remaining))
+
+
+async def probe_code_host(
+    definition: ProviderDefinition,
+    *,
+    base_url: str,
+    api_key: str | None,
+    timeout_seconds: int,
+) -> ProviderCodeHostProbeResult:
+    """Read the code host's rate-limit status with the account token.
+
+    GitHub's ``/rate_limit`` does not consume quota, validates the token, and
+    reports the hourly budget the enrichment will run under.  Only the two
+    numbers are kept; nothing else from the body reaches the caller.
+    """
+
+    if "code_host" not in definition.kinds or definition.provider != "github":
+        raise _fail("provider_response_invalid")
+    try:
+        await validate_connection_target(
+            base_url,
+            allow_private=definition.allows_private_base_url,
+            timeout_seconds=timeout_seconds,
+        )
+    except ProviderTargetError as error:
+        raise ProviderProbeError(error.code, error.message) from error
+
+    headers = {
+        "user-agent": _USER_AGENT,
+        "accept": "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+    }
+    if api_key:
+        headers["authorization"] = f"Bearer {api_key}"
+    payload = await _request_json(
+        method="GET",
+        url=f"{base_url.rstrip('/')}/rate_limit",
+        headers=headers,
+        timeout_seconds=timeout_seconds,
+    )
+    return _rate_limit_numbers(payload)
+
+
 async def probe_search(
     definition: ProviderDefinition,
     *,
@@ -319,10 +384,12 @@ async def probe_search(
 __all__ = [
     "MAX_MODELS",
     "MAX_RESPONSE_BYTES",
+    "ProviderCodeHostProbeResult",
     "ProviderProbeError",
     "ProviderProbeResult",
     "ProviderSearchProbeResult",
     "probe_base_url",
+    "probe_code_host",
     "probe_models",
     "probe_search",
 ]

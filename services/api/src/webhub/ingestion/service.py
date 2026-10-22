@@ -8,6 +8,7 @@ a page's ``<title>`` is a guess about that decision.  Guesses lose.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -45,6 +46,15 @@ from .enrichment import (
     normalize_site_tag_name,
 )
 from .fetcher import DEFAULT_TIMEOUT_SECONDS, FetchOutcome, fetch_site_metadata
+from .github import (
+    RepositoryEnricher,
+    github_meta_update,
+    github_repo_ref,
+    repository_evidence,
+    stats_are_fresh,
+    stored_etag,
+    stored_stats,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -665,6 +675,7 @@ async def _load_enrichment_snapshot(
     outcome: FetchOutcome,
     *,
     bulk: bool,
+    repository_evidence: str = "",
 ) -> _EnrichmentSnapshot | None:
     """Freeze model inputs only while the analysis claim is still exact."""
 
@@ -739,6 +750,7 @@ async def _load_enrichment_snapshot(
         ),
         existing_tags=tuple(SiteTagOption(id=tag.id, name=tag.name) for tag in tags),
         bulk=bulk,
+        repository_evidence=repository_evidence,
     )
     return _EnrichmentSnapshot(
         request=request,
@@ -1252,6 +1264,89 @@ async def _record_claim_terminal(
     await session.commit()
 
 
+def _stored_meta(raw: str | None) -> dict[str, object]:
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+async def _refresh_repository(
+    session: AsyncSession,
+    claim: AnalysisClaim,
+    enricher: RepositoryEnricher,
+    *,
+    force_refresh: bool,
+    include_readme: bool,
+) -> str:
+    """Refresh GitHub facts for a github.com repository; return model evidence.
+
+    Stats are stored as soon as they arrive, independently of the page/LLM
+    outcome: they describe the repository behind the *current* URL, so the
+    write is fenced on that URL and on ``kind=repo`` only, never on the user's
+    edit version, and it neither bumps ``version`` nor touches ``updated_at``.
+    """
+
+    row = (
+        await session.execute(
+            select(Site.kind, Site.meta_json).where(
+                Site.user_id == claim.user_id,
+                Site.id == claim.site_id,
+                Site.original_url == claim.url,
+            )
+        )
+    ).first()
+    meta = _stored_meta(row.meta_json) if row is not None else {}
+    reference = github_repo_ref(row.kind, meta) if row is not None else None
+    previous = meta.get("github")
+    now = utc_now()
+    refresh_stats = reference is not None and (
+        force_refresh or not stats_are_fresh(previous, now)
+    )
+    if reference is None or not (refresh_stats or include_readme):
+        await session.rollback()
+        return ""
+    credential = await enricher.credential(session, claim.user_id)
+    # Never hold a SQLite read snapshot across GitHub I/O.
+    await session.rollback()
+    result = await enricher.fetch(
+        reference,
+        credential=credential,
+        etag=stored_etag(previous) if refresh_stats else None,
+        include_stats=refresh_stats,
+        include_readme=include_readme,
+    )
+    update_value = github_meta_update(result, previous, now) if refresh_stats else None
+    if update_value is not None:
+        await session.execute(
+            update(Site)
+            .where(
+                Site.user_id == claim.user_id,
+                Site.id == claim.site_id,
+                Site.original_url == claim.url,
+                Site.kind == "repo",
+                func.json_valid(Site.meta_json) == 1,
+            )
+            .values(
+                meta_json=func.json_set(
+                    Site.meta_json,
+                    "$.github",
+                    func.json(
+                        json.dumps(update_value, ensure_ascii=False, separators=(",", ":"))
+                    ),
+                ),
+                updated_at=Site.updated_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+    if not include_readme:
+        return ""
+    stats = stored_stats(update_value) or stored_stats(previous)
+    return repository_evidence(reference, stats, result.readme_excerpt)
+
+
 async def analyze_site(
     session: AsyncSession,
     user_id: str,
@@ -1274,6 +1369,7 @@ async def analyze_site(
     enrichment_semaphore: asyncio.Semaphore | None = None,
     use_llm: bool = False,
     enricher: SiteEnricher | None = None,
+    repository_enricher: RepositoryEnricher | None = None,
 ) -> FetchOutcome | None:
     """Mark the site pending, fetch it, and store the result.
 
@@ -1338,6 +1434,28 @@ async def analyze_site(
             )
             await session.rollback()
         outcome = await fetch_site_metadata(claim.url, timeout_seconds=timeout_seconds)
+        repository_text = ""
+        if repository_enricher is not None:
+            try:
+                async with asyncio.timeout(timeout_seconds * 3):
+                    repository_text = await _refresh_repository(
+                        session,
+                        claim,
+                        repository_enricher,
+                        # A person asking for this analysis gets current
+                        # numbers; background and batch work reuse a week.
+                        force_refresh=not automatic and not bulk,
+                        include_readme=should_use_llm,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # noqa: BLE001 - GitHub data is optional
+                _LOGGER.warning(
+                    "repository enrichment failed for %s (%s)",
+                    site_id,
+                    type(error).__name__,
+                )
+                await session.rollback()
         enrichment_snapshot: _EnrichmentSnapshot | None = None
         enrichment: SiteEnrichmentResult | None = None
         enrichment_error: str | None = None
@@ -1363,6 +1481,7 @@ async def analyze_site(
                     claim,
                     outcome,
                     bulk=bulk,
+                    repository_evidence=repository_text,
                 )
                 # Never retain a SQLite read snapshot while Provider I/O is in
                 # flight. The exact site/taxonomy state is re-read under the
@@ -1534,6 +1653,7 @@ async def analyze_in_background(
     propagate_errors: bool = False,
     use_llm: bool = False,
     enricher: SiteEnricher | None = None,
+    repository_enricher: RepositoryEnricher | None = None,
 ) -> FetchOutcome | None:
     """Run one analysis detached from the request that triggered it.
 
@@ -1560,6 +1680,7 @@ async def analyze_in_background(
                 enrichment_semaphore=enrichment_semaphore,
                 use_llm=use_llm,
                 enricher=enricher,
+                repository_enricher=repository_enricher,
             )
     except asyncio.CancelledError:
         raise

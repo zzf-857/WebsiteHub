@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-ProviderKind = Literal["model", "search", "embedding"]
+ProviderKind = Literal["model", "search", "embedding", "code_host"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,11 +43,12 @@ class ProviderDefinition:
     def connection_test_supported(self) -> bool:
         """Whether ``providers.connectivity`` can probe this vendor.
 
-        Model and embedding vendors use a read-only catalogue.  Search-only
-        vendors must explicitly opt into the minimal-query adapter above.
+        Model and embedding vendors use a read-only catalogue and code hosts a
+        free rate-limit read.  Search-only vendors must explicitly opt into the
+        minimal-query adapter above.
         """
 
-        return bool(self.kinds & {"model", "embedding"}) or self.search_test_supported
+        return bool(self.kinds & {"model", "embedding", "code_host"}) or self.search_test_supported
 
 
 # Keep this registry aligned with PRD 6.7 and Implementation Plan Phase 4.
@@ -135,6 +136,23 @@ PROVIDER_REGISTRY: tuple[ProviderDefinition, ...] = (
             "改用自己的搜索 Provider。"
         ),
         default_base_url="https://mcp.exa.ai/mcp",
+    ),
+    # Optional: without a token, repository enrichment uses GitHub's anonymous
+    # API quota.  The address is pinned so the token can only ever be sent to
+    # the official API origin.
+    ProviderDefinition(
+        provider="github",
+        label="GitHub",
+        kinds=frozenset({"code_host"}),
+        secret_required=True,
+        application_url="https://github.com/settings/personal-access-tokens",
+        usage_notice=(
+            "可选。用于读取仓库的星数、语言与 README，只需公开仓库的只读权限"
+            "（细粒度令牌无需勾选任何权限）。不配置时匿名访问，每小时约 60 次；"
+            "配置后按你的账号额度，每小时约 5000 次。"
+        ),
+        fixed_base_url=True,
+        default_base_url="https://api.github.com",
     ),
 )
 

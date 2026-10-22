@@ -30,6 +30,7 @@ import {
   createProviderDraft,
   editProviderDraft,
   hasProviderDraftError,
+  providerKindUsesModelName,
   providerTestTone,
   validateProviderDraft,
   type ProviderDraft,
@@ -295,8 +296,9 @@ export function ProviderForm({
       ? "该服务商必须提供 API Key。密钥加密存储，之后任何界面都只会显示掩码。"
       : "该服务商无需 API Key，可以直接留空。";
 
-  const showModelName = kind !== "search";
+  const showModelName = providerKindUsesModelName(kind);
   const testsSearch = kind === "search";
+  const testsCodeHost = kind === "code_host";
   const hidesSecretInput = definition?.fixedBaseUrl === true && !definition.secretRequired;
   const submitting = busy;
 
@@ -567,13 +569,15 @@ export function ProviderForm({
             title={
               testsSearch
                 ? "向服务商执行一次最小测试搜索，可能消耗一次查询额度"
-                : "用当前 API Key 向服务商拉取可用模型，同时验证连接"
+                : testsCodeHost
+                  ? "读取一次令牌的接口额度，验证令牌是否有效，不消耗额度"
+                  : "用当前 API Key 向服务商拉取可用模型，同时验证连接"
             }
           >
             {testing ? <Spinner size={14} /> : <PlugZap aria-hidden="true" />}
             {testing
-              ? testsSearch ? "正在测试搜索" : "正在获取"
-              : testsSearch ? "测试搜索（可能消耗额度）" : "获取模型列表"}
+              ? testsSearch ? "正在测试搜索" : testsCodeHost ? "正在验证" : "正在获取"
+              : testsSearch ? "测试搜索（可能消耗额度）" : testsCodeHost ? "验证令牌" : "获取模型列表"}
           </button>
         )}
         <button

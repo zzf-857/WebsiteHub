@@ -1,6 +1,6 @@
 import { createContractGuards } from "./contract-guards.ts";
 
-export const PROVIDER_KINDS = ["model", "search", "embedding"] as const;
+export const PROVIDER_KINDS = ["model", "search", "embedding", "code_host"] as const;
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 
 // 后端永远只回掩码，前端所有展示位统一引用这个常量，避免各处手写星号。
