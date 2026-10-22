@@ -1,7 +1,7 @@
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
 
-/* 设计稿 1d「让 Agent 帮你」：Agent 对话入口在首页，这几条快捷入口
+/* 设计稿 1d「让 Agent 帮你」：站内对话在 /chat（2026-10 D2 冻结但可用），这几条快捷入口
    通过 ?ask= 把提问带过去预填到输入框。刻意只预填、不自动发送——
    用户点进来常常要改措辞，替他直接提交等于替他做了决定。 */
 
@@ -36,7 +36,7 @@ export function AgentHelpCard({ siteName }: Readonly<AgentHelpCardProps>) {
           <Link
             key={text}
             className="sd-suggest"
-            href={`/?ask=${encodeURIComponent(text)}`}
+            href={`/chat?ask=${encodeURIComponent(text)}`}
           >
             {text}
           </Link>

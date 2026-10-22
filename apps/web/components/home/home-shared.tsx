@@ -4,8 +4,8 @@ import type { LucideIcon } from "lucide-react";
 import { CircleAlert } from "lucide-react";
 import Link from "next/link";
 
-// 首页四个分区共用的小件：分区标题行 / 错误提示 / 若干纯函数。
-// 单独成文件是为了让 pinned/space/recent/category 四个分区不重复实现同一套结构。
+// 置顶区与补全工具条共用的小件：分区标题行 / 错误提示 / 若干纯函数。
+// Q44 后它们挪到了收藏库顶部，旧首页的其余分区已删除。
 
 type SectionHeadingProps = {
   icon: LucideIcon;
@@ -69,12 +69,4 @@ export function errorText(error: unknown, fallback: string): string {
 
 export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
-}
-
-/** 滚动动画前先探测系统偏好：reduced-motion 下必须退回瞬时滚动 */
-export function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
 }

@@ -920,7 +920,7 @@ export function BookmarkImportWorkspace() {
             {result.failed > 0 && `，${result.failed} 条失败`}
           </p>
           <p className="provider-form-hint">
-            去 <Link href="/library">网址库</Link> 看看，或者回 <Link href="/">首页</Link> 让 Agent
+            去 <Link href="/library">收藏库</Link> 看看，或者到 <Link href="/chat">站内对话</Link> 让 Agent
             帮你继续整理。
           </p>
         </section>

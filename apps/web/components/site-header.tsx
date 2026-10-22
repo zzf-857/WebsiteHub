@@ -1,29 +1,57 @@
 "use client";
 
-import { Compass, Database, FileUp, LogOut, Search, Settings, Sparkles } from "lucide-react";
+import {
+  Bot,
+  Compass,
+  Database,
+  FileUp,
+  LogOut,
+  MessagesSquare,
+  Monitor,
+  Moon,
+  Search,
+  Settings,
+  Sun,
+} from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { useAuth } from "@/components/auth/auth-context";
+import { QuickAddButton } from "@/components/discover/quick-add";
 import {
   LIBRARY_SEARCH_LAYOUT_ID,
   LIBRARY_SEARCH_LAYOUT_TRANSITION,
   useLibrarySearchTransition,
 } from "@/components/library-search-transition";
 import { Spinner } from "@/components/react-bits/spinner";
-import { ThemeToggle } from "@/components/theme-toggle";
+import type { ThemeMode } from "@/lib/auth-contract";
 
 type HealthState = "checking" | "online" | "offline";
 
-/* 路由映射按设计稿 1a：首页 / · 网址库 /library · Space /spaces。
-   Agent 对话挂在首页的 Agent 模块下，因此 /chat 路径也算作"首页"高亮。 */
+/* 2026-10 方向重定：发现 / · 收藏库 /library · Space /spaces。
+   站内对话冻结后挪到账号菜单（/chat），不再占主导航。 */
 const navigation = [
-  { label: "首页", href: "/", sections: ["/", "/chat"] },
-  { label: "网址库", href: "/library", sections: ["/library"] },
+  { label: "发现", href: "/", sections: ["/"] },
+  { label: "收藏库", href: "/library", sections: ["/library"] },
   { label: "Space", href: "/spaces", sections: ["/spaces"] },
 ] as const;
+
+/* 账号菜单里的设置入口。/settings/agents 由 Q43 并行建设，这里只负责链接。 */
+const accountLinks = [
+  { label: "服务商", href: "/settings/providers", icon: Settings },
+  { label: "Agent 接入", href: "/settings/agents", icon: Bot },
+  { label: "导入书签", href: "/settings/import", icon: FileUp },
+  { label: "语义索引", href: "/settings/search-index", icon: Database },
+  { label: "站内对话", href: "/chat", icon: MessagesSquare },
+] as const;
+
+const themeOptions: ReadonlyArray<{ value: ThemeMode; label: string; icon: typeof Sun }> = [
+  { value: "system", label: "跟随系统", icon: Monitor },
+  { value: "light", label: "浅色", icon: Sun },
+  { value: "dark", label: "深色", icon: Moon },
+];
 
 function isNavActive(pathname: string, sections: readonly string[]): boolean {
   return sections.some((section) =>
@@ -47,7 +75,7 @@ const readSearchKeyLabel = () =>
   /mac|iphone|ipad/i.test(window.navigator.userAgent) ? "⌘K" : "Ctrl K";
 const readServerSearchKeyLabel = () => "⌘K";
 
-/* 本轮契约：SiteHeader 不接受外部 props，吸顶态由自身观察 #agent-panel 驱动。 */
+/* SiteHeader 不接受外部 props：导航高亮、搜索转场与账号菜单都由自身状态驱动。 */
 export function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
@@ -61,11 +89,8 @@ export function SiteHeader() {
   const [health, setHealth] = useState<HealthState>("checking");
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
-  /* 设计稿 1c：首页滚过 Agent 模块后 Header 收紧（64px → 56px），
-     搜索框让位给「回到 Agent」。仅首页启用，其他路由永远保持常规形态。 */
-  const isHome = pathname === "/";
+  const [themeError, setThemeError] = useState<string | null>(null);
   const isLibrarySection = pathname === "/library" || pathname.startsWith("/library/");
-  const [compact, setCompact] = useState(false);
   const searchKeyLabel = useSyncExternalStore(
     subscribeNoop,
     readSearchKeyLabel,
@@ -93,69 +118,6 @@ export function SiteHeader() {
       active = false;
       window.clearInterval(interval);
     };
-  }, []);
-
-  /* 紧凑态触发线要跟 Header 实高一致。--header-height 是唯一真源，
-     这里读它而不是复制一份 64：改了令牌不用记得回来同步这个数字。 */
-  const headerHeight = () => {
-    const token = getComputedStyle(document.documentElement)
-      .getPropertyValue("--header-height")
-      .trim();
-    return Number.parseFloat(token) || 64;
-  };
-
-  /* 吸顶态观察：#agent-panel 完全滚出视口 → data-compact，滚回来 → 复原。
-     首页主体是客户端组件，Agent 模块可能晚于 Header 挂载；这里选 MutationObserver
-     而非 requestAnimationFrame 轮询：无需猜测重试次数与时长，元素一出现即挂上
-     IntersectionObserver 并立刻停止 DOM 监听，空转成本更低。 */
-  useEffect(() => {
-    if (!isHome) return;
-
-    let intersection: IntersectionObserver | null = null;
-    let mutation: MutationObserver | null = null;
-
-    const observePanel = (panel: Element) => {
-      intersection = new IntersectionObserver(
-        ([entry]) => {
-          setCompact(!entry.isIntersecting);
-        },
-        // 面板要完全滚过 Header 才算离开视口，紧凑态因此比设计稿晚一个
-        // Header 高度才触发。上边距抵掉这段，让切换发生在面板压到 Header 时。
-        // rootMargin 只认 px/%，写不了 calc() 或 var()，所以从令牌读出数值。
-        { rootMargin: `-${headerHeight()}px 0px 0px 0px` },
-      );
-      intersection.observe(panel);
-    };
-
-    const panel = document.getElementById("agent-panel");
-    if (panel) {
-      observePanel(panel);
-    } else {
-      mutation = new MutationObserver(() => {
-        const late = document.getElementById("agent-panel");
-        if (!late) return;
-        mutation?.disconnect();
-        mutation = null;
-        observePanel(late);
-      });
-      mutation.observe(document.body, { childList: true, subtree: true });
-    }
-
-    return () => {
-      intersection?.disconnect();
-      mutation?.disconnect();
-      /* 清理阶段复位，确保带着紧凑态离开首页时 data-compact 不泄漏到其他路由 */
-      setCompact(false);
-    };
-  }, [isHome]);
-
-  /* 「回到 Agent」：滚回模块顶部；系统减弱动效时不做平滑滚动，瞬时跳转。 */
-  const handleBackToAgent = useCallback(() => {
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    document.getElementById("agent-panel")?.scrollIntoView({
-      block: "start",
-      behavior: reduced ? "auto" : "smooth",
-    });
   }, []);
 
   const openSearch = useCallback((trigger: "pointer" | "keyboard") => {
@@ -222,12 +184,20 @@ export function SiteHeader() {
     }
   };
 
+  const selectTheme = (mode: ThemeMode) => {
+    if (mode === auth.theme) return;
+    setThemeError(null);
+    void auth.setTheme(mode).catch(() => {
+      setThemeError("主题设置未保存，请重试");
+    });
+  };
+
   const accountLabel = auth.user?.displayName?.trim() || auth.user?.username || "账号";
   /* Array.from 按码点取首字，避免拆开代理对；拉丁字母统一大写。 */
   const avatarChar = (Array.from(accountLabel)[0] ?? "账").toUpperCase();
 
   return (
-    <header className="app-header" data-compact={compact || undefined}>
+    <header className="app-header">
       <Link className="app-brand" href="/" aria-label="WebHub 首页">
         <span className="app-brand-mark" aria-hidden="true">
           <Compass />
@@ -254,14 +224,9 @@ export function SiteHeader() {
 
       <div className="app-header-spacer" aria-hidden="true" />
 
-      {/* 紧凑态下搜索框被「回到 Agent」取代，但上面的 ⌘K/Ctrl+K 全局监听
-          与渲染无关，快捷键依旧能唤起搜索，能力不因吸顶而消失。 */}
-      {isLibrarySection ? null : compact ? (
-        <button className="app-back-to-agent" type="button" onClick={handleBackToAgent}>
-          <Sparkles aria-hidden="true" />
-          <span>回到 Agent</span>
-        </button>
-      ) : (
+      {/* 收藏库页自带搜索框（转场的目标），顶栏入口在那里让位；
+          ⌘K/Ctrl+K 全局监听与渲染无关，任何页面都能唤起搜索。 */}
+      {isLibrarySection ? null : (
         <motion.button
           ref={searchEntryRef}
           className="app-search-entry"
@@ -270,17 +235,17 @@ export function SiteHeader() {
           transition={LIBRARY_SEARCH_LAYOUT_TRANSITION}
           data-transitioning={searchTransitionActive || undefined}
           onClick={(event) => openSearch(event.detail === 0 ? "keyboard" : "pointer")}
-          aria-label={`精确搜索站内网址（快捷键 ${searchKeyLabel}）`}
+          aria-label={`搜索收藏（快捷键 ${searchKeyLabel}）`}
         >
           <Search aria-hidden="true" />
-          <span className="app-search-placeholder">精确搜索站内网址</span>
+          <span className="app-search-placeholder">搜索收藏</span>
           <kbd className="app-search-kbd" aria-hidden="true">
             {searchKeyLabel}
           </kbd>
         </motion.button>
       )}
 
-      <ThemeToggle className="header-icon-btn" />
+      <QuickAddButton />
 
       {/* 正常状态不该消耗顶栏视觉预算，异常必须可见：
           仅当后端离线时在头像左侧亮出危险色小圆点，在线/检查中完全不渲染。 */}
@@ -304,19 +269,45 @@ export function SiteHeader() {
             <strong>{accountLabel}</strong>
             {auth.user?.username && <span>@{auth.user.username}</span>}
           </div>
-          {/* 设计稿顶栏没有独立设置入口，原有的设置页链接收进账号浮层保留可达性。 */}
-          <Link className="header-account-item" href="/settings/providers">
-            <Settings aria-hidden="true" />
-            <span>模型服务设置</span>
-          </Link>
-          <Link className="header-account-item" href="/settings/search-index">
-            <Database aria-hidden="true" />
-            <span>语义索引</span>
-          </Link>
-          <Link className="header-account-item" href="/settings/import">
-            <FileUp aria-hidden="true" />
-            <span>导入书签</span>
-          </Link>
+          {/* 顶栏没有独立设置入口：设置页与冻结的站内对话都收进账号浮层保留可达性。 */}
+          {accountLinks.map(({ label, href, icon: Icon }) => (
+            <Link
+              className="header-account-item"
+              href={href}
+              key={href}
+              aria-current={pathname === href ? "page" : undefined}
+            >
+              <Icon aria-hidden="true" />
+              <span>{label}</span>
+            </Link>
+          ))}
+          <div className="header-account-theme">
+            <span className="header-account-theme-label" id="header-theme-label">
+              主题
+            </span>
+            <div className="header-theme-switch" role="group" aria-labelledby="header-theme-label">
+              {themeOptions.map(({ value, label, icon: Icon }) => (
+                <button
+                  key={value}
+                  className="header-theme-option"
+                  type="button"
+                  aria-pressed={auth.theme === value}
+                  data-active={auth.theme === value || undefined}
+                  aria-label={label}
+                  title={label}
+                  onClick={() => selectTheme(value)}
+                >
+                  <Icon aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          </div>
+          {themeError && (
+            <p className="header-account-error" role="alert">
+              {themeError}
+            </p>
+          )}
+          <div className="header-account-divider" aria-hidden="true" />
           <button
             className="header-account-item"
             type="button"

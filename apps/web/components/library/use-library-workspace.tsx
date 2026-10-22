@@ -83,8 +83,8 @@ export function useLibraryWorkspace() {
   const [taxonomyLoading, setTaxonomyLoading] = useState(true);
   const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
 
-  const [searchInput, setSearchInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchInput, setSearchInput] = useState(intent.query);
+  const [searchQuery, setSearchQuery] = useState(intent.query);
   const [categoryId, setCategoryId] = useState(intent.categoryId);
   const [tagId, setTagId] = useState("");
   const [pinnedOnly, setPinnedOnly] = useState(intent.pinnedOnly);
@@ -450,7 +450,7 @@ export function useLibraryWorkspace() {
         setNotice(
           result.reused
             ? `已加入网站信息补全任务（${result.completedCount} / ${result.totalCount}）`
-            : `已开始网站信息补全（共 ${result.totalCount} 个），进度可在首页查看`,
+            : `已开始网站信息补全（共 ${result.totalCount} 个），进度见页面顶部`,
         );
       }
       refreshSites();

@@ -1,6 +1,14 @@
-/* agent-panel：首页内嵌 Agent 模块（设计稿 1a 空闲态 / 1b 工作态）。
+/* agent-panel：站内对话 /chat 的 Agent 模块（设计稿 1a 空闲态 / 1b 工作态；Q44 起从首页移到 /chat）。
    只用 globals.css 的设计令牌；会话流沿用 conversation-thread 的既有类名，
    与设计稿冲突的部分统一在 .agent-panel 作用域内覆盖，不改组件本身。 */
+
+/* /chat 页：面板全宽展示，与发现页同一条内容宽度 */
+.chat-page {
+  width: 100%;
+  max-width: calc(var(--discover-max) + 2 * var(--page-gutter));
+  margin: 0 auto;
+  padding: 24px var(--page-gutter) 64px;
+}
 
 /* ========== 外壳：空闲态白卡片，工作态青柠描边（1f"外部结果/待确认"同源） ========== */
 

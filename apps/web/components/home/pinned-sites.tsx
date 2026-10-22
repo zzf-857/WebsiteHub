@@ -81,7 +81,7 @@ export function PinnedSites() {
       )}
 
       {state.status === "ready" && state.sites.length === 0 && (
-        <p className="home-empty">还没有置顶网站，在网址库里点星标即可置顶。</p>
+        <p className="home-empty">还没有置顶的收藏，在下方卡片上点图钉即可置顶。</p>
       )}
 
       {state.status === "ready" && state.sites.length > 0 && (

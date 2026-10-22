@@ -44,7 +44,8 @@ test("the header and library toolbar hand off one layout id without duplicate li
     readFile(LIBRARY_WORKSPACE, "utf8"),
   ]);
 
-  assert.match(header, /isLibrarySection \? null : compact \?/u);
+  assert.match(header, /isLibrarySection \? null : \(/u);
+  assert.doesNotMatch(header, /agent-panel|data-compact/u, "首页紧凑态随 Agent 面板一起移除");
   assert.match(header, /<motion\.button/u);
   assert.match(header, /layoutId=\{searchTransitionActive \? LIBRARY_SEARCH_LAYOUT_ID : undefined\}/u);
   assert.match(header, /animate: trigger === "pointer"/u);

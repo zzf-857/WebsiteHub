@@ -151,7 +151,7 @@ export function ProviderSettingsWorkspace() {
   const announceSaved = (config: ProviderConfig, verb: string) => {
     const enabledNote = config.enabled
       ? config.kind === "model"
-        ? "，已启用，现在可以回首页和 Agent 对话了"
+        ? "，已启用，现在可以去站内对话和 Agent 聊了"
         : "，已启用"
       : "";
     setNotice(`已${verb}${providerKindLabel(config.kind)}配置“${config.displayName}”${enabledNote}`);
@@ -330,7 +330,7 @@ export function ProviderSettingsWorkspace() {
                 {items.length === 0 ? (
                   <p className="provider-empty">
                     还没有{section.title}配置。
-                    {section.kind === "model" && "配好一个模型服务后，首页的 Agent 才能回话。"}
+                    {section.kind === "model" && "配好一个模型服务后，站内对话的 Agent 才能回话。"}
                   </p>
                 ) : (
                   <div className="provider-card-grid">
@@ -357,7 +357,7 @@ export function ProviderSettingsWorkspace() {
 
         {!loading && !loadError && configs.length === 0 && (
           <p className="provider-section-desc">
-            配好模型服务后，可以回到 <Link href="/">首页</Link> 直接和 Agent 对话。
+            配好模型服务后，可以到 <Link href="/chat">站内对话</Link> 直接和 Agent 聊。
           </p>
         )}
       </div>

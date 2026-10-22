@@ -7,10 +7,11 @@ import {
 } from "../lib/analysis-refresh.ts";
 
 const HOME_COMPONENTS = [
-  new URL("../components/home/category-sections.tsx", import.meta.url),
   new URL("../components/home/pinned-sites.tsx", import.meta.url),
-  new URL("../components/home/recent-sites.tsx", import.meta.url),
 ];
+const DISCOVER_CARD = new URL("../components/discover/resource-card.tsx", import.meta.url);
+const DISCOVER_HERO = new URL("../components/discover/rediscover-section.tsx", import.meta.url);
+const QUICK_ADD_LIB = new URL("../lib/quick-add.ts", import.meta.url);
 const AGENT_CARDS = new URL("../components/agent/agent-result-cards.tsx", import.meta.url);
 const LIBRARY_CARDS = new URL(
   "../components/library/library-workspace-parts.tsx",
@@ -37,6 +38,19 @@ test("saved-site cards lead to the internal detail page", async () => {
     assert.doesNotMatch(source, /href={site\.originalUrl}/);
   }
   assert.match(agentCards, /href={`\/library\/\$\{encodeURIComponent\(link\.siteId\)\}`}/);
+
+  // 发现页：资源卡与重温主封面都进详情页；只有显式的“打开”按钮外跳（并记录打开）
+  const [discoverCard, discoverHero, quickAddLib] = await Promise.all([
+    readFile(DISCOVER_CARD, "utf8"),
+    readFile(DISCOVER_HERO, "utf8"),
+    readFile(QUICK_ADD_LIB, "utf8"),
+  ]);
+  assert.match(quickAddLib, /return `\/library\/\$\{encodeURIComponent\(siteId\)\}`;/);
+  for (const source of [discoverCard, discoverHero]) {
+    assert.match(source, /href=\{siteDetailHref\(site\.id\)\}/);
+    assert.doesNotMatch(source, /href=\{site\.originalUrl\}/);
+    assert.doesNotMatch(source, /target="_blank"/);
+  }
   assert.match(libraryCards, /className="library-site-card-link"/);
   assert.match(libraryCards, /href={`\/library\/\$\{encodeURIComponent\(site\.id\)\}`}/);
   assert.doesNotMatch(libraryCards, /href=\{site\.originalUrl\}/);

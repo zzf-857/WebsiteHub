@@ -11,6 +11,7 @@
 @import "./styles/controls.css";
 @import "./styles/library-similarity.css";
 @import "./styles/motion.css";
+@import "./styles/discover.css";
 
 /* 设计令牌取自设计稿 1f 规范板
    （Arts/handoff/untitled/project/WebHub 效果图.dc.html）。
@@ -99,6 +100,31 @@
   --duration-focus: 180ms;
   --duration-pop: 240ms;
   --duration-celebrate: 320ms;
+
+  /* 发现页与资源封面（Q44 · 2026-10 D4/D5，构图见 Arts/discover-2026-10/B-Gallery）。
+     封面不存图：仓库 / 要点 / 视频 / 站点四种生成封面的颜色全部从这里取；
+     站点类封面按域名色相着色：oklch(var(--cover-tint-l) var(--cover-tint-c) var(--site-hue))。 */
+  --discover-max: 1360px;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+  --cover-repo-bg: #16181a;
+  --cover-repo-dot: rgb(180 229 52 / 10%);
+  --cover-repo-title: #f2f3f5;
+  --cover-repo-muted: #9aa1a9;
+  --cover-repo-star: var(--accent);
+  --cover-article-bg: var(--surface-subtle);
+  --cover-article-text: var(--text);
+  --cover-quote: var(--accent-mid);
+  --cover-tint-l: 0.955;
+  --cover-tint-c: 0.025;
+  --cover-domain-l: 0.45;
+  --cover-domain-c: 0.06;
+  /* 仓库封面上的语言圆点：按语言名色相着色，底色两套主题都是深色，取同一组明度 */
+  --cover-lang-l: 0.74;
+  --cover-lang-c: 0.13;
+  --cover-scrim: rgb(255 255 255 / 93%);
+  --cover-badge-bg: rgb(255 255 255 / 88%);
+  --cover-badge-text: var(--text-secondary);
+  --cover-tile-shadow: 0 6px 18px rgb(20 24 28 / 10%);
 }
 
 :root[data-theme="dark"] {
@@ -137,6 +163,25 @@
   --shadow-card-hover: 0 2px 8px rgb(0 0 0 / 40%);
   --shadow-agent: 0 2px 12px rgb(185 232 69 / 10%);
   --shadow-panel: 0 18px 42px rgb(0 0 0 / 45%);
+  --discover-max: 1360px;
+  --cover-repo-bg: #10130c;
+  --cover-repo-dot: rgb(185 232 69 / 13%);
+  --cover-repo-title: #c6ef5c;
+  --cover-repo-muted: #7d8b5a;
+  --cover-repo-star: var(--accent);
+  --cover-article-bg: #16181b;
+  --cover-article-text: var(--text);
+  --cover-quote: var(--accent-mid);
+  --cover-tint-l: 0.23;
+  --cover-tint-c: 0.04;
+  --cover-domain-l: 0.74;
+  --cover-domain-c: 0.06;
+  --cover-lang-l: 0.74;
+  --cover-lang-c: 0.13;
+  --cover-scrim: rgb(9 10 12 / 88%);
+  --cover-badge-bg: rgb(11 12 14 / 72%);
+  --cover-badge-text: #d9dde1;
+  --cover-tile-shadow: 0 10px 30px rgb(0 0 0 / 45%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -176,6 +221,32 @@
     --shadow-card-hover: 0 2px 8px rgb(0 0 0 / 40%);
     --shadow-agent: 0 2px 12px rgb(185 232 69 / 10%);
     --shadow-panel: 0 18px 42px rgb(0 0 0 / 45%);
+    --discover-max: 1360px;
+    --cover-repo-bg: #10130c;
+    --cover-repo-dot: rgb(185 232 69 / 13%);
+    --cover-repo-title: #c6ef5c;
+    --cover-repo-muted: #7d8b5a;
+    --cover-repo-star: var(--accent);
+    --cover-article-bg: #16181b;
+    --cover-article-text: var(--text);
+    --cover-quote: var(--accent-mid);
+    --cover-tint-l: 0.23;
+    --cover-tint-c: 0.04;
+    --cover-domain-l: 0.74;
+    --cover-domain-c: 0.06;
+    --cover-lang-l: 0.74;
+    --cover-lang-c: 0.13;
+    --cover-scrim: rgb(9 10 12 / 88%);
+    --cover-badge-bg: rgb(11 12 14 / 72%);
+    --cover-badge-text: #d9dde1;
+    --cover-tile-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+  }
+}
+
+/* <768：页边距收窄到 16px（顶栏、发现页等直接引用 --page-gutter 的区域一起生效） */
+@media (max-width: 767px) {
+  :root {
+    --page-gutter: 16px;
   }
 }
 

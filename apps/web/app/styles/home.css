@@ -1,34 +1,15 @@
 /* home：由设计稿 1a–1f 对齐生成，只用 globals.css 中定义的设计令牌。 */
 
-/* ============ 首页布局骨架（1a 行 50–76） ============ */
+/* Q44 起首页改为发现页（styles/discover.css）。这里只保留仍在使用的部分：
+   分区标题 / 错误态 / 骨架、网站信息补全工具条与置顶区（已移到收藏库顶部），
+   以及 Space 页复用的「全部打开」确认浮层。 */
 
-/* 侧栏 216px 固定 + 主列自适应；底部 64px 留白让最后一个分区收得住 */
-.home-layout {
+/* 收藏库顶部：补全进度条与置顶区上下排列 */
+.library-management-top {
   display: flex;
-  gap: var(--sidebar-gap);
-  padding: 24px var(--page-gutter) 64px;
-}
-
-.home-main {
-  display: flex;
-  flex: 1;
   flex-direction: column;
   gap: 22px;
-  min-width: 0;
-}
-
-/* 1024–1279：侧栏在 sidebar.css 里折叠为横向 Tabs，布局随之切纵向 */
-@media (max-width: 1279px) {
-  .home-layout {
-    flex-direction: column;
-  }
-}
-
-/* <768：侧栏隐藏，页边距同步收窄，避免窄屏两侧留白过大 */
-@media (max-width: 767px) {
-  .home-layout {
-    padding: 16px 16px 48px;
-  }
+  margin-top: 24px;
 }
 
 /* ============ 分区通用 ============ */
@@ -580,82 +561,7 @@
   text-overflow: ellipsis;
 }
 
-/* ============ Space 快速入口（1a 行 121–136） ============ */
-
-.home-space-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  min-height: 69px;
-  padding: 14px 16px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  transition:
-    border-color var(--duration-hover) var(--ease-standard),
-    box-shadow var(--duration-hover) var(--ease-standard);
-}
-
-.home-space-card:hover {
-  border-color: var(--line-strong);
-  box-shadow: var(--shadow-card-hover);
-}
-
-.home-space-copy {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  color: inherit;
-  text-decoration: none;
-}
-
-.home-space-name {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.home-space-count {
-  font-size: 12px;
-  line-height: 17px;
-  color: var(--text-subtle);
-}
-
-.home-space-open {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 9px;
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  /* 它是按钮：按圆角规范走 --radius-md（7px） */
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition:
-    border-color var(--duration-hover) var(--ease-standard),
-    color var(--duration-hover) var(--ease-standard);
-}
-
-.home-space-open:hover {
-  border-color: var(--accent-hover);
-  color: var(--accent-strong);
-}
-
-.home-space-open svg {
-  width: 12px;
-  height: 12px;
-}
+/* ============ Space「全部打开」（open-all-dialog 复用） ============ */
 
 /* 「全部打开」确认浮层：轻量方案——透明遮罩接管点击，面板靠阴影分层 */
 .home-open-overlay {
@@ -743,12 +649,6 @@
   color: var(--warning);
 }
 
-.home-open-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-subtle);
-}
-
 .home-open-actions {
   display: flex;
   flex-direction: column;
@@ -810,306 +710,6 @@
   color: var(--accent-strong);
 }
 
-.home-open-cancel {
-  align-self: center;
-  padding: 4px 8px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--text-subtle);
-  background: none;
-  border: none;
-  cursor: pointer;
-  transition: color var(--duration-hover) var(--ease-standard);
-}
-
-.home-open-cancel:hover {
-  color: var(--text);
-}
-
-/* ============ 最近收录（1a 行 137–156） ============ */
-
-.home-recent-card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-}
-
-.home-recent-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  /* padding 13+13 + 内容 20（favicon 高于 13.5px 行文字）= 46 */
-  min-height: 46px;
-  padding: 13px 18px;
-  font-size: 13.5px;
-  color: inherit;
-  text-decoration: none;
-  border-bottom: 1px solid var(--line-soft);
-  transition: background-color var(--duration-hover) var(--ease-standard);
-}
-
-.home-recent-row:last-child {
-  border-bottom: none;
-}
-
-.home-recent-row:hover {
-  /* 设计稿是近白的 #FAFBFB：--surface-hover 直接铺整行太灰，
-     向表面色回混到 45% 得到同级的极浅提示 */
-  background: color-mix(in srgb, var(--surface-hover) 45%, var(--surface));
-}
-
-/* 共享 SiteFavicon 自带 --radius-sm 圆角，这一行按设计要 --radius-xs：外层裁切 */
-.home-recent-favicon {
-  display: inline-flex;
-  flex-shrink: 0;
-}
-
-.home-recent-name {
-  flex-shrink: 0;
-  max-width: 220px;
-  font-weight: 500;
-  line-height: 19px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.home-recent-desc {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-subtle);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.home-recent-cat {
-  flex-shrink: 0;
-  padding: 2px 8px;
-  font-size: 12px;
-  color: var(--text-muted);
-  background: var(--surface-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.home-recent-time {
-  flex-shrink: 0;
-  width: 64px;
-  font-size: 12px;
-  color: var(--text-faint);
-  text-align: right;
-}
-
-.home-recent-arrow {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  color: var(--text-faint);
-}
-
-@media (max-width: 767px) {
-  /* 窄屏下先保住 名称/时间，胶囊与描述让位 */
-  .home-recent-cat,
-  .home-recent-desc {
-    display: none;
-  }
-}
-
-/* ============ 分类分区 + 吸顶 Tabs（1c 行 292–343） ============ */
-
-.home-category-block {
-  display: flex;
-  flex-direction: column;
-  scroll-margin-top: calc(var(--header-height) + 8px);
-}
-
-/* Tabs 吸附在 Header 正下方；与 Header 同款半透明白底 + 模糊，
-   吸顶时两者拼成同一块白色悬浮面，投影表达抬升层次（1c 行 294） */
-.home-category-tabs {
-  position: sticky;
-  /* Tabs 吸住时页面必已滚过 Agent 面板，顶栏恒为紧凑态 56px，
-     所以按 64-8 对齐；高度收放过渡期两面同底色，8px 重叠不可见。 */
-  top: calc(var(--header-height) - 8px);
-  z-index: 20;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 0 12px;
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  transition:
-    border-color var(--duration-hover) var(--ease-standard),
-    box-shadow var(--duration-hover) var(--ease-standard);
-}
-
-/* 投影表达的是「浮在内容之上」（1c 行 294），只有真吸住时才成立。
-   未吸顶时 Tabs 就躺在页面里，常驻投影会凭空多出一条分隔线。
-   sticky 元素没有原生的「已吸住」状态，用上方的 sentinel 判断。 */
-.home-category-tabs[data-stuck] {
-  border-bottom: 1px solid var(--line-header);
-  box-shadow: var(--shadow-card-hover);
-}
-
-/* 吸附哨兵：零高度，滚出视口即代表 Tabs 已经吸住 */
-.home-category-sentinel {
-  height: 0;
-}
-
-.home-category-tab {
-  padding: 6px 16px;
-  font: inherit;
-  font-size: 13.5px;
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--line-header);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition:
-    border-color var(--duration-hover) var(--ease-standard),
-    color var(--duration-hover) var(--ease-standard),
-    background-color var(--duration-hover) var(--ease-standard);
-}
-
-.home-category-tab:hover {
-  border-color: var(--accent-hover);
-  color: var(--text);
-}
-
-.home-category-tab[data-active="true"] {
-  font-weight: 500;
-  color: var(--on-action);
-  background: var(--action);
-  border-color: var(--action);
-}
-
-/* ============ 排序控件（1c 行 308 / 319） ============ */
-
-/* 共享主题选择器负责弹层、箭头和键盘交互；外层只参与标题行布局。 */
-.home-sort {
-  position: relative;
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-}
-
-.home-sort .themed-select[data-variant="toolbar"] .themed-select-trigger {
-  min-height: 34px;
-  border-color: var(--line-header);
-}
-
-.home-category-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 26px;
-  padding-top: 22px;
-}
-
-/* 锚点滚动时给 Header + 吸顶 Tabs 让位，分区标题不会被盖住 */
-.home-category-section {
-  scroll-margin-top: calc(var(--header-height) + 64px);
-}
-
-.home-category-heading {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-bottom: 12px;
-}
-
-/* 3px 圆角取自设计稿的 10px 青柠小方块，非令牌值仅此一处装饰 */
-.home-category-mark {
-  flex-shrink: 0;
-  width: 10px;
-  height: 10px;
-  background: var(--accent);
-  border-radius: 3px;
-}
-
-.home-category-title {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.home-category-count {
-  font-size: 13px;
-  color: var(--text-subtle);
-}
-
-/* 分类网站卡：比置顶卡多描述行与 tag（1c 行 322–332） */
-.home-site-card {
-  display: block;
-  min-width: 0;
-  /* padding 13+13 + 头行 22 + 描述 7+18 + 域名 5+16 + 边框 2 = 96 */
-  min-height: 96px;
-  padding: 13px 15px;
-  color: inherit;
-  text-decoration: none;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  transition:
-    border-color var(--duration-hover) var(--ease-standard),
-    box-shadow var(--duration-hover) var(--ease-standard);
-}
-
-.home-site-card:hover {
-  border-color: var(--line-strong);
-  box-shadow: var(--shadow-card-hover);
-}
-
-.home-site-card-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 22px;
-}
-
-.home-site-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.home-site-tag {
-  flex-shrink: 0;
-  font-size: 11.5px;
-  color: var(--text-faint);
-}
-
-.home-site-desc {
-  display: block;
-  margin-top: 7px;
-  font-size: 12.5px;
-  line-height: 18px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.home-site-host {
-  display: block;
-  margin-top: 5px;
-  font-size: 11.5px;
-  line-height: 16px;
-  color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* ============ 可达性 ============ */
 
 .home-section-action:focus-visible,
@@ -1118,14 +718,8 @@
 .home-metadata-backfill-limit input:focus-visible,
 .home-error-retry:focus-visible,
 .home-pinned-card:focus-visible,
-.home-space-copy:focus-visible,
-.home-space-open:focus-visible,
 .home-open-primary:focus-visible,
-.home-open-secondary:focus-visible,
-.home-open-cancel:focus-visible,
-.home-recent-row:focus-visible,
-.home-category-tab:focus-visible,
-.home-site-card:focus-visible {
+.home-open-secondary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -1144,14 +738,8 @@
   .home-metadata-backfill-progress-track span,
   .home-error-retry,
   .home-pinned-card,
-  .home-space-card,
-  .home-space-open,
   .home-open-primary,
-  .home-open-secondary,
-  .home-open-cancel,
-  .home-recent-row,
-  .home-category-tab,
-  .home-site-card {
+  .home-open-secondary {
     transition-duration: 0ms;
   }
 }

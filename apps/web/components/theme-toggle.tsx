@@ -19,8 +19,8 @@ function ThemeIcon({ mode }: Readonly<{ mode: ThemeMode }>) {
   return <Monitor aria-hidden="true" />;
 }
 
-/* className 可由使用方覆盖：顶栏传入 header.css 里的 header-icon-btn 以对齐设计稿，
-   登录页等旧场景缺省仍走 globals 里的 icon-button，互不影响。 */
+/* className 可由使用方覆盖，缺省走 globals 里的 icon-button。
+   顶栏的主题切换已收进账号菜单（site-header 的三段切换），这里只服务登录页等独立页面。 */
 export function ThemeToggle({ className = "icon-button" }: Readonly<{ className?: string }>) {
   const auth = useAuth();
   const [error, setError] = useState<string | null>(null);
