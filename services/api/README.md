@@ -59,6 +59,16 @@ The identity API exposes register, login, logout, current-account, password-chan
 account-preference endpoints under `/api/auth/*`. Session cookies are opaque and HttpOnly; only
 their SHA-256 hashes are persisted, while passwords use Argon2id.
 
+External Agents (Hermes, grokbot, any MCP client) reach the library through one Streamable HTTP
+MCP endpoint, `POST /api/mcp` (from other machines: `http://<host>:3100/api/backend/mcp` through
+the website proxy). It is stateless with JSON responses and accepts only
+`Authorization: Bearer whk_…` Agent tokens, never the session cookie. Tokens are issued, listed and
+revoked on `/settings/agents` (`GET|POST /api/agent-tokens`, `DELETE /api/agent-tokens/{id}`); only
+their SHA-256 hashes are stored and the plaintext is returned once. `read` tokens get
+`search_resources`, `get_resource`, `get_rediscover` and `list_taxonomy`; `read write` tokens also get
+`save_resource`, `update_resource` and `mark_resource`. There is no delete tool, and every
+successful write is listed by `GET /api/agent-activity`.
+
 The account-scoped bookmark backend currently includes immutable source snapshots, jobs, parse
 runs, current-run pointers, chunk checkpoints, staging facts, crash-recoverable file intake, and a
 strict validator for untrusted classification JSON. The classification validator is only an input
