@@ -5,8 +5,10 @@ import errno
 import json
 import sqlite3
 from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
 
 import pytest
 from fastapi.testclient import TestClient
@@ -145,6 +147,51 @@ def _assert_created_response(response, environment: UploadApiEnvironment) -> dic
     assert response.headers["location"] == f"/api/bookmark-imports/{payload['job_id']}"
     _assert_public_payload(payload, environment.data_directory)
     return payload
+
+
+@contextmanager
+def _pause_parse_worker(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> Iterator[Event]:
+    # 上传重放返回当前持久状态；用屏障固定 queued_parse 阶段，不能与真实 worker 抢时序。
+    started = Event()
+    release = asyncio.Event()
+    parse_tasks: list[asyncio.Task[str]] = []
+    run_parse = bookmark_routes.worker.run_parse
+
+    async def paused_parse(
+        database: Database,
+        data_directory: Path,
+        *,
+        user_id: str,
+        job_id: str,
+        snapshot_id: str,
+        expected_job_version: int,
+        limits: ParserLimits | None = None,
+    ) -> str:
+        task = asyncio.current_task()
+        assert task is not None
+        parse_tasks.append(task)
+        started.set()
+        await release.wait()
+        return await run_parse(
+            database,
+            data_directory,
+            user_id=user_id,
+            job_id=job_id,
+            snapshot_id=snapshot_id,
+            expected_job_version=expected_job_version,
+            limits=limits,
+        )
+
+    async def finish_parsing() -> None:
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*parse_tasks), timeout=10)
+
+    monkeypatch.setattr(bookmark_routes.worker, "run_parse", paused_parse)
+    try:
+        yield started
+    finally:
+        assert client.portal is not None
+        client.portal.call(finish_parsing)
 
 
 @pytest.fixture
@@ -463,6 +510,7 @@ def test_upload_maps_sqlite_full_to_507_and_discards_staging(
 
 def test_upload_idempotency_conflict_and_same_source_warning(
     upload_api_environment: UploadApiEnvironment,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     environment = upload_api_environment
     client = environment.client
@@ -470,40 +518,56 @@ def test_upload_idempotency_conflict_and_same_source_warning(
     payload = _export("idempotent-source")
     key = "upload-idempotent-request-0001"
 
-    created = _assert_created_response(_post_upload(client, payload, key=key), environment)
-    replay = _post_upload(client, payload, key=key)
-    assert replay.status_code == 200, replay.text
-    replay_payload = replay.json()
-    assert set(replay_payload) == POST_FIELDS
-    assert replay_payload["job_id"] == created["job_id"]
-    assert replay_payload["state"] == "queued_parse"
-    assert replay_payload["job_version"] == 2
-    assert replay_payload["replayed"] is True
-    assert replay_payload["same_source_warning"] is False
-    assert replay.headers["location"] == f"/api/bookmark-imports/{created['job_id']}"
-    _assert_public_payload(replay_payload, environment.data_directory)
+    with _pause_parse_worker(client, monkeypatch) as parse_started:
+        created = _assert_created_response(_post_upload(client, payload, key=key), environment)
+        assert parse_started.wait(timeout=5), "上传必须调度解析 worker"
+        replay = _post_upload(client, payload, key=key)
+        assert replay.status_code == 200, replay.text
+        replay_payload = replay.json()
+        assert set(replay_payload) == POST_FIELDS
+        assert replay_payload["job_id"] == created["job_id"]
+        assert replay_payload["state"] == "queued_parse"
+        assert replay_payload["job_version"] == 2
+        assert replay_payload["replayed"] is True
+        assert replay_payload["same_source_warning"] is False
+        assert replay.headers["location"] == f"/api/bookmark-imports/{created['job_id']}"
+        _assert_public_payload(replay_payload, environment.data_directory)
 
-    conflict = _post_upload(client, _export("different-source"), key=key)
-    assert conflict.status_code == 409, conflict.text
+        conflict = _post_upload(client, _export("different-source"), key=key)
+        assert conflict.status_code == 409, conflict.text
 
-    same_source = _post_upload(
-        client,
-        payload,
-        key="upload-same-source-new-key-0001",
-    )
-    assert same_source.status_code == 201, same_source.text
-    same_source_payload = same_source.json()
-    assert set(same_source_payload) == POST_FIELDS
-    assert same_source_payload["job_id"] != created["job_id"]
-    assert same_source_payload["state"] == "queued_parse"
-    assert same_source_payload["job_version"] == 2
-    assert same_source_payload["replayed"] is False
-    assert same_source_payload["same_source_warning"] is True
-    assert same_source.headers["location"] == (
-        f"/api/bookmark-imports/{same_source_payload['job_id']}"
-    )
-    _assert_public_payload(same_source_payload, environment.data_directory)
-    _assert_no_incoming_files(environment.data_directory)
+        parse_started.clear()
+        same_source = _post_upload(
+            client,
+            payload,
+            key="upload-same-source-new-key-0001",
+        )
+        assert same_source.status_code == 201, same_source.text
+        assert parse_started.wait(timeout=5), "新的导入任务必须调度自己的解析 worker"
+        same_source_payload = same_source.json()
+        assert set(same_source_payload) == POST_FIELDS
+        assert same_source_payload["job_id"] != created["job_id"]
+        assert same_source_payload["state"] == "queued_parse"
+        assert same_source_payload["job_version"] == 2
+        assert same_source_payload["replayed"] is False
+        assert same_source_payload["same_source_warning"] is True
+        assert same_source.headers["location"] == (
+            f"/api/bookmark-imports/{same_source_payload['job_id']}"
+        )
+        _assert_public_payload(same_source_payload, environment.data_directory)
+        _assert_no_incoming_files(environment.data_directory)
+
+    completed_status = client.get(f"{UPLOAD_PATH}/{created['job_id']}")
+    assert completed_status.status_code == 200, completed_status.text
+    assert completed_status.json()["state"] == "parse_preview_ready"
+    completed_replay = _post_upload(client, payload, key=key)
+    assert completed_replay.status_code == 200, completed_replay.text
+    assert completed_replay.json()["job_id"] == created["job_id"]
+    assert completed_replay.json()["state"] == "parse_preview_ready"
+    assert completed_replay.json()["job_version"] == completed_status.json()["job_version"]
+    assert completed_replay.json()["job_version"] > 2
+    assert completed_replay.json()["replayed"] is True
+    assert completed_replay.json()["same_source_warning"] is False
 
 
 def test_upload_and_status_are_account_scoped(
