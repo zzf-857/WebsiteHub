@@ -11,6 +11,10 @@
    这份必须每轮更新；`IMPLEMENTATION_PLAN.md` 只是 2026-07-26 冻结的历史架构基线，不能用于当前调度。
 3. `git log --oneline -15` —— 每个 commit 都有详细中文说明，是最可靠的历史。
 
+**执行 Agent 落地条目时**，先读 `docs/architecture/README.md`：架构（`ARCHITECTURE.md`）、强制代码规范
+（`CODING_STANDARDS.md`）、验收标准（`ACCEPTANCE.md`）与条目规格（`specs/Qxx-*.md`）。有 spec 的条目以 spec 为准，
+交付按 `ACCEPTANCE.md` §5 写报告，不推送、不改状态文档。
+
 和用户讨论时冒出的新想法，先记进 `IDEAS.md`（灵感池，不参与调度）；筛选通过后才拆成 Q 项进队列。
 
 **动手前先读 `LOCAL_DEV.md`**（本机专用，已 gitignore，不进仓库）：它只保留无敏感值的入口，

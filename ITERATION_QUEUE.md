@@ -2220,12 +2220,17 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 - **明确不做（理由）**：十万条完整性能门禁（独立的大规模性能轮）；站内聊天确认书签导入（D2 冻结站内聊天）；
   免费搜索可用性（外部服务，非本项目可修）。
 
-迁移编号预留：Q51 `20261023_0025`、Q54 `20261023_0026`、Q55 `20261023_0027`、Q56 `20261023_0028`、Q52 `20261023_0029`
-（均先接在 0024 后，合并时由总负责人串成单链）。
+迁移编号预留：Q51 `20261023_0025`、Q54 `20261023_0026`、Q53 `20261023_0027`（2026-10-23 改订：Q52 / Q55 / Q56 实际未加迁移；
+均先接在 0024 后，合并时由总负责人串成单链）。
+
+**执行规格**：Q51、Q53、Q54、Q57 已有详细 spec，见 `docs/architecture/specs/`，与下方条目正文冲突时以 spec 为准；
+派发顺序见 `docs/architecture/README.md`（先做 Q57-0 门禁复核）。
 
 ## Q51 · 订阅流补齐：无日期条目不复活、缩略图
 
-状态: 进行中（因额度中断，未合并；q51-work 分支未提交）
+状态: 待做（按 spec 重新派发；此前中断的未提交改动不作为依据）
+
+规格：`docs/architecture/specs/Q51-feeds-completion.md`
 
 - 清理后保留已见 guid 的轻量墓碑（或等价机制），使无发布时间、仍留在源里的条目不会在 30 天后重新出现。
 - 解析 `media:thumbnail` / `media:content`（图片）/ `itunes:image` / 图片型 enclosure，存 `image_url`（安全 http(s)），
@@ -2242,7 +2247,9 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q53 · 数据导出与自有备份导入（PRD P0）
 
-状态: 进行中（因额度中断，未合并）
+状态: 待做（按 spec 重新派发；此前中断的未提交改动不作为依据）
+
+规格：`docs/architecture/specs/Q53-data-portability.md`
 
 - 设置页 `/settings/data`：导出当前账号为版本化 JSON（收藏含类型/状态/元数据、分类、标签、Space 与成员顺序、订阅源；
   不含密钥、会话、Agent 令牌明文、书签原文件），可下载。
@@ -2251,7 +2258,9 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q54 · 后端稳健性补齐
 
-状态: 进行中（因额度中断，未合并）
+状态: 待做（按 spec 重新派发；此前中断的未提交改动不作为依据）
+
+规格：`docs/architecture/specs/Q54-backend-robustness.md`
 
 - 新站 LLM 分析意图持久化：并入持久 run 或独立持久队列，进程重启 / 队列满后可恢复，保留现有并发与熔断。
 - 删除与 Space 新增成员并发窗口：删除前先锁定所选 Site 行（SQLite 兼容的条件 UPDATE 取写锁），补并发回归。
@@ -2275,6 +2284,8 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 ## Q57 · 端到端自查与迭代修复
 
 状态: 待做
+
+规格：`docs/architecture/specs/Q57-e2e-self-check.md`
 
 Q51–Q56 合并后，用 Playwright 对真实运行的应用跑完整流程：注册登录、快速收藏、发现页各操作与撤销、详情就地编辑、
 快捷键、收藏库筛选与批量、订阅页操作、Agent 令牌创建并用真实 HTTP 调 MCP 工具、数据导出再导入、浅深主题与 390 宽无横向滚动；
