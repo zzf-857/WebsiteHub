@@ -16,6 +16,7 @@
 @import "./styles/keyboard.css";
 @import "./styles/library-manage.css";
 @import "./styles/feeds.css";
+@import "./styles/data.css";
 
 /* 设计令牌取自设计稿 1f 规范板
    （Arts/handoff/untitled/project/WebHub 效果图.dc.html）。
@@ -23,6 +24,11 @@
    禁止蓝/紫及蓝紫渐变；网站 favicon 保留自身品牌色。 */
 :root {
   color-scheme: light;
+  --data-space: 4px;
+  --data-font-small: 12px;
+  --data-font-base: 14px;
+  --data-font-heading: 20px;
+  --data-font-title: 28px;
 
   /* 表面 */
   --canvas: #f5f6f7;
@@ -133,6 +139,11 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --data-space: 4px;
+  --data-font-small: 12px;
+  --data-font-base: 14px;
+  --data-font-heading: 20px;
+  --data-font-title: 28px;
   --canvas: #0e1012;
   --surface: #16181b;
   --surface-raised: #1b1e21;
@@ -191,6 +202,11 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
+    --data-space: 4px;
+    --data-font-small: 12px;
+    --data-font-base: 14px;
+    --data-font-heading: 20px;
+    --data-font-title: 28px;
     --canvas: #0e1012;
     --surface: #16181b;
     --surface-raised: #1b1e21;
