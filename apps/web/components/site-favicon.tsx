@@ -3,7 +3,10 @@
 import { Play } from "lucide-react";
 import { useState } from "react";
 
+import { proxiedImageUrl } from "@/lib/media-proxy";
+
 // 共享网站图标：优先展示后端返回的 faviconUrl，绝不走第三方 CDN；
+// 图片经同源图片代理（Q56）加载，浏览器不直连图标所在站点；
 // url 为空或加载失败时，已知平台回落到本地图标，其余站点使用字母块。
 // 字母块的 SVG 是 data: URI，但 <img>/mask 里的 SVG 文档读不到页面 CSS 变量，
 // 所以把它当 CSS mask 用：底色/字色仍走 --surface-subtle / --text-muted 令牌，
@@ -116,13 +119,14 @@ function YouTubeFallback({ name, size }: Readonly<Pick<SiteFaviconProps, "name" 
 export function SiteFavicon({ url, name, size }: Readonly<SiteFaviconProps>) {
   // 记录加载失败的具体 url：换了新地址会自动重试，而不是永远停在字母块
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const src = proxiedImageUrl(url);
 
-  if (url && url !== failedUrl) {
+  if (url && src && url !== failedUrl) {
     return (
       // 后端返回的 favicon 域名不可枚举，无法进 next/image 的静态白名单
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={url}
+        src={src}
         alt={`${name} 网站图标`}
         width={size}
         height={size}
