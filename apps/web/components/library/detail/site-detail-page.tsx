@@ -60,6 +60,7 @@ import {
 import { isUnopened, withSiteUsage } from "@/lib/site-usage";
 
 import { AgentHelpCard } from "./agent-help-card";
+import { ImportOriginsLine } from "./import-origins-line";
 import { JoinSpaceDialog } from "./join-space-dialog";
 import { formatDay, hostOf, SOURCE_LABELS } from "./meta";
 import { RelatedSitesCard } from "./related-sites-card";
@@ -717,6 +718,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
             <span aria-hidden="true">·</span>
             <span>{SOURCE_LABELS[site.source]}</span>
           </p>
+          <ImportOriginsLine siteId={site.id} />
           {(unopened || site.pinned) && (
             <p className="sd-badges">
               {unopened && (

@@ -3,7 +3,7 @@
 This is the half of the import pipeline that was missing: parsing, staging and
 preview all worked, but nothing ever wrote a ``Site``.
 
-Three properties this module leans on rather than re-implements:
+Properties this module leans on rather than re-implements:
 
 * **Idempotency has two layers.** The job is claimed with an optimistic state
   transition, and ``sites`` also has ``UNIQUE (user_id, identity_url)``. A
@@ -15,13 +15,10 @@ Three properties this module leans on rather than re-implements:
 * **Categories come from the shared rule classifier**, the same
   ``suggest_category`` the preview shows, so what the user approved is what gets
   written.
-
-Deliberately *not* done here: populating ``bookmark_source_occurrences`` /
-``site_import_origins``.  Those tables exist in the schema but nothing in the
-codebase writes them, so the provenance chain "which bookmark occurrence became
-which site" is still unbuilt.  Half-filling it here would create a table that
-looks authoritative while covering only imports that happen to run through this
-function.
+* **Provenance commits with the library.**  After the Site writes are flushed,
+  ``source_ledger.record_source_ledger`` copies the snapshot's folder tree and
+  every occurrence into the long-lived source tables and links each imported
+  occurrence to its Site (``site_import_origins``), in the same transaction.
 """
 
 from __future__ import annotations
@@ -62,6 +59,7 @@ from .classification_history import (
 from .models import CategorySuggestion, NormalizationStatus
 from .normalization import normalize_bookmark_url
 from .privacy import agent_safe_label
+from .source_ledger import SourceLedgerError, record_source_ledger
 
 # Rows per read/flush window. The caller owns one atomic transaction for the
 # whole apply, so this bounds ORM memory without exposing partial commits.
@@ -578,6 +576,7 @@ async def apply_candidates(
     tag_cache = await _tag_taxonomy(session, user_id)
     category_positions: dict[str, int] = {}
     claimed: set[str] = set()
+    created_site_ids: set[str] = set()
     processed_merge_clusters: set[str] = set()
     cursor: tuple[int, str] | None = None
     while True:
@@ -804,8 +803,21 @@ async def apply_candidates(
                 check_existing=False,
             )
             claimed.add(identity_url)
+            created_site_ids.add(site_id)
             created += 1
         await session.flush()
+    try:
+        await record_source_ledger(
+            session,
+            user_id,
+            run_id,
+            merge_targets=merge_by_candidate,
+            created_site_ids=created_site_ids,
+            skipped_actions=_SKIPPED_ACTIONS,
+            batch_size=batch_size,
+        )
+    except SourceLedgerError as error:
+        raise BookmarkApplyError(409, error.code, error.message) from error
     return ApplyOutcome(
         total_candidates=total,
         created=created,

@@ -20,6 +20,7 @@ from webhub.ingestion.enrichment import AnalysisIntent
 from webhub.library import batch, service
 from webhub.library import similarity as site_similarity
 from webhub.library.analysis_queue import schedule_site_enrichment
+from webhub.library.import_origins import SiteImportOriginsResponse, site_import_origins
 from webhub.library.kinds import SiteKind
 from webhub.library.schemas import (
     CategoryCreateRequest,
@@ -489,6 +490,17 @@ async def site(
     session: DatabaseSessionDependency,
 ) -> SiteResponse:
     return await _call(service.get_site(session, identity.user.id, site_id))
+
+
+@router.get("/sites/{site_id}/import-origins", response_model=SiteImportOriginsResponse)
+async def site_origins(
+    site_id: str,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+) -> SiteImportOriginsResponse:
+    """Which imported bookmark folders this site came from (read-only)."""
+
+    return await _call(site_import_origins(session, identity.user.id, site_id))
 
 
 @router.patch("/sites/{site_id}", response_model=SiteResponse)
