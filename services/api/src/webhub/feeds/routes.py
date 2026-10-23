@@ -57,6 +57,7 @@ def feed_response(feed: Feed, item_count: int) -> FeedResponse:
         title=feed.title,
         kind=feed.kind,  # type: ignore[arg-type]
         site_url=feed.site_url,
+        image_url=feed.image_url,
         enabled=bool(feed.enabled),
         last_fetched_at=_utc(feed.last_fetched_at),
         next_fetch_at=_utc(feed.next_fetch_at),
@@ -76,6 +77,7 @@ def item_response(item: FeedItem) -> FeedItemResponse:
         author=item.author,
         published_at=_utc(item.published_at),
         audio_url=item.audio_url,
+        image_url=item.image_url,
         duration_seconds=item.duration_seconds,
         fetched_at=_utc(item.fetched_at) or utc_now(),
         read=item.read_at is not None,

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from webhub.db.database import Database
@@ -40,6 +40,7 @@ from .parser import FeedParseError, ParsedFeed, parse_feed
 POLL_INTERVAL = timedelta(minutes=60)
 MAX_BACKOFF = timedelta(hours=24)
 RETENTION = timedelta(days=30)
+TOMBSTONE_RETENTION = timedelta(days=365)
 MAX_FEEDS_PER_ACCOUNT = 100
 MAX_ITEMS_PER_FEED = 200
 MAX_FEED_URL_LENGTH = 2_048
@@ -124,7 +125,9 @@ async def owned_feed(session: AsyncSession, user_id: str, feed_id: str) -> Feed:
 
 async def owned_item(session: AsyncSession, user_id: str, item_id: str) -> FeedItem:
     item = await session.scalar(
-        select(FeedItem).where(FeedItem.user_id == user_id, FeedItem.id == item_id)
+        select(FeedItem).where(
+            FeedItem.user_id == user_id, FeedItem.id == item_id, FeedItem.purged_at.is_(None)
+        )
     )
     if item is None:
         raise FeedNotFoundError("条目不存在")
@@ -136,7 +139,7 @@ async def list_feeds(session: AsyncSession, user_id: str) -> list[tuple[Feed, in
         (
             await session.execute(
                 select(FeedItem.feed_id, func.count())
-                .where(FeedItem.user_id == user_id)
+                .where(FeedItem.user_id == user_id, FeedItem.purged_at.is_(None))
                 .group_by(FeedItem.feed_id)
             )
         ).all()
@@ -276,6 +279,7 @@ async def _refresh_feed(
             if parsed.title:
                 feed.title = parsed.title
             feed.site_url = parsed.site_url
+            feed.image_url = parsed.image_url
             feed.kind = parsed.kind
             inserted = await _store_items(session, feed, parsed, moment)
         await session.commit()
@@ -289,7 +293,12 @@ async def _store_items(
     known = set(
         (
             await session.scalars(
-                select(FeedItem.guid).where(FeedItem.feed_id == feed.id, FeedItem.guid.in_(guids))
+                # 墓碑仍是已知 GUID；过滤墓碑会让被清理条目重新进入订阅流。
+                select(FeedItem.guid).where(
+                    FeedItem.user_id == feed.user_id,
+                    FeedItem.feed_id == feed.id,
+                    FeedItem.guid.in_(guids),
+                )
             )
         ).all()
     )
@@ -299,7 +308,7 @@ async def _store_items(
         if item.guid in known:
             continue
         published = item.published_at
-        # Older than the retention window: cleanup would delete it again, and
+        # Older than the retention window: cleanup would purge it again, and
         # it is not news.  Future dates are clamped so they cannot pin the top.
         if published is not None and published < cutoff:
             continue
@@ -316,6 +325,7 @@ async def _store_items(
                 author=item.author,
                 published_at=published,
                 audio_url=item.audio_url,
+                image_url=item.image_url,
                 duration_seconds=item.duration_seconds,
                 fetched_at=moment,
             )
@@ -323,43 +333,84 @@ async def _store_items(
         known.add(item.guid)
         inserted += 1
     await session.flush()
-    await _trim_feed(session, feed.id)
+    await _trim_feed(session, feed.user_id, feed.id, now=moment)
     return inserted
 
 
-async def _trim_feed(session: AsyncSession, feed_id: str) -> None:
+def _tombstone_values(moment: datetime) -> dict[str, str | datetime | None]:
+    return {
+        "purged_at": moment,
+        "title": "",
+        "summary": "",
+        "author": None,
+        "url": None,
+        "audio_url": None,
+        "image_url": None,
+        "duration_seconds": None,
+    }
+
+
+async def _trim_feed(
+    session: AsyncSession, user_id: str, feed_id: str, *, now: datetime
+) -> None:
     """Keep at most ``MAX_ITEMS_PER_FEED`` unsaved items per source."""
 
     keep = (
         select(FeedItem.id)
-        .where(FeedItem.feed_id == feed_id, FeedItem.saved_site_id.is_(None))
+        .where(
+            FeedItem.user_id == user_id,
+            FeedItem.feed_id == feed_id,
+            FeedItem.saved_site_id.is_(None),
+            FeedItem.purged_at.is_(None),
+        )
         .order_by(
             func.coalesce(FeedItem.published_at, FeedItem.fetched_at).desc(), FeedItem.id.desc()
         )
         .limit(MAX_ITEMS_PER_FEED)
     )
     await session.execute(
-        delete(FeedItem).where(
+        update(FeedItem)
+        .where(
+            FeedItem.user_id == user_id,
             FeedItem.feed_id == feed_id,
             FeedItem.saved_site_id.is_(None),
+            FeedItem.purged_at.is_(None),
             FeedItem.id.not_in(keep.scalar_subquery()),
         )
+        .values(**_tombstone_values(now))
     )
 
 
 async def cleanup_items(database: Database, *, now: datetime | None = None) -> int:
-    """Delete stream items older than 30 days unless they were saved."""
+    """清空过期条目内容以保留去重信息；一年后回收墓碑。"""
 
-    cutoff = (now or utc_now()) - RETENTION
+    moment = now or utc_now()
+    cutoff = moment - RETENTION
     async with database.sessions() as session:
-        result = await session.execute(
-            delete(FeedItem).where(
-                FeedItem.saved_site_id.is_(None),
-                func.coalesce(FeedItem.published_at, FeedItem.fetched_at) < cutoff,
+        # 调度器跨账号运行，但每次内容变更仍限定一个账号。
+        user_ids = (await session.scalars(select(Feed.user_id).distinct())).all()
+        total = 0
+        for user_id in user_ids:
+            result = await session.execute(
+                update(FeedItem)
+                .where(
+                    FeedItem.user_id == user_id,
+                    FeedItem.saved_site_id.is_(None),
+                    FeedItem.purged_at.is_(None),
+                    func.coalesce(FeedItem.published_at, FeedItem.fetched_at) < cutoff,
+                )
+                .values(**_tombstone_values(moment))
             )
-        )
+            total += int(result.rowcount or 0)  # type: ignore[attr-defined]
+            await session.execute(
+                delete(FeedItem).where(
+                    FeedItem.user_id == user_id,
+                    FeedItem.saved_site_id.is_(None),
+                    FeedItem.purged_at < moment - TOMBSTONE_RETENTION,
+                )
+            )
         await session.commit()
-        return int(result.rowcount or 0)  # type: ignore[attr-defined]
+        return total
 
 
 async def due_feed_ids(database: Database, *, now: datetime, limit: int = 20) -> list[str]:
@@ -405,7 +456,11 @@ async def list_items(
     feed_id: str | None = None,
     limit: int = 200,
 ) -> list[FeedItem]:
-    conditions = [FeedItem.user_id == user_id, FeedItem.dismissed_at.is_(None)]
+    conditions = [
+        FeedItem.user_id == user_id,
+        FeedItem.dismissed_at.is_(None),
+        FeedItem.purged_at.is_(None),
+    ]
     if feed_id is not None:
         conditions.append(FeedItem.feed_id == feed_id)
     rows = await session.scalars(
@@ -608,6 +663,7 @@ async def daily_picks(
             .where(
                 FeedItem.user_id == user_id,
                 FeedItem.dismissed_at.is_(None),
+                FeedItem.purged_at.is_(None),
                 Feed.enabled.is_(True),
                 func.coalesce(FeedItem.published_at, FeedItem.fetched_at) >= window_start,
             )

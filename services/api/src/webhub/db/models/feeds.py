@@ -48,6 +48,7 @@ class Feed(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="rss")
     site_url: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=true()
     )
@@ -76,6 +77,7 @@ class FeedItem(Base):
         UniqueConstraint("feed_id", "guid", name="feed_item_guid_per_feed"),
         Index("ix_feed_items_user_published", "user_id", "published_at", "id"),
         Index("ix_feed_items_fetched", "fetched_at"),
+        Index("ix_feed_items_user_purged", "user_id", "purged_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -90,12 +92,14 @@ class FeedItem(Base):
     author: Mapped[str | None] = mapped_column(String(200))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     audio_url: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     saved_site_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("sites.id", ondelete="SET NULL")
     )

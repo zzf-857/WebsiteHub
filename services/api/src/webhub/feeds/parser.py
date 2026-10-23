@@ -20,6 +20,7 @@ import html
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -52,6 +53,7 @@ class ParsedItem:
     published_at: datetime | None
     audio_url: str | None
     duration_seconds: int | None
+    image_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +62,7 @@ class ParsedFeed:
     site_url: str | None
     kind: FeedKind
     items: list[ParsedItem]
+    image_url: str | None
 
 
 def plain_text(value: object, *, limit: int) -> str:
@@ -86,6 +89,8 @@ def safe_link(value: object) -> str | None:
     except ValueError:
         return None
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    if parsed.username is not None or parsed.password is not None:
         return None
     if any(ord(character) < 0x21 for character in candidate):
         return None
@@ -126,6 +131,57 @@ def _audio(entry: Any) -> str | None:
         href = safe_link(enclosure.get("href"))
         if href and (kind.startswith("audio/") or kind.startswith("video/") or not kind):
             return href
+    return None
+
+
+class _FirstImage(HTMLParser):
+    """只读取首个 img 的 src，不执行 HTML 或加载任何资源。"""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.src: str | None = None
+        self.found = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "img" and not self.found:
+            self.found = True
+            self.src = safe_link(dict(attrs).get("src"))
+
+
+def _channel_image(entry: Any) -> str | None:
+    for key in ("image", "itunes_image"):
+        value = entry.get(key)
+        candidate = value.get("href") if isinstance(value, dict) else value
+        if url := safe_link(candidate):
+            return url
+    return None
+
+
+def _image(entry: Any) -> str | None:
+    thumbnails = entry.get("media_thumbnail") or []
+    if thumbnails and (url := safe_link(thumbnails[0].get("url"))):
+        return url
+    for content in entry.get("media_content") or []:
+        is_image = content.get("medium") == "image" or str(
+            content.get("type") or ""
+        ).lower().startswith("image/")
+        if is_image and (url := safe_link(content.get("url"))):
+            return url
+    if url := _channel_image(entry):
+        return url
+    for enclosure in entry.get("enclosures") or []:
+        if str(enclosure.get("type") or "").lower().startswith("image/") and (
+            url := safe_link(enclosure.get("href"))
+        ):
+            return url
+    contents = entry.get("content") or []
+    sources = [contents[0].get("value") if contents else None, entry.get("summary")]
+    for source in sources:
+        if isinstance(source, str):
+            parser = _FirstImage()
+            parser.feed(source)
+            if parser.src:
+                return parser.src
     return None
 
 
@@ -186,6 +242,7 @@ def parse_feed(document: bytes) -> ParsedFeed:
                 published_at=_timestamp(entry),
                 audio_url=audio_url,
                 duration_seconds=parse_duration(entry.get("itunes_duration")),
+                image_url=_image(entry),
             )
         )
     is_podcast = has_audio or bool(header.get("itunes_author") or header.get("itunes_explicit"))
@@ -194,4 +251,5 @@ def parse_feed(document: bytes) -> ParsedFeed:
         site_url=safe_link(header.get("link")),
         kind="podcast" if is_podcast else "rss",
         items=items,
+        image_url=_channel_image(header),
     )

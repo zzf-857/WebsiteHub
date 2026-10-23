@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from webhub.db.urls import ensure_sqlite_database_parent
 
-DATABASE_SCHEMA_HEADS = frozenset({"20261022_0024"})
+DATABASE_SCHEMA_HEADS = frozenset({"20261023_0025"})
 
 
 class DatabaseSchemaError(RuntimeError):

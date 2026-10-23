@@ -35,6 +35,7 @@ class FeedResponse(BaseModel):
     title: str
     kind: FeedKind
     site_url: str | None
+    image_url: str | None
     enabled: bool
     last_fetched_at: datetime | None
     next_fetch_at: datetime | None
@@ -56,6 +57,7 @@ class FeedItemResponse(BaseModel):
     author: str | None
     published_at: datetime | None
     audio_url: str | None
+    image_url: str | None
     duration_seconds: int | None
     fetched_at: datetime
     read: bool
