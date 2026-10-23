@@ -148,3 +148,23 @@ test("响应携带明文密钥字段时客户端拒收", async (t) => {
     ProviderContractError,
   );
 });
+
+
+test("客户端创建与更新通过 stream_usage 传递用量开关", async (t) => {
+  const calls = withMockFetch(t, [
+    jsonResponse(sampleConfigResponse({ provider: "openai_compatible", stream_usage: true }), 201),
+    jsonResponse(sampleConfigResponse({ provider: "openai_compatible", stream_usage: false })),
+  ]);
+  const created = await createProviderConfig({
+    kind: "model", provider: "openai_compatible", displayName: "自建网关", streamUsage: true,
+  });
+  const updated = await updateProviderConfig("cfg-1", { expectedVersion: 3, streamUsage: false });
+  assert.equal(created.streamUsage, true);
+  assert.equal(updated.streamUsage, false);
+  assert.equal(calls[0].input, "/api/backend/providers");
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(JSON.parse(String(calls[0].init.body)).stream_usage, true);
+  assert.equal(calls[1].input, "/api/backend/providers/cfg-1");
+  assert.equal(calls[1].init.method, "PATCH");
+  assert.deepEqual(JSON.parse(String(calls[1].init.body)), { expected_version: 3, stream_usage: false });
+});

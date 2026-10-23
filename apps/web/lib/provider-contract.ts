@@ -33,6 +33,7 @@ export type ProviderConfig = {
   baseUrl: string | null;
   modelName: string | null;
   enabled: boolean;
+  streamUsage: boolean;
   hasSecret: boolean;
   secretMask: string | null;
   version: number;
@@ -49,6 +50,7 @@ export type ProviderCreateInput = {
   // 明文密钥只在「提交这一刻」经过这里，构造完请求体后调用方必须立即清空来源 state。
   secret?: string;
   enabled?: boolean;
+  streamUsage?: boolean;
 };
 
 // 更新时对密钥只有三种意图：不动（undefined）、换新（replace）、清除（clear）。
@@ -64,6 +66,7 @@ export type ProviderUpdateInput = {
   modelName?: string | null;
   secret?: ProviderUpdateSecretInput;
   enabled?: boolean;
+  streamUsage?: boolean;
 };
 
 // 后端对测试请求有互斥约束：要么测已保存配置（configId + expectedVersion），
@@ -213,6 +216,9 @@ export function normalizeProviderConfig(value: unknown): ProviderConfig {
     baseUrl: nullableWebUrl(candidate.base_url, "provider_config.base_url"),
     modelName: nullableText(candidate.model_name, "provider_config.model_name"),
     enabled: boolean(candidate.enabled, "provider_config.enabled"),
+    streamUsage: candidate.stream_usage === undefined
+      ? false
+      : boolean(candidate.stream_usage, "provider_config.stream_usage"),
     hasSecret: boolean(candidate.has_secret, "provider_config.has_secret"),
     secretMask: nullableText(candidate.secret_mask, "provider_config.secret_mask"),
     version: version(candidate.version, "provider_config.version"),
@@ -269,6 +275,9 @@ export function providerCreatePayload(input: ProviderCreateInput): Record<string
       ? { secret: { action: "write", value: secretValue(input.secret, "provider.secret") } }
       : {}),
     ...(input.enabled !== undefined ? { enabled: boolean(input.enabled, "provider.enabled") } : {}),
+    ...(input.streamUsage !== undefined
+      ? { stream_usage: boolean(input.streamUsage, "provider.stream_usage") }
+      : {}),
   };
 }
 
@@ -281,7 +290,8 @@ export function providerUpdatePayload(input: ProviderUpdateInput): Record<string
     input.baseUrl !== undefined ||
     input.modelName !== undefined ||
     input.secret !== undefined ||
-    input.enabled !== undefined;
+    input.enabled !== undefined ||
+    input.streamUsage !== undefined;
   if (!hasEditableField) throw new ProviderContractError("Provider 更新至少需要一个字段");
 
   let secret: Record<string, unknown> | undefined;
@@ -309,6 +319,9 @@ export function providerUpdatePayload(input: ProviderUpdateInput): Record<string
       : {}),
     ...(secret !== undefined ? { secret } : {}),
     ...(input.enabled !== undefined ? { enabled: boolean(input.enabled, "provider.enabled") } : {}),
+    ...(input.streamUsage !== undefined
+      ? { stream_usage: boolean(input.streamUsage, "provider.stream_usage") }
+      : {}),
   };
 }
 

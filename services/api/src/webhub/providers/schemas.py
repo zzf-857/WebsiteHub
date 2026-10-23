@@ -52,6 +52,7 @@ class ProviderCreateRequest(StrictRequest):
     model_name: str | None = Field(default=None, max_length=160)
     secret: SecretWriteRequest | None = None
     enabled: bool = False
+    stream_usage: bool | None = Field(default=None, strict=True)
 
 
 class ProviderUpdateRequest(StrictRequest):
@@ -64,6 +65,7 @@ class ProviderUpdateRequest(StrictRequest):
     model_name: str | None = Field(default=None, max_length=160)
     secret: SecretUpdateRequest | None = None
     enabled: bool | None = None
+    stream_usage: bool | None = Field(default=None, strict=True)
 
 
 class ExpectedVersionRequest(StrictRequest):
@@ -106,6 +108,7 @@ class ProviderResponse(BaseModel):
     base_url: str | None
     model_name: str | None
     enabled: bool
+    stream_usage: bool
     has_secret: bool
     secret_mask: str | None
     version: int

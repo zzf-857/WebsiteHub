@@ -38,6 +38,7 @@ from webhub.providers.security import (
     ProviderSecretUnavailableError,
     decrypt_secret,
 )
+from webhub.providers.stream_usage import provider_config_values, stream_usage_enabled
 from webhub.providers.targets import ProviderTargetError, validate_connection_target
 
 from .runner import (
@@ -78,6 +79,7 @@ class ProviderBinding:
     model_name: str | None
     timeout_seconds: int
     api_key: str | None = field(default=None, repr=False)
+    stream_usage: bool = False
 
     @property
     def client_api_key(self) -> str:
@@ -202,6 +204,9 @@ async def resolve_binding(
         model_name=model_name,
         timeout_seconds=settings.agent_request_timeout_seconds,
         api_key=api_key,
+        stream_usage=stream_usage_enabled(
+            config.provider, provider_config_values(config.config_json)
+        ),
     )
 
 
@@ -289,10 +294,7 @@ def build_chat_model(
         timeout=binding.timeout_seconds,
         max_retries=max_retries,
         streaming=True,
-        # These first-party endpoints implement the standard
-        # stream_options.include_usage contract.  Generic compatible endpoints
-        # are intentionally left off: some reject that option outright.
-        stream_usage=binding.provider in {"openai", "deepseek"},
+        stream_usage=binding.stream_usage,
     )
 
 

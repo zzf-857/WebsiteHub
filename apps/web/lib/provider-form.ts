@@ -15,6 +15,7 @@ export type ProviderDraft = {
   baseUrl: string;
   modelName: string;
   enabled: boolean;
+  streamUsage: boolean;
 };
 
 // 编辑态对密钥只有三种意图，与后端的 secret action 一一对应：
@@ -147,6 +148,7 @@ export function createProviderDraft(definition: ProviderRegistryItem | null = nu
     baseUrl: definition?.defaultBaseUrl ?? "",
     modelName: "",
     enabled: true,
+    streamUsage: false,
   };
 }
 
@@ -157,6 +159,7 @@ export function editProviderDraft(config: ProviderConfig): ProviderDraft {
     baseUrl: config.baseUrl ?? "",
     modelName: config.modelName ?? "",
     enabled: config.enabled,
+    streamUsage: config.streamUsage,
   };
 }
 
@@ -267,6 +270,9 @@ export function buildProviderCreateInput({
     // 没填密钥就整个不传 secret 键：Ollama 这类不需要 Key 的厂商靠这条留空提交。
     ...(trimmedSecret ? { secret: trimmedSecret } : {}),
     enabled: draft.enabled,
+    ...(kind === "model" && draft.provider === "openai_compatible"
+      ? { streamUsage: draft.streamUsage }
+      : {}),
   };
 }
 
@@ -318,6 +324,14 @@ export function buildProviderUpdateInput({
 
   if (draft.enabled !== config.enabled) {
     input.enabled = draft.enabled;
+    changed = true;
+  }
+
+  if (
+    config.kind === "model" && config.provider === "openai_compatible" &&
+    draft.streamUsage !== config.streamUsage
+  ) {
+    input.streamUsage = draft.streamUsage;
     changed = true;
   }
 
