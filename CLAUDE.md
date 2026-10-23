@@ -13,7 +13,8 @@
 
 **执行 Agent 落地条目时**，先读 `docs/architecture/README.md`：架构（`ARCHITECTURE.md`）、强制代码规范
 （`CODING_STANDARDS.md`）、验收标准（`ACCEPTANCE.md`）与条目规格（`specs/Qxx-*.md`）。有 spec 的条目以 spec 为准，
-交付按 `ACCEPTANCE.md` §5 写报告，不推送、不改状态文档。
+交付按 `ACCEPTANCE.md` §5 写报告，只推送自己的 `qNN-work` 分支，不改状态文档。
+新 Agent 的完整交接提示词见 `docs/architecture/HANDOFF_PROMPT.md`。
 
 和用户讨论时冒出的新想法，先记进 `IDEAS.md`（灵感池，不参与调度）；筛选通过后才拆成 Q 项进队列。
 
@@ -50,7 +51,8 @@ cd services/api && uv run pytest -q && uv run ruff check .
 - Agent 工具强制服务端账号作用域；站内 Agent 不直接写库，一律 propose → 人工确认；
   外部 Agent 只经 MCP 令牌，`write` 只含可逆增量操作并记审计日志，不开放删除
 - 非 Ollama 的 base URL 必须 HTTPS 且过 `providers/targets.py` 的 SSRF 校验
-- 提交用中文 commit；本地会话**不推送 GitHub**，云端会话只推送到会话指定的 `claude/*` 分支
+- 提交用中文 commit；本地会话**不推送 GitHub**，云端会话只推送到会话指定的 `claude/*` 分支；
+  例外：按 `docs/architecture/` 落地条目的执行 Agent 只推送自己的 `qNN-work` 分支供验收
 - 前端只用 `apps/web/app/globals.css` 顶部的设计令牌，禁止写死颜色；圆角全站 ≤8px；
   图标只用 lucide-react（1.26.0，无 Loader2/AlertCircle/StopCircle）；favicon 不走第三方 CDN
 

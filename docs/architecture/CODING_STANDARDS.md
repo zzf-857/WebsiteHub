@@ -146,4 +146,5 @@ cd services/api && uv run pytest -q && uv run ruff check .
 - 分支：`qNN-work`（一个条目一个分支），基于 spec 写明的基线提交。
 - 提交信息中文：`<type>(<scope>): <摘要>`，type ∈ `feat | fix | refactor | test | docs | chore`；正文写“为什么 + 关键决定”。
 - 每条提交末尾附会话要求的署名行（以会话当前的 attribution 提醒为准）。
-- 禁止：推送（只有总负责人推送）、改写他人提交历史、`--no-verify`、提交 `.env` / `.data` / 密钥。
+- 推送：执行者只推送自己的 `qNN-work` 分支（供总负责人拉取验收）；`main`、`claude/*` 等其他分支只由总负责人推送。
+- 禁止：推送其他分支、强推、改写他人提交历史、`--no-verify`、提交 `.env` / `.data` / 密钥。

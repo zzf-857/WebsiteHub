@@ -13,6 +13,7 @@
 6. `PRD.md` —— 产品背景；第 0 节（2026-10 定位修订）优先于正文。
 
 `ACCEPTANCE.md` 定义“做完”的标准与验收流程，执行前必须读。
+新开一个执行 Agent 时，把 `HANDOFF_PROMPT.md` 里的提示词正文发给它（替换条目编号）即可。
 
 ## 执行 Agent 的标准流程
 
@@ -21,7 +22,8 @@
 3. 严格按 spec 的“文件清单”和“接口契约”实现；需要偏离时，在报告“偏差”一节写明原因。
 4. 按 spec 的“测试清单”逐条写测试；跑全量门禁到全绿。
 5. 自查一遍（`ACCEPTANCE.md` 的执行者自查表），修掉真问题并补回归测试。
-6. 提交（规范见 `CODING_STANDARDS.md` §9），**不推送**、**不改** `PROGRESS.md` / `ITERATION_QUEUE.md`。
+6. 提交（规范见 `CODING_STANDARDS.md` §9）；**只推送自己的 `qNN-work` 分支**（`git push -u origin qNN-work`），
+   不推送任何其他分支，**不改** `PROGRESS.md` / `ITERATION_QUEUE.md`。
 7. 按 `ACCEPTANCE.md` §5 的报告模板交付。
 
 ## 当前待执行条目（2026-10-23）
