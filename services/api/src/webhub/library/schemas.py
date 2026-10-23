@@ -13,9 +13,10 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic.functional_validators import BeforeValidator
+from pydantic.functional_validators import AfterValidator, BeforeValidator
 
-# kinds 是纯函数模块（不依赖 library 其他部分），从它引用取值集合不会成环。
+# icons 与 kinds 都是纯函数模块（不依赖 library 其他部分），从它们引用取值集合不会成环。
+from webhub.library.icons import validate_category_icon
 from webhub.library.kinds import KindSource, SiteKind
 
 # 定义在这里而不是 batch.py：schemas 不依赖任何 library 内部模块，
@@ -57,14 +58,17 @@ class StrictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+CategoryIcon = Annotated[str | None, AfterValidator(validate_category_icon)]
+
+
 class CategoryCreateRequest(StrictRequest):
     name: str = Field(min_length=1, max_length=80)
-    icon: str | None = None
+    icon: CategoryIcon = Field(default=None, max_length=40)
 
 
 class CategoryUpdateRequest(StrictRequest):
     name: str = Field(min_length=1, max_length=80)
-    icon: str | None = None
+    icon: CategoryIcon = Field(default=None, max_length=40)
 
 
 class CategoryReference(BaseModel):
@@ -121,6 +125,26 @@ class TagListResponse(BaseModel):
 class TagDeleteResponse(BaseModel):
     message: str
     unlinked_site_count: int
+
+
+class TagMergeRequest(StrictRequest):
+    target_id: str = Field(min_length=1, max_length=36)
+
+
+class TagMergePreviewResponse(BaseModel):
+    source: TagResponse
+    target: TagResponse
+    # 带源标签的收藏数：合并后它们都带目标标签
+    affected_site_count: int
+    # 其中原本就同时带目标标签的收藏数（合并只去掉源标签）
+    already_tagged_count: int
+
+
+class TagMergeResponse(BaseModel):
+    message: str
+    target: TagResponse
+    affected_site_count: int
+    already_tagged_count: int
 
 
 class SiteCreateRequest(StrictRequest):

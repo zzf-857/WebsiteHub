@@ -75,6 +75,8 @@ from .tags import (
     create_tag,
     delete_tag,
     list_tags,
+    merge_tag,
+    tag_merge_preview,
     update_tag,
 )
 
@@ -118,6 +120,8 @@ __all__ = [
     "delete_site",
     "delete_tag",
     "get_site",
+    "merge_tag",
+    "tag_merge_preview",
     "library_overview",
     "list_categories",
     "list_site_selection",

@@ -788,7 +788,7 @@ export function LibraryWorkspace() {
       <LibraryDialog
         open={dialog?.kind === "taxonomy"}
         title="管理分类与标签"
-        description="分类删除前会预览受影响的网站；标签删除也会显示关联数量。"
+        description="分类可换图标，删除前会预览受影响的网站；标签可合并到另一个标签，删除与合并都会先显示关联数量。"
         size="wide"
         onClose={closeDialog}
       >

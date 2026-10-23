@@ -1,4 +1,4 @@
-import { Archive, Clock, GitFork, Scale, Star } from "lucide-react";
+import { Archive, CircleOff, Clock, GitFork, Scale, Star } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import type { LibrarySite } from "@/lib/library-contract";
@@ -33,47 +33,56 @@ export function RepoPanel({ site, now }: Readonly<RepoPanelProps>) {
           </span>
         )}
       </header>
-      <dl className="sd-repo-stats">
-        {model.stars !== null && (
-          <div>
-            <dt><Star aria-hidden="true" />星标</dt>
-            <dd>{model.stars}</dd>
-          </div>
-        )}
-        {model.forks !== null && (
-          <div>
-            <dt><GitFork aria-hidden="true" />Fork</dt>
-            <dd>{model.forks}</dd>
-          </div>
-        )}
-        {model.language && (
-          <div>
-            <dt>
-              <span
-                className="sd-repo-language-dot"
-                style={{ "--site-hue": siteHue(model.language) } as CSSProperties}
-                aria-hidden="true"
-              />
-              语言
-            </dt>
-            <dd>{model.language}</dd>
-          </div>
-        )}
-        {model.license && (
-          <div>
-            <dt><Scale aria-hidden="true" />许可证</dt>
-            <dd>{model.license}</dd>
-          </div>
-        )}
-        {model.pushed && (
-          <div>
-            <dt><Clock aria-hidden="true" />最近推送</dt>
-            <dd>
-              {model.pushedAt ? <time dateTime={model.pushedAt}>{model.pushed}</time> : model.pushed}
-            </dd>
-          </div>
-        )}
-      </dl>
+      {model.notice ? (
+        <p className="sd-repo-notice" data-notice={model.notice.kind}>
+          {model.notice.kind === "not_found"
+            ? <CircleOff aria-hidden="true" />
+            : <Clock aria-hidden="true" />}
+          {model.notice.text}
+        </p>
+      ) : (
+        <dl className="sd-repo-stats">
+          {model.stars !== null && (
+            <div>
+              <dt><Star aria-hidden="true" />星标</dt>
+              <dd>{model.stars}</dd>
+            </div>
+          )}
+          {model.forks !== null && (
+            <div>
+              <dt><GitFork aria-hidden="true" />Fork</dt>
+              <dd>{model.forks}</dd>
+            </div>
+          )}
+          {model.language && (
+            <div>
+              <dt>
+                <span
+                  className="sd-repo-language-dot"
+                  style={{ "--site-hue": siteHue(model.language) } as CSSProperties}
+                  aria-hidden="true"
+                />
+                语言
+              </dt>
+              <dd>{model.language}</dd>
+            </div>
+          )}
+          {model.license && (
+            <div>
+              <dt><Scale aria-hidden="true" />许可证</dt>
+              <dd>{model.license}</dd>
+            </div>
+          )}
+          {model.pushed && (
+            <div>
+              <dt><Clock aria-hidden="true" />最近推送</dt>
+              <dd>
+                {model.pushedAt ? <time dateTime={model.pushedAt}>{model.pushed}</time> : model.pushed}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
       {model.topics.length > 0 && (
         <ul className="sd-chip-row sd-repo-topics" aria-label="主题">
           {model.topics.map((topic) => (

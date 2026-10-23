@@ -15,7 +15,17 @@ export type RepoPanelModel = {
   pushed: string | null;
   pushedAt: string | null;
   archived: boolean;
+  /** 没有可展示统计时的状态提示：仓库不存在 / 私有，或 GitHub 限流待重试。 */
+  notice: RepoPanelNotice | null;
 };
+
+export type RepoPanelNotice = {
+  kind: "not_found" | "rate_limited";
+  text: string;
+};
+
+export const REPO_NOT_FOUND_NOTICE = "仓库不存在或为私有";
+export const REPO_RATE_LIMITED_NOTICE = "GitHub 限流，稍后自动重试";
 
 const MAX_TOPICS = 12;
 const DAY = 86_400_000;
@@ -69,10 +79,31 @@ function githubRecord(meta: LibrarySiteMeta): Record<string, unknown> | null {
     : null;
 }
 
-/** meta.github 存在且至少有一项可展示的字段时返回面板模型，否则返回 null（面板不渲染）。 */
+function emptyModel(notice: RepoPanelNotice): RepoPanelModel {
+  return {
+    stars: null,
+    forks: null,
+    language: null,
+    topics: [],
+    license: null,
+    pushed: null,
+    pushedAt: null,
+    archived: false,
+    notice,
+  };
+}
+
+/**
+ * meta.github 存在且至少有一项可展示的字段时返回面板模型；Q45 记过“仓库不存在”或
+ * “限流且尚无数据”时返回只带提示的模型；其余情况返回 null（面板不渲染）。
+ */
 export function repoPanelModel(meta: LibrarySiteMeta, now: number): RepoPanelModel | null {
   const github = githubRecord(meta);
   if (!github) return null;
+  // 404 之后旧数字会误导，后端已清掉统计；即便残留也不展示。
+  if (github.not_found === true) {
+    return emptyModel({ kind: "not_found", text: REPO_NOT_FOUND_NOTICE });
+  }
   const stars = nonNegativeCount(github.stars);
   const forks = nonNegativeCount(github.forks);
   const pushedAt = cleanText(github.pushed_at, 64);
@@ -85,6 +116,7 @@ export function repoPanelModel(meta: LibrarySiteMeta, now: number): RepoPanelMod
     pushed: pushedAt ? formatPushedAgo(pushedAt, now) : null,
     pushedAt: pushedAt && !Number.isNaN(parseServerTime(pushedAt)) ? pushedAt : null,
     archived: github.archived === true,
+    notice: null,
   };
   const empty = model.stars === null
     && model.forks === null
@@ -93,5 +125,8 @@ export function repoPanelModel(meta: LibrarySiteMeta, now: number): RepoPanelMod
     && model.license === null
     && model.pushed === null
     && !model.archived;
-  return empty ? null : model;
+  if (!empty) return model;
+  return cleanText(github.rate_limited_at, 64)
+    ? emptyModel({ kind: "rate_limited", text: REPO_RATE_LIMITED_NOTICE })
+    : null;
 }

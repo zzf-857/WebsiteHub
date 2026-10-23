@@ -16,7 +16,12 @@ export function withSiteOpened(site: LibrarySite, nowIso: string): LibrarySite {
   };
 }
 
-/** 只覆盖界面可见的字段；推迟与静音不影响卡片外观，交给服务端响应。 */
+const DAY_MS = 86_400_000;
+
+/**
+ * 乐观更新使用信号。推迟也先在本地算出到期时间（服务端响应会覆盖为准确值）：
+ * 发现页主卡队列靠它即时判断“已被推迟走”，撤销时清空它把该项放回（Q52）。
+ */
 export function withSiteState(
   site: LibrarySite,
   input: LibrarySiteStateInput,
@@ -29,6 +34,12 @@ export function withSiteState(
   }
   if (input.seen !== undefined) next.seenAt = input.seen ? site.seenAt ?? nowIso : null;
   if (input.resurfaceMuted !== undefined) next.resurfaceMuted = input.resurfaceMuted;
+  if (input.snoozeDays !== undefined) {
+    const base = Date.parse(nowIso);
+    next.resurfaceDueAt = input.snoozeDays > 0 && Number.isFinite(base)
+      ? new Date(base + input.snoozeDays * DAY_MS).toISOString()
+      : null;
+  }
   return next;
 }
 

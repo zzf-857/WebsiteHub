@@ -378,6 +378,23 @@ export type LibraryCategoryDeletePreview = {
   replacementCategory: LibraryCategory | null;
 };
 
+/** 标签合并预览（Q52）：源标签的收藏都会改带目标标签，源标签随后删除。 */
+export type LibraryTagMergePreview = {
+  source: LibraryTag;
+  target: LibraryTag;
+  /** 带源标签的收藏数。 */
+  affectedSiteCount: number;
+  /** 其中原本就带目标标签的收藏数（合并只去掉源标签）。 */
+  alreadyTaggedCount: number;
+};
+
+export type LibraryTagMergeResult = {
+  message: string;
+  target: LibraryTag;
+  affectedSiteCount: number;
+  alreadyTaggedCount: number;
+};
+
 export type LibrarySiteQuery = {
   q?: string;
   categoryId?: string;
@@ -1274,6 +1291,26 @@ export function normalizeCategoryDeletePreview(value: unknown): LibraryCategoryD
       candidate.replacement_category === null
         ? null
         : normalizeLibraryCategory(candidate.replacement_category),
+  };
+}
+
+export function normalizeTagMergePreview(value: unknown): LibraryTagMergePreview {
+  const candidate = record(value, "tag_merge_preview");
+  return {
+    source: normalizeLibraryTag(candidate.source),
+    target: normalizeLibraryTag(candidate.target),
+    affectedSiteCount: count(candidate.affected_site_count, "tag_merge_preview.affected_site_count"),
+    alreadyTaggedCount: count(candidate.already_tagged_count, "tag_merge_preview.already_tagged_count"),
+  };
+}
+
+export function normalizeTagMergeResult(value: unknown): LibraryTagMergeResult {
+  const candidate = record(value, "tag_merge");
+  return {
+    message: text(candidate.message, "tag_merge.message"),
+    target: normalizeLibraryTag(candidate.target),
+    affectedSiteCount: count(candidate.affected_site_count, "tag_merge.affected_site_count"),
+    alreadyTaggedCount: count(candidate.already_tagged_count, "tag_merge.already_tagged_count"),
   };
 }
 
