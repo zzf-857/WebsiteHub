@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from webhub.db.models import User
+from webhub.db.models import Site, User
 
 
 async def reserve_account_taxonomy(session: AsyncSession, user_id: str) -> bool:
@@ -25,4 +27,20 @@ async def reserve_account_taxonomy(session: AsyncSession, user_id: str) -> bool:
     return reserved.rowcount == 1  # type: ignore[attr-defined]
 
 
-__all__ = ["reserve_account_taxonomy"]
+async def reserve_sites(session: AsyncSession, user_id: str, site_ids: Sequence[str]) -> int:
+    """Reserve Sites before reading memberships so deletion and insertion serialize.
+
+    SQLite obtains its writer lock without changing user-visible revisions or
+    firing the column-specific FTS triggers. Insertion and deletion lock Site
+    before Space, avoiding the reverse lock order on multi-writer databases.
+    """
+    reserved = await session.execute(
+        update(Site)
+        .where(Site.user_id == user_id, Site.id.in_(site_ids))
+        .values(version=Site.version, updated_at=Site.updated_at)
+        .execution_options(synchronize_session=False)
+    )
+    return reserved.rowcount  # type: ignore[attr-defined]
+
+
+__all__ = ["reserve_account_taxonomy", "reserve_sites"]

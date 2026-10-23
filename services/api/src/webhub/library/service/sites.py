@@ -6,7 +6,7 @@ from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from webhub.db.locking import reserve_account_taxonomy
+from webhub.db.locking import reserve_account_taxonomy, reserve_sites
 from webhub.db.models import (
     Category,
     Site,
@@ -499,6 +499,9 @@ async def delete_site(
             "网站已被修改，请刷新后重试",
             code="version_conflict",
         )
+    if await reserve_sites(session, user_id, [site_id]) != 1:
+        await session.rollback()
+        raise LibraryConflictError("网站已被修改，请刷新后重试", code="version_conflict")
     now = utc_now()
     related_space_ids = list(
         (
@@ -544,6 +547,11 @@ async def bulk_delete_sites(
 
     expected_versions = {item.site_id: item.expected_version for item in payload.items}
     site_ids = list(expected_versions)
+    if await reserve_sites(session, user_id, site_ids) != len(site_ids):
+        await session.rollback()
+        raise LibraryConflictError(
+            "所选网站已发生变化，请刷新后重新选择", code="bulk_delete_conflict",
+        )
     sites = list(
         (
             await session.scalars(
