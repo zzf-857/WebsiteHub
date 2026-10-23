@@ -8,6 +8,8 @@ import { pathToFileURL } from "node:url";
 import next from "next";
 
 export const BOOKMARK_UPLOAD_PROXY_PATH = "/api/backend/bookmark-imports";
+export const PORTABILITY_UPLOAD_PROXY_PATH = "/api/backend/portability/imports";
+export const DEFAULT_PORTABILITY_UPLOAD_MAX_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_BOOKMARK_UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
 export const DEFAULT_BOOKMARK_UPLOAD_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 export const DEFAULT_INCOMING_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
@@ -193,16 +195,25 @@ function bookmarkUploadRequestSearch(requestUrl) {
   return queryIndex === -1 ? "" : requestUrl.slice(queryIndex);
 }
 
-export function isBookmarkUploadRequest(request) {
+function isUploadRequestForPath(request, expectedPath) {
   if (request.method !== "POST" || typeof request.url !== "string") return false;
   if (!request.url.startsWith("/")) return false;
   const queryIndex = request.url.indexOf("?");
   const pathname = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
-  return pathname === BOOKMARK_UPLOAD_PROXY_PATH;
+  return pathname === expectedPath;
 }
 
-export function buildBookmarkUploadTarget(
+export function isBookmarkUploadRequest(request) {
+  return isUploadRequestForPath(request, BOOKMARK_UPLOAD_PROXY_PATH);
+}
+
+export function isPortabilityUploadRequest(request) {
+  return isUploadRequestForPath(request, PORTABILITY_UPLOAD_PROXY_PATH);
+}
+
+function buildUploadTarget(
   apiBaseUrl = process.env.WEBHUB_API_INTERNAL_URL ?? DEFAULT_API_INTERNAL_URL,
+  pathname = "/api/bookmark-imports",
 ) {
   let target;
   try {
@@ -216,8 +227,16 @@ export function buildBookmarkUploadTarget(
   if (target.username || target.password || target.search || target.hash) {
     throw new TypeError("WEBHUB_API_INTERNAL_URL cannot contain credentials, query, or fragment");
   }
-  target.pathname = `${target.pathname.replace(/\/+$/, "")}/api/bookmark-imports`;
+  target.pathname = `${target.pathname.replace(/\/+$/, "")}${pathname}`;
   return target;
+}
+
+export function buildBookmarkUploadTarget(apiBaseUrl) {
+  return buildUploadTarget(apiBaseUrl, "/api/bookmark-imports");
+}
+
+export function buildPortabilityUploadTarget(apiBaseUrl) {
+  return buildUploadTarget(apiBaseUrl, "/api/portability/imports");
 }
 
 function declaredContentLength(headers) {
@@ -248,8 +267,10 @@ function applyUpstreamResponseHeaders(upstreamResponse, response) {
   }
 }
 
-export function createBookmarkUploadProxy({
+function createUploadProxy({
   target,
+  matchesRequest = isBookmarkUploadRequest,
+  label = "Bookmark",
   maxBytes = DEFAULT_BOOKMARK_UPLOAD_MAX_BYTES,
   idleTimeoutMs = DEFAULT_BOOKMARK_UPLOAD_IDLE_TIMEOUT_MS,
   httpRequestImplementation = httpRequest,
@@ -268,7 +289,7 @@ export function createBookmarkUploadProxy({
   }
 
   return function proxyBookmarkUpload(request, response) {
-    if (!isBookmarkUploadRequest(request)) return false;
+    if (!matchesRequest(request)) return false;
 
     const contentLength = declaredContentLength(request.headers);
     if (Number.isNaN(contentLength)) {
@@ -277,7 +298,7 @@ export function createBookmarkUploadProxy({
     }
     if (contentLength !== null && contentLength > maxBytes) {
       request.resume();
-      sendProxyError(response, 413, "Bookmark upload is too large");
+      sendProxyError(response, 413, `${label} upload is too large`);
       return true;
     }
 
@@ -339,32 +360,32 @@ export function createBookmarkUploadProxy({
         response.statusCode = incomingResponse.statusCode ?? 502;
         if (incomingResponse.statusMessage) response.statusMessage = incomingResponse.statusMessage;
         applyUpstreamResponseHeaders(incomingResponse, response);
-        incomingResponse.once("aborted", () => fail(502, "Bookmark upload upstream disconnected"));
-        incomingResponse.once("error", () => fail(502, "Bookmark upload upstream failed"));
+        incomingResponse.once("aborted", () => fail(502, `${label} upload upstream disconnected`));
+        incomingResponse.once("error", () => fail(502, `${label} upload upstream failed`));
         incomingResponse.pipe(response);
       });
     } catch {
-      fail(502, "Bookmark upload upstream is unavailable");
+      fail(502, `${label} upload upstream is unavailable`);
       return true;
     }
 
     upstreamRequest.setTimeout(idleTimeoutMs, () => {
-      fail(504, "Bookmark upload upstream timed out");
+      fail(504, `${label} upload upstream timed out`);
     });
     upstreamRequest.once("error", (error) => {
       if (error instanceof BookmarkUploadTooLargeError) return;
       fail(
         error?.code === "ETIMEDOUT" ? 504 : 502,
         error?.code === "ETIMEDOUT"
-          ? "Bookmark upload upstream timed out"
-          : "Bookmark upload upstream is unavailable",
+          ? `${label} upload upstream timed out`
+          : `${label} upload upstream is unavailable`,
       );
     });
 
     if (contentLength === null) {
       limiter = new BookmarkUploadLimitStream(maxBytes);
       limiter.once("error", () => {
-        fail(413, "Bookmark upload is too large");
+        fail(413, `${label} upload is too large`);
       });
       request.pipe(limiter).pipe(upstreamRequest);
     } else {
@@ -372,6 +393,20 @@ export function createBookmarkUploadProxy({
     }
     return true;
   };
+}
+
+export function createBookmarkUploadProxy(options = {}) {
+  return createUploadProxy(options);
+}
+
+export function createPortabilityUploadProxy(options = {}) {
+  return createUploadProxy({
+    ...options,
+    target: options.target instanceof URL ? options.target : buildPortabilityUploadTarget(options.target),
+    maxBytes: options.maxBytes ?? DEFAULT_PORTABILITY_UPLOAD_MAX_BYTES,
+    matchesRequest: isPortabilityUploadRequest,
+    label: "Backup",
+  });
 }
 
 export async function startServer() {
@@ -389,6 +424,8 @@ export async function startServer() {
     target: buildBookmarkUploadTarget(),
   });
 
+  const proxyPortabilityUpload = createPortabilityUploadProxy();
+
   const server = createServer((request, response) => {
     if (!isAllowedHost(request.headers.host, allowedHosts)) {
       response.statusCode = 421;
@@ -398,7 +435,7 @@ export async function startServer() {
     }
     // Establish a single trusted proxy hop before Next can preserve forwarded input.
     overwriteForwardingHeaders(request.headers, request.socket);
-    if (proxyBookmarkUpload(request, response)) return;
+    if (proxyBookmarkUpload(request, response) || proxyPortabilityUpload(request, response)) return;
     void handle(request, response).catch((error) => {
       console.error(error);
       if (!response.headersSent) response.statusCode = 500;

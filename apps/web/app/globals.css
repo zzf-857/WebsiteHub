@@ -16,6 +16,7 @@
 @import "./styles/keyboard.css";
 @import "./styles/library-manage.css";
 @import "./styles/feeds.css";
+@import "./styles/data.css";
 
 /* 设计令牌取自设计稿 1f 规范板
    （Arts/handoff/untitled/project/WebHub 效果图.dc.html）。
@@ -24,6 +25,11 @@
 :root {
   color-scheme: light;
   --control-min-target: 40px;
+  --data-space: 4px;
+  --data-font-small: 12px;
+  --data-font-base: 14px;
+  --data-font-heading: 20px;
+  --data-font-title: 28px;
 
   /* 表面 */
   --canvas: #f5f6f7;
@@ -135,6 +141,11 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --control-min-target: 40px;
+  --data-space: 4px;
+  --data-font-small: 12px;
+  --data-font-base: 14px;
+  --data-font-heading: 20px;
+  --data-font-title: 28px;
   --canvas: #0e1012;
   --surface: #16181b;
   --surface-raised: #1b1e21;
@@ -194,6 +205,11 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --control-min-target: 40px;
+    --data-space: 4px;
+    --data-font-small: 12px;
+    --data-font-base: 14px;
+    --data-font-heading: 20px;
+    --data-font-title: 28px;
     --canvas: #0e1012;
     --surface: #16181b;
     --surface-raised: #1b1e21;

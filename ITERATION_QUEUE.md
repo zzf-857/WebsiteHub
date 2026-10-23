@@ -2220,15 +2220,16 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 - **明确不做（理由）**：十万条完整性能门禁（独立的大规模性能轮）；站内聊天确认书签导入（D2 冻结站内聊天）；
   免费搜索可用性（外部服务，非本项目可修）。
 
-迁移编号预留：Q51 `20261023_0025`、Q54 `20261023_0026`、Q53 `20261023_0027`（2026-10-23 改订：Q52 / Q55 / Q56 实际未加迁移；
-均先接在 0024 后，合并时由总负责人串成单链）。
+迁移已集成：Q51 `20261023_0025`、Q54 `20261023_0026`、Q53 `20261023_0027`（Q52 / Q55 / Q56 未加迁移）；
+当前单链为 `0024 → 0025 → 0026 → 0027`，唯一 head 为 `20261023_0027`。
 
 **执行规格**：Q51、Q53、Q54、Q57 已有详细 spec，见 `docs/architecture/specs/`，与下方条目正文冲突时以 spec 为准；
-派发顺序见 `docs/architecture/README.md`（先做 Q57-0 门禁复核）。
+派发顺序见 `docs/architecture/README.md`。Q57-0 已完成，门禁修复 `169724e` 已纳入；Q51 / Q53 / Q54
+已按各自 spec 重新实现并合入 `claude/loving-maxwell-gfbcxo`，待用户在该分支统一验收，勿重复派发实现。
 
 ## Q51 · 订阅流补齐：无日期条目不复活、缩略图
 
-状态: 待做（按 spec 重新派发；此前中断的未提交改动不作为依据）
+状态: 代码验收及集成完成，合并门禁通过，待用户统一验收（工作分支提交 1c79dd4、6ed4500）
 
 规格：`docs/architecture/specs/Q51-feeds-completion.md`
 
@@ -2247,7 +2248,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q53 · 数据导出与自有备份导入（PRD P0）
 
-状态: 待做（按 spec 重新派发；此前中断的未提交改动不作为依据）
+状态: 代码验收及集成完成，合并门禁通过，待用户统一验收（工作分支提交 069edff、4a84fa7）
 
 规格：`docs/architecture/specs/Q53-data-portability.md`
 
@@ -2258,7 +2259,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q54 · 后端稳健性补齐
 
-状态: 待做（按 spec 重新派发；此前中断的未提交改动不作为依据）
+状态: 代码验收及集成完成，合并门禁通过，待用户统一验收（工作分支提交 d08a432、5cf56b9、03b1a91、955f1a6）
 
 规格：`docs/architecture/specs/Q54-backend-robustness.md`
 
@@ -2290,6 +2291,10 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 Q51–Q56 合并后，用 Playwright 对真实运行的应用跑完整流程：注册登录、快速收藏、发现页各操作与撤销、详情就地编辑、
 快捷键、收藏库筛选与批量、订阅页操作、Agent 令牌创建并用真实 HTTP 调 MCP 工具、数据导出再导入、浅深主题与 390 宽无横向滚动；
 发现的问题逐个修复并加回归测试，直到整套流程通过。
+
+Q51–Q56 现已合入开发分支；本轮只做合并验收、完整单元门禁与代表性浏览器集成检查，未执行正式 Q57 套件。
+同时复核已记录的既有界面问题：手机顶栏 Space 裁切、Provider 部分旧按钮小于 40px，以及首次加载即开启
+减少动态效果时公共 Spinner 的 hydration 告警。最终页面与真实外部 Provider 行为仍由用户统一验收。
 
 ---
 
@@ -2453,8 +2458,9 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-当前证据基线（2026-10-22 · Q43 / Q44 合并后）：后端完整 pytest **951 passed / 2 skipped**、Ruff 通过；前端 Node 测试
-**378 项（377 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。注意 `pyproject` 已设 `addopts = "-q"`，
+当前证据基线（2026-10-23 · Q51 / Q53 / Q54 合并后）：后端完整 pytest **1173 passed / 2 skipped**、Ruff 通过；前端 Node 测试
+**446 项（445 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。跳过仍为缺少私有书签样本的既有项，没有新增跳过。
+注意 `pyproject` 已设 `addopts = "-q"`，
 门禁再加 `-q` 会隐藏汇总行，需要计数时去掉 `-q` 运行。本轮新增功能必须带测试，已确认的基线只能涨不能降。
 
 ## 不可动摇的约束

@@ -4,6 +4,7 @@ import {
   Bot,
   Compass,
   Database,
+  DatabaseBackup,
   FileUp,
   Keyboard,
   LogOut,
@@ -46,6 +47,7 @@ const accountLinks = [
   { label: "服务商", href: "/settings/providers", icon: Settings },
   { label: "Agent 接入", href: "/settings/agents", icon: Bot },
   { label: "导入书签", href: "/settings/import", icon: FileUp },
+  { label: "数据导出与恢复", href: "/settings/data", icon: DatabaseBackup },
   { label: "语义索引", href: "/settings/search-index", icon: Database },
   { label: "站内对话", href: "/chat", icon: MessagesSquare },
 ] as const;

@@ -556,3 +556,84 @@ test("destroys the upstream upload when the browser disconnects", {
   clientRequest.destroy();
   await upstreamDisconnected.promise;
 });
+
+test("matches only the backup upload POST pathname and builds its independent target", async () => {
+  const { isPortabilityUploadRequest, buildPortabilityUploadTarget } = await import("../server.mjs");
+  for (const url of ["/api/backend/portability/imports", "/api/backend/portability/imports?source=backup"]) {
+    assert.equal(isPortabilityUploadRequest({ method: "POST", url }), true);
+  }
+  for (const request of [
+    { method: "GET", url: "/api/backend/portability/imports" },
+    { method: "POST", url: "/api/backend/portability/imports/" },
+    { method: "POST", url: "/api/backend/portability/imports/id/apply" },
+    { method: "POST", url: "/api/backend/bookmark-imports" },
+    { method: "POST", url: "http://attacker.invalid/api/backend/portability/imports" },
+  ]) assert.equal(isPortabilityUploadRequest(request), false);
+  assert.equal(buildPortabilityUploadTarget("http://127.0.0.1:8153").href, "http://127.0.0.1:8153/api/portability/imports");
+});
+
+test("streams backup JSON bytes and preserves cookie, Origin, query and response metadata", async (context) => {
+  const { createPortabilityUploadProxy } = await import("../server.mjs");
+  const captured = deferred();
+  const upstream = createServer((request, response) => {
+    void inspectRequest(request).then((inspection) => {
+      captured.resolve(inspection);
+      response.writeHead(201, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      response.end('{"id":"preview-id"}');
+    }, captured.reject);
+  });
+  const upstreamBaseUrl = await listen(upstream);
+  const proxy = createPortabilityUploadProxy({ target: upstreamBaseUrl });
+  const gateway = createServer((request, response) => {
+    overwriteForwardingHeaders(request.headers, request.socket);
+    if (!proxy(request, response)) { response.statusCode = 404; response.end(); }
+  });
+  const gatewayBaseUrl = await listen(gateway);
+  context.after(() => closeServer(gateway));
+  context.after(() => closeServer(upstream));
+  const body = Buffer.from('{"format":"webhub-backup","name":"合成收藏"}');
+  const response = await sendRequest({
+    baseUrl: gatewayBaseUrl, path: "/api/backend/portability/imports?source=backup",
+    headers: { "Content-Type": "application/json", "Cookie": "session=synthetic", "Origin": gatewayBaseUrl },
+    body: Readable.from([body.subarray(0, 12), body.subarray(12)]),
+  });
+  const inspection = await captured.promise;
+  assert.equal(response.statusCode, 201);
+  assert.equal(response.body.toString(), '{"id":"preview-id"}');
+  assert.equal(response.headers["cache-control"], "no-store");
+  assert.equal(inspection.url, "/api/portability/imports?source=backup");
+  assert.equal(inspection.headers["content-type"], "application/json");
+  assert.equal(inspection.headers.cookie, "session=synthetic");
+  assert.equal(inspection.headers.origin, gatewayBaseUrl);
+  assert.equal(inspection.size, body.length);
+  assert.equal(inspection.sha256, createHash("sha256").update(body).digest("hex"));
+});
+
+test("rejects backup Content-Length above the independent 64 MiB limit before contacting upstream", async (context) => {
+  const { createPortabilityUploadProxy, DEFAULT_PORTABILITY_UPLOAD_MAX_BYTES, DEFAULT_BOOKMARK_UPLOAD_MAX_BYTES } = await import("../server.mjs");
+  assert.equal(DEFAULT_PORTABILITY_UPLOAD_MAX_BYTES, 64 * 1024 * 1024);
+  assert.equal(DEFAULT_BOOKMARK_UPLOAD_MAX_BYTES, 512 * 1024 * 1024);
+  const proxy = createPortabilityUploadProxy({ httpRequestImplementation() { assert.fail("oversized request must not reach upstream"); } });
+  const gateway = createServer((request, response) => proxy(request, response));
+  const baseUrl = await listen(gateway);
+  context.after(() => closeServer(gateway));
+  const response = await sendRequest({ baseUrl, path: "/api/backend/portability/imports", headers: { "Content-Length": String(DEFAULT_PORTABILITY_UPLOAD_MAX_BYTES + 1) }, body: "{}" });
+  assert.equal(response.statusCode, 413);
+});
+
+test("enforces the backup streaming limit without Content-Length", { timeout: 15_000 }, async (context) => {
+  const { createPortabilityUploadProxy, DEFAULT_PORTABILITY_UPLOAD_MAX_BYTES } = await import("../server.mjs");
+  const upstream = createServer((request) => { request.on("error", () => {}); request.resume(); });
+  const target = await listen(upstream);
+  const proxy = createPortabilityUploadProxy({ target });
+  const gateway = createServer((request, response) => proxy(request, response));
+  const baseUrl = await listen(gateway);
+  context.after(() => closeServer(gateway));
+  context.after(() => closeServer(upstream));
+  const chunk = Buffer.alloc(1024 * 1024, "a");
+  function* chunks() {
+    for (let bytes = 0; bytes <= DEFAULT_PORTABILITY_UPLOAD_MAX_BYTES; bytes += chunk.length) yield chunk;
+  }
+  const response = await sendRequest({ baseUrl, path: "/api/backend/portability/imports", headers: { "Content-Type": "application/json" }, body: Readable.from(chunks()) });
+  assert.equal(response.statusCode, 413);
+});
