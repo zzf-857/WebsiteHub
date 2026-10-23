@@ -27,6 +27,7 @@ from webhub.db.models.agent_access import (
     AgentToken,
 )
 from webhub.db.models.agent_turns import AgentTurnRun
+from webhub.db.models.analysis_intents import SiteAnalysisIntent
 from webhub.db.models.bookmark_jobs import (
     BookmarkImportCheckpoint,
     BookmarkImportCurrentRun,
@@ -113,6 +114,7 @@ __all__ = [
     "ProviderConfig",
     "SITE_CONTENT_SOURCES",
     "Site",
+    "SiteAnalysisIntent",
     "SiteContent",
     "SiteEmbedding",
     "SiteImportOrigin",

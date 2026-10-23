@@ -402,7 +402,7 @@ async def save_resource(
             return found
         raise
     # Same background enrichment as a save from the website.
-    schedule_site_enrichment(database, user_id=user_id, site_id=created.id)
+    await schedule_site_enrichment(database, user_id=user_id, site_id=created.id)
     await record_write(
         session,
         identity,
