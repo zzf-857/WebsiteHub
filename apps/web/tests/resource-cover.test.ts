@@ -10,7 +10,6 @@ import {
   coverModel,
   estimateCardHeight,
   estimateCoverHeight,
-  formatStars,
   githubRepoMeta,
   heroSummaryText,
   isSafePreviewUrl,
@@ -104,11 +103,6 @@ test("repo stats come from Q45's meta.github and are formatted", () => {
   assert.deepEqual(repoStats({ github: { language: "Python", stars: 52_310 } }), { language: "Python", stars: "5.2 万" });
   assert.deepEqual(repoStats({ language: "Go", stars: 980 }), { language: "Go", stars: "980" });
   assert.deepEqual(repoStats({ github: { language: " ", stars: "many" } }), { language: null, stars: null });
-  assert.equal(formatStars(1_000), "1k");
-  assert.equal(formatStars(1_234), "1.2k");
-  assert.equal(formatStars(10_000), "1 万");
-  assert.equal(formatStars(34_567), "3.4 万");
-  assert.equal(formatStars(-3), "0");
 });
 
 test("repo covers only carry a bottom row when meta has language or stars", () => {
@@ -140,7 +134,7 @@ test("repo covers only carry a bottom row when meta has language or stars", () =
   assert.equal(starsOnly.type, "repo");
   if (starsOnly.type === "repo") {
     assert.equal(starsOnly.language, null);
-    assert.equal(starsOnly.stars, "1.2k");
+    assert.equal(starsOnly.stars, "1,234");
   }
 });
 
@@ -271,18 +265,6 @@ test("kind labels name the code host for repositories", () => {
   assert.equal(resourceKindLabel(siteFixture({ kind: "article" })), "帖子与文章");
   assert.equal(resourceKindLabel(siteFixture({ kind: "video" })), "视频");
   assert.equal(resourceKindLabel(siteFixture()), "工具与网站");
-});
-
-test("Q45: star counts format to k / 万 / 亿 without rounding up", () => {
-  assert.equal(formatStars(999), "999");
-  assert.equal(formatStars(9_999), "9.9k");
-  assert.equal(formatStars(12_000), "1.2 万");
-  assert.equal(formatStars(1_234_567), "123.4 万");
-  assert.equal(formatStars(99_999_999), "9999.9 万");
-  assert.equal(formatStars(100_000_000), "1 亿");
-  assert.equal(formatStars(123_456_789), "1.2 亿");
-  assert.equal(formatStars(12.9), "12");
-  assert.equal(formatStars(Number.NaN), "0");
 });
 
 test("Q45: meta.github parses into a typed record for covers and the detail page", () => {

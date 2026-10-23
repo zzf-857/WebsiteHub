@@ -2,6 +2,8 @@
 
 import {
   Check,
+  ChevronDown,
+  ChevronUp,
   CircleAlert,
   RefreshCw,
   WandSparkles,
@@ -166,6 +168,8 @@ export function HomeMetadataBackfillToolbar({
   onCompleted,
 }: Readonly<HomeMetadataBackfillToolbarProps>) {
   const [state, setState] = useState<ToolbarState>({ kind: "idle" });
+  // 默认收成一行；模式 / 上限等设置展开与否只记在组件状态里
+  const [expanded, setExpanded] = useState(false);
   const [pollRevision, setPollRevision] = useState(0);
   const [planRevision, setPlanRevision] = useState(0);
   const [mode, setMode] = useState<MetadataBackfillMode>("metadata");
@@ -443,9 +447,21 @@ export function HomeMetadataBackfillToolbar({
             )}
           {actionLabel}
         </button>
+        <button
+          type="button"
+          className="home-metadata-backfill-toggle"
+          aria-expanded={expanded}
+          aria-controls="home-metadata-backfill-config"
+          aria-label={expanded ? "收起分析设置" : "展开分析设置（模式与处理上限）"}
+          title={expanded ? "收起分析设置" : "展开分析设置"}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+        </button>
       </div>
 
-      <div className="home-metadata-backfill-config">
+      {expanded && (
+      <div className="home-metadata-backfill-config" id="home-metadata-backfill-config">
         <div className="home-metadata-backfill-modes" role="group" aria-label="网站分析模式">
           {MODE_OPTIONS.map((option) => (
             <button
@@ -511,6 +527,7 @@ export function HomeMetadataBackfillToolbar({
           )}
         </div>
       </div>
+      )}
 
       {progress && (
         <div

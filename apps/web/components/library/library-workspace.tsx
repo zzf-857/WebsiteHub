@@ -22,6 +22,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import {
@@ -54,6 +55,7 @@ import {
 import { SiteSimilarityReview } from "@/components/library/site-similarity-review";
 import { ThemedSelect } from "@/components/ui/themed-select";
 import { MAX_LIBRARY_BULK_DELETE_SITES } from "@/lib/library-contract";
+import { shouldUsePinnedChips } from "@/lib/library-pinned";
 import type { LibrarySiteKind, LibrarySiteState, LibrarySort } from "@/lib/library-contract";
 
 type LibraryLayoutMode = "centered" | "full";
@@ -665,7 +667,28 @@ export function LibraryWorkspace() {
                     </div>
                     <span>{pinnedPage.matchedCount} 个</span>
                   </div>
-                  <SiteCollection sites={pinnedPage.items} {...collectionProps} />
+                  {!pinnedOnly && shouldUsePinnedChips(pinnedPage.items.length, Boolean(pinnedPage.nextCursor)) ? (
+                    // 置顶很少时用紧凑条目，不占整张大卡的位置；管理（取消置顶等）在「仅置顶」视图
+                    <ul className="library-pinned-chips">
+                      {pinnedPage.items.map((site) => (
+                        <li key={site.id}>
+                          <Link
+                            className="library-pinned-chip"
+                            href={`/library/${encodeURIComponent(site.id)}`}
+                            title={site.name}
+                          >
+                            <SiteFavicon url={site.faviconUrl} name={site.name} size={24} />
+                            <span className="library-pinned-chip-copy">
+                              <span className="library-pinned-chip-name">{site.name}</span>
+                              <span className="library-pinned-chip-host">{siteHost(site)}</span>
+                            </span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <SiteCollection sites={pinnedPage.items} {...collectionProps} />
+                  )}
                   <LibraryAutoLoad
                     hasMore={Boolean(pinnedPage.nextCursor)}
                     loading={pinnedPage.loadingMore}

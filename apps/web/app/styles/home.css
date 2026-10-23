@@ -148,6 +148,34 @@
 .home-metadata-backfill-action-wrap {
   display: flex;
   flex-shrink: 0;
+  gap: 6px;
+}
+
+.home-metadata-backfill-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    border-color var(--duration-hover) var(--ease-standard);
+}
+
+.home-metadata-backfill-toggle:hover {
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+}
+
+.home-metadata-backfill-toggle svg {
+  width: 16px;
+  height: 16px;
 }
 
 .home-metadata-backfill-action {
@@ -365,16 +393,14 @@
 }
 
 @media (max-width: 767px) {
-  .home-metadata-backfill {
-    grid-template-columns: minmax(0, 1fr);
+  /* 收起态保持单行：标题 + 开始补全 + 展开箭头，说明文字让位 */
+  .home-metadata-backfill-copy p {
+    display: none;
   }
 
-  .home-metadata-backfill-action-wrap {
-    grid-column: 1;
-  }
-
-  .home-metadata-backfill-action {
-    width: 100%;
+  .home-metadata-backfill-overview {
+    height: auto;
+    min-width: 0;
   }
 
   .home-metadata-backfill-config {
@@ -714,6 +740,7 @@
 
 .home-section-action:focus-visible,
 .home-metadata-backfill-action:focus-visible,
+.home-metadata-backfill-toggle:focus-visible,
 .home-metadata-backfill-modes button:focus-visible,
 .home-metadata-backfill-limit input:focus-visible,
 .home-error-retry:focus-visible,
@@ -735,6 +762,7 @@
   .home-section-action,
   .home-metadata-backfill,
   .home-metadata-backfill-action,
+  .home-metadata-backfill-toggle,
   .home-metadata-backfill-progress-track span,
   .home-error-retry,
   .home-pinned-card,

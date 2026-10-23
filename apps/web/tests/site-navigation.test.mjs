@@ -73,7 +73,7 @@ test("metadata backfill refreshes the visible library for a bounded period", asy
 test("site detail leads with the shared cover; the zoom lightbox exists only for a safe preview", async () => {
   const source = await readFile(SITE_DETAIL, "utf8");
   // Q46：顶部大封面复用发现页的 ResourceCover；预览图只在安全地址时提供放大层
-  assert.match(source, /<ResourceCover site=\{site\} size="hero" \/>/);
+  assert.match(source, /<ResourceCover site=\{site\} size="hero" hideBlurb \/>/);
   assert.match(source, /isSafePreviewUrl\(readySite\.previewUrl\)/);
   assert.match(source, /previewUrl && previewUrl !== failedPreviewUrl/);
   assert.match(source, /previewAvailable && previewUrl/);

@@ -118,10 +118,10 @@ export function SiteHeader() {
   const openSearch = useCallback((trigger: "pointer" | "keyboard") => {
     startSearchTransition({
       // 键盘用户已经准备输入，优先立即聚焦；鼠标点击才播放完整的长距离转场。
-      animate: trigger === "pointer" && searchEntryRef.current !== null,
+      animate: trigger === "pointer" && !isLibrarySection && searchEntryRef.current !== null,
       trigger,
     });
-  }, [startSearchTransition]);
+  }, [isLibrarySection, startSearchTransition]);
 
   /* ⌘K / Ctrl+K 与 “/” 由全站快捷键分发器（components/keyboard/global-shortcuts）统一处理。 */
 
@@ -208,26 +208,24 @@ export function SiteHeader() {
 
       <div className="app-header-spacer" aria-hidden="true" />
 
-      {/* 收藏库页自带搜索框（转场的目标），顶栏入口在那里让位；
-          ⌘K/Ctrl+K 全局监听与渲染无关，任何页面都能唤起搜索。 */}
-      {isLibrarySection ? null : (
-        <motion.button
-          ref={searchEntryRef}
-          className="app-search-entry"
-          type="button"
-          layoutId={searchTransitionActive ? LIBRARY_SEARCH_LAYOUT_ID : undefined}
-          transition={LIBRARY_SEARCH_LAYOUT_TRANSITION}
-          data-transitioning={searchTransitionActive || undefined}
-          onClick={(event) => openSearch(event.detail === 0 ? "keyboard" : "pointer")}
-          aria-label={`搜索收藏（快捷键 ${searchKeyLabel}）`}
-        >
-          <Search aria-hidden="true" />
-          <span className="app-search-placeholder">搜索收藏</span>
-          <kbd className="app-search-kbd" aria-hidden="true">
-            {searchKeyLabel}
-          </kbd>
-        </motion.button>
-      )}
+      {/* 搜索入口每个工作区页面都在。收藏库页自带搜索框（转场的目标）：在那里点击只聚焦页内搜索框，
+          不参与共享元素转场，避免同一个 layoutId 同时挂两处；⌘K/Ctrl+K 与此无关，任何页面都能唤起。 */}
+      <motion.button
+        ref={searchEntryRef}
+        className="app-search-entry"
+        type="button"
+        layoutId={searchTransitionActive && !isLibrarySection ? LIBRARY_SEARCH_LAYOUT_ID : undefined}
+        transition={LIBRARY_SEARCH_LAYOUT_TRANSITION}
+        data-transitioning={searchTransitionActive || undefined}
+        onClick={(event) => openSearch(event.detail === 0 ? "keyboard" : "pointer")}
+        aria-label={`搜索收藏（快捷键 ${searchKeyLabel}）`}
+      >
+        <Search aria-hidden="true" />
+        <span className="app-search-placeholder">搜索收藏</span>
+        <kbd className="app-search-kbd" aria-hidden="true">
+          {searchKeyLabel}
+        </kbd>
+      </motion.button>
 
       <QuickAddButton />
 

@@ -3,7 +3,7 @@
 
 import type { LibrarySiteMeta } from "./library-contract.ts";
 import { parseServerTime } from "./relative-time.ts";
-import { formatStars } from "./resource-cover.ts";
+import { formatCount } from "./format-count.ts";
 
 export type RepoPanelModel = {
   stars: string | null;
@@ -77,8 +77,8 @@ export function repoPanelModel(meta: LibrarySiteMeta, now: number): RepoPanelMod
   const forks = nonNegativeCount(github.forks);
   const pushedAt = cleanText(github.pushed_at, 64);
   const model: RepoPanelModel = {
-    stars: stars === null ? null : formatStars(stars),
-    forks: forks === null ? null : formatStars(forks),
+    stars: stars === null ? null : formatCount(stars),
+    forks: forks === null ? null : formatCount(forks),
     language: cleanText(github.language, 40),
     topics: topicList(github.topics),
     license: licenseLabel(github.license),

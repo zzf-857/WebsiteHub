@@ -2,6 +2,7 @@
 // 网页自带预览图优先；否则按资源类型生成仓库 / 要点 / 视频 / 站点四种封面。
 // 这里只做纯计算，组件（components/discover/resource-cover.tsx）只负责画。
 
+import { formatCount } from "./format-count.ts";
 import {
   libraryRepoMeta,
   type LibrarySite,
@@ -25,7 +26,7 @@ export type RepoCover = CoverBase & {
   owner: string;
   repo: string;
   language: string | null;
-  /** 已格式化的星数（如 “1.2k”“3.4 万”），没有数据时为 null。 */
+  /** 已格式化的星数（如 “6,100”“3.4 万”），没有数据时为 null。 */
   stars: string | null;
   /** 主卡封面里仓库名下方的一句话介绍。 */
   blurb: string | null;
@@ -125,22 +126,6 @@ export function repoHostLabel(host: string): string | null {
   return REPO_HOST_LABELS[host.toLowerCase().replace(/^www\./u, "")] ?? null;
 }
 
-/** 保留一位小数并截断不进位；整数时不带 “.0”。 */
-function truncatedTenths(value: number, unit: number): string {
-  const tenths = Math.floor(value / (unit / 10)) / 10;
-  return Number.isInteger(tenths) ? tenths.toFixed(0) : tenths.toFixed(1);
-}
-
-/** 星数格式：999 → “999”，1234 → “1.2k”，34567 → “3.4 万”，1.2 亿以上用 “亿”（截断不进位）。 */
-export function formatStars(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "0";
-  const whole = Math.floor(value);
-  if (whole < 1000) return String(whole);
-  if (whole < 10_000) return `${truncatedTenths(whole, 1000)}k`;
-  if (whole < 100_000_000) return `${truncatedTenths(whole, 10_000)} 万`;
-  return `${truncatedTenths(whole, 100_000_000)} 亿`;
-}
-
 function readMetaRecord(meta: LibrarySiteMeta, key: string): Record<string, unknown> | null {
   const value = meta[key];
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -207,7 +192,7 @@ export function repoStats(meta: LibrarySiteMeta): { language: string | null; sta
   const stars = github?.stars ?? metaCount(meta.stars);
   return {
     language,
-    stars: stars === null ? null : formatStars(stars),
+    stars: stars === null ? null : formatCount(stars),
   };
 }
 

@@ -2,9 +2,11 @@
 
 import {
   AlertTriangle,
+  ArrowUpRight,
   BookmarkCheck,
   BookmarkPlus,
   Headphones,
+  Info,
   List,
   Pause,
   Play,
@@ -17,7 +19,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
 
 import { Spinner } from "@/components/react-bits/spinner";
 import { useToast } from "@/components/ui/toast";
@@ -43,6 +45,7 @@ import {
   type FeedItem,
   type FeedPick,
 } from "@/lib/feeds-contract";
+import { feedMark } from "@/lib/feeds-mark";
 import { siteDetailHref } from "@/lib/quick-add";
 import { formatRelativeTime } from "@/lib/relative-time";
 
@@ -65,14 +68,49 @@ type ItemActions = {
   saving: ReadonlySet<string>;
 };
 
+/** 条目左侧的来源标识：播客是耳机块；其余优先站点图标，没有或加载失败时退回按域名着色的字母块。 */
+function FeedSourceMark({ feed, title, podcast }: { feed?: Feed; title: string; podcast: boolean }) {
+  const mark = feedMark(feed, title);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const favicon = !podcast && mark.faviconUrl && mark.faviconUrl !== failedSrc ? mark.faviconUrl : null;
+  return (
+    <span
+      className="feed-mark"
+      data-kind={podcast ? "podcast" : "rss"}
+      style={{ "--site-hue": mark.hue } as CSSProperties}
+      aria-hidden="true"
+    >
+      {podcast ? (
+        <Headphones size={18} />
+      ) : favicon ? (
+        // 站点自己的 favicon，域名不可枚举，无法进 next/image 的静态白名单
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={favicon}
+          alt=""
+          width={20}
+          height={20}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setFailedSrc(favicon)}
+        />
+      ) : (
+        mark.letter
+      )}
+    </span>
+  );
+}
+
 function FeedItemCard({
   item,
+  feed,
   source,
   reason,
   now,
   actions,
 }: {
   item: FeedItem;
+  feed?: Feed;
   source?: string;
   reason?: string;
   now: number;
@@ -81,8 +119,10 @@ function FeedItemCard({
   const duration = formatDuration(item.durationSeconds);
   const moment = formatRelativeTime(itemMoment(item), now);
   const saving = actions.saving.has(item.id);
+  const podcast = feed ? feed.kind === "podcast" : Boolean(item.audioUrl);
   return (
     <li className="feed-card" data-read={item.read ? "true" : undefined}>
+      <FeedSourceMark feed={feed} title={source ?? feed?.title ?? item.title} podcast={podcast} />
       <div className="feed-card-main">
         {item.url ? (
           <a
@@ -92,7 +132,9 @@ function FeedItemCard({
             rel="noopener noreferrer"
             onClick={() => actions.open(item)}
           >
-            {item.title}
+            <span>{item.title}</span>
+            <ArrowUpRight className="feed-card-title-arrow" aria-hidden="true" size={14} />
+            <span className="sr-only">（在新标签页打开）</span>
           </a>
         ) : (
           <span className="feed-card-title">{item.title}</span>
@@ -118,30 +160,35 @@ function FeedItemCard({
       </div>
       <div className="feed-card-actions">
         {item.savedSiteId ? (
-          <Link className="feed-action" data-tone="saved" href={siteDetailHref(item.savedSiteId)}>
-            <BookmarkCheck aria-hidden="true" size={14} />
-            已收藏
+          <Link
+            className="feed-action feed-action-icon"
+            data-tone="saved"
+            data-tooltip="已收藏，查看详情"
+            aria-label={`已收藏「${item.title}」，查看详情`}
+            href={siteDetailHref(item.savedSiteId)}
+          >
+            <BookmarkCheck aria-hidden="true" size={16} />
           </Link>
         ) : (
           <button
-            className="feed-action"
+            className="feed-action feed-action-icon"
             type="button"
             disabled={saving || !item.url}
             onClick={() => actions.save(item)}
-            title={item.url ? "收进收藏库" : "这个条目没有链接"}
+            data-tooltip={item.url ? "收进收藏库" : "这个条目没有链接"}
+            aria-label={item.url ? `收进收藏库：${item.title}` : "这个条目没有链接，无法收藏"}
           >
-            {saving ? <Spinner size={14} /> : <BookmarkPlus aria-hidden="true" size={14} />}
-            收进收藏库
+            {saving ? <Spinner size={14} /> : <BookmarkPlus aria-hidden="true" size={16} />}
           </button>
         )}
         <button
           className="feed-action feed-action-icon"
           type="button"
           aria-label={`忽略「${item.title}」`}
-          title="忽略"
+          data-tooltip="忽略"
           onClick={() => actions.dismiss(item)}
         >
-          <X aria-hidden="true" size={14} />
+          <X aria-hidden="true" size={16} />
         </button>
       </div>
     </li>
@@ -297,7 +344,7 @@ export function FeedsWorkspace() {
     return () => controller.abort();
   }, [reloadKey]);
 
-  const feedTitles = useMemo(() => new Map(feeds.map((feed) => [feed.id, feed.title])), [feeds]);
+  const feedsById = useMemo(() => new Map(feeds.map((feed) => [feed.id, feed])), [feeds]);
   const groups = useMemo(() => groupItemsByFeed(feeds, items), [feeds, items]);
   const visiblePicks = useMemo(() => picks.filter((pick) => !pick.item.dismissed), [picks]);
 
@@ -413,13 +460,12 @@ export function FeedsWorkspace() {
   };
 
   return (
-    <main className="site-main">
+    <main className="site-main feeds-workspace">
       <header className="workspace-page-header">
         <span className="page-kicker">订阅</span>
         <h1>订阅流</h1>
         <p className="provider-page-lead">
-          RSS 与播客的新内容只在这里浏览，30 天后自动清理；觉得值得留下的，一键收进收藏库。
-          “今日精选”按你收藏库里的常用标签与分类挑选，同一来源最多 3 条。
+          RSS 与播客只在这里浏览，30 天后自动清理；值得留下的一键收进收藏库。
         </p>
       </header>
 
@@ -464,18 +510,25 @@ export function FeedsWorkspace() {
         <div className="feeds-panel" role="tabpanel">
           {tab === "picks" &&
             (visiblePicks.length ? (
-              <ol className="feed-list">
+              <>
+                <p className="feeds-picks-note">
+                  <Info aria-hidden="true" size={13} />
+                  按你收藏库里的常用标签与分类挑选最近 7 天的内容，同一来源最多 3 条。
+                </p>
+                <ol className="feed-list">
                 {visiblePicks.map((pick) => (
                   <FeedItemCard
                     key={pick.item.id}
                     item={pick.item}
+                    feed={feedsById.get(pick.item.feedId)}
                     source={pick.feedTitle}
                     reason={pick.reason}
                     now={now}
                     actions={actions}
                   />
                 ))}
-              </ol>
+                </ol>
+              </>
             ) : (
               <p className="provider-empty">
                 {feeds.length
@@ -500,7 +553,7 @@ export function FeedsWorkspace() {
                   </h2>
                   <ul className="feed-list">
                     {feedItems.map((item) => (
-                      <FeedItemCard key={item.id} item={item} now={now} actions={actions} />
+                      <FeedItemCard key={item.id} item={item} feed={feed} now={now} actions={actions} />
                     ))}
                   </ul>
                 </section>
@@ -579,7 +632,7 @@ export function FeedsWorkspace() {
       )}
       {/* 供屏幕阅读器了解精选数量；视觉上由列表本身表达。 */}
       <p className="sr-only" aria-live="polite">
-        {tab === "picks" && !loading ? `今日精选 ${visiblePicks.length} 条，来自 ${feedTitles.size} 个订阅源` : ""}
+        {tab === "picks" && !loading ? `今日精选 ${visiblePicks.length} 条，来自 ${new Set(visiblePicks.map((pick) => pick.item.feedId)).size} 个订阅源` : ""}
       </p>
     </main>
   );

@@ -846,7 +846,7 @@
 
 .sd-cover {
   position: relative;
-  height: clamp(200px, 30vw, 360px);
+  height: clamp(200px, 30vw, 280px);
   margin-top: 16px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -858,6 +858,16 @@
   height: 100%;
   min-height: 0;
   aspect-ratio: auto;
+}
+
+/* 详情页封面比发现页主卡矮，仓库封面的留白与名称字号随之收紧 */
+.sd-cover > .resource-cover[data-type="repo"][data-size="hero"] {
+  gap: 16px;
+  padding: clamp(20px, 3vw, 32px);
+}
+
+.sd-cover .resource-cover[data-size="hero"] .resource-cover-repo-name {
+  font-size: clamp(36px, 5vw, 56px);
 }
 
 .sd-cover-zoom {
@@ -1456,7 +1466,7 @@ a.sd-chip-outline:focus-visible {
 }
 
 .sd-skeleton-cover {
-  height: clamp(200px, 30vw, 360px);
+  height: clamp(200px, 30vw, 280px);
   border-radius: var(--radius-lg);
 }
 

@@ -52,7 +52,7 @@ import type {
 } from "@/lib/library-contract";
 import { subscribeSiteUpdated } from "@/lib/library-events";
 import { formatRelativeTime } from "@/lib/relative-time";
-import { isSafePreviewUrl, resourceKindLabel, resourceTitle } from "@/lib/resource-cover";
+import { coverModel, isSafePreviewUrl, resourceKindLabel, resourceTitle } from "@/lib/resource-cover";
 import {
   siteAnalysisProgressRows,
   type SiteAnalysisDisplayPhase,
@@ -664,6 +664,8 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
   const saved = formatRelativeTime(site.createdAt, now);
   const unopened = isUnopened(site);
   const seen = site.seenAt !== null;
+  // 封面已经画出名称（仓库）或简介钩子（要点）时，标题行与简介不再重复一遍
+  const coverType = coverModel(site, "hero").type;
   const analyzeLabel = analyzing
     ? "AI 分析中"
     : site.analysisStatus === "not_analyzed" || site.analysisStatus === "failed"
@@ -681,7 +683,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
       </nav>
 
       <div className="sd-cover">
-        <ResourceCover site={site} size="hero" />
+        <ResourceCover site={site} size="hero" hideBlurb />
         {previewAvailable && previewUrl && (
           <button
             ref={previewTriggerRef}
@@ -698,7 +700,7 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
 
       <header className="sd-heading">
         <div className="sd-heading-copy">
-          <h1 id="sd-title" className="sd-title">{title}</h1>
+          <h1 id="sd-title" className={coverType === "repo" ? "sr-only" : "sd-title"}>{title}</h1>
           <p className="sd-meta-line">
             <span>{resourceKindLabel(site)}</span>
             <span aria-hidden="true">·</span>
@@ -820,7 +822,12 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
                 disabled={analyzing}
                 aria-busy={analyzing}
                 onClick={() => void handleAnalyze(site.id)}
-                title="重新抓取公开网页，并用模型分析分类、标签、简介和详细介绍；人工内容不会被覆盖"
+                title={
+                  site.description
+                    ? "重新抓取公开网页，并用模型分析分类、标签、简介和详细介绍；人工内容不会被覆盖"
+                    : `暂无详细介绍，点击「${analyzeLabel}」让模型根据网页公开内容补全；人工内容不会被覆盖`
+                }
+                aria-label={site.description ? undefined : `${analyzeLabel}：暂无详细介绍，让模型根据网页公开内容补全`}
               >
                 {analyzing ? <Spinner size={13} /> : <WandSparkles size={13} aria-hidden="true" />}
                 {analyzeLabel}
@@ -833,17 +840,11 @@ export function SiteDetailPage({ siteId }: Readonly<SiteDetailPageProps>) {
               />
             )}
             {site.summary ? (
-              <p className="sd-summary">{site.summary}</p>
+              coverType === "article" ? null : <p className="sd-summary">{site.summary}</p>
             ) : (
               <p className="sd-desc sd-desc-empty">还没有简介。</p>
             )}
-            {site.description ? (
-              <p className="sd-desc">{site.description}</p>
-            ) : (
-              <p className="sd-desc sd-desc-empty">
-                暂无详细介绍，可以点击「{analyzeLabel}」让模型根据网页公开内容补全。
-              </p>
-            )}
+            {site.description && <p className="sd-desc">{site.description}</p>}
           </section>
 
           <TaxonomyEditor site={site} onUpdate={handleInlineUpdate} />

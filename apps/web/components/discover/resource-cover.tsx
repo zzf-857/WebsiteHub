@@ -22,6 +22,8 @@ type ResourceCoverProps = {
     "name" | "originalUrl" | "summary" | "description" | "faviconUrl" | "previewUrl" | "kind" | "meta"
   >;
   size: CoverSize;
+  /** 详情页主封面：简介只在“简介与详细介绍”卡片里写一次，封面不再画一句话介绍。 */
+  hideBlurb?: boolean;
 };
 
 type CoverStyle = CSSProperties & Record<`--${string}`, string | number>;
@@ -64,7 +66,7 @@ function RepoStats({ model }: Readonly<{ model: RepoCover }>) {
   );
 }
 
-function GeneratedCoverView({ model }: Readonly<{ model: GeneratedCover }>) {
+function GeneratedCoverView({ model, hideBlurb }: Readonly<{ model: GeneratedCover; hideBlurb?: boolean }>) {
   const { size } = model;
 
   if (model.type === "repo") {
@@ -89,7 +91,7 @@ function GeneratedCoverView({ model }: Readonly<{ model: GeneratedCover }>) {
         </span>
         <span className="resource-cover-repo-main">
           <span className="resource-cover-repo-name">{model.repo}</span>
-          {size === "hero" && model.blurb && (
+          {size === "hero" && !hideBlurb && model.blurb && (
             <span className="resource-cover-repo-blurb">{model.blurb}</span>
           )}
         </span>
@@ -130,7 +132,7 @@ function GeneratedCoverView({ model }: Readonly<{ model: GeneratedCover }>) {
   );
 }
 
-export function ResourceCover({ site, size }: Readonly<ResourceCoverProps>) {
+export function ResourceCover({ site, size, hideBlurb }: Readonly<ResourceCoverProps>) {
   const model = coverModel(site, size);
   // 记录失败的具体地址：预览图换了新地址时自动重试，而不是永远停在生成封面
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
@@ -158,5 +160,5 @@ export function ResourceCover({ site, size }: Readonly<ResourceCoverProps>) {
     );
   }
 
-  return <GeneratedCoverView model={model.type === "image" ? model.fallback : model} />;
+  return <GeneratedCoverView model={model.type === "image" ? model.fallback : model} hideBlurb={hideBlurb} />;
 }

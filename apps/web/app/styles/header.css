@@ -58,6 +58,20 @@
   display: flex;
   gap: 6px;
   font-size: 14px;
+  /* 窄屏时导航在自己的 flex 子项里横向滚动，不被右侧图标压住 */
+  min-width: 0;
+  padding-block: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.app-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.app-brand,
+.app-search-entry {
+  flex-shrink: 0;
 }
 
 .app-nav-link {

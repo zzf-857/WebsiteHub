@@ -91,7 +91,7 @@ test("the repo panel maps every GitHub field", () => {
   );
   assert.deepEqual(model, {
     stars: "5.1 万",
-    forks: "1.2k",
+    forks: "1,234",
     language: "Python",
     topics: ["agent", "browser", "automation"],
     license: "MIT",

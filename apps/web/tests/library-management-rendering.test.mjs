@@ -83,3 +83,24 @@ test("the library management mode exposes kind, state and Space filters next to 
   assert.match(hook, /\.\.\.\(siteState \? \{ state: siteState \} : \{\}\)/u);
   assert.match(hook, /subscribeSiteUpdated\(\(site\) => \{[\s\S]*?withSiteUsage\(item, site\)/u);
 });
+
+test("backfill toolbar starts collapsed and pinned chips stay compact", async () => {
+  const toolbar = await readFile(new URL("../components/home/home-metadata-backfill-toolbar.tsx", import.meta.url), "utf8");
+  assert.match(toolbar, /useState\(false\)/u);
+  assert.match(toolbar, /aria-expanded=\{expanded\}/u);
+  assert.match(toolbar, /\{expanded && \(/u);
+  const workspace = await readFile(new URL("../components/library/library-workspace.tsx", import.meta.url), "utf8");
+  assert.match(workspace, /shouldUsePinnedChips\(/u);
+  const header = await readFile(new URL("../app/styles/header.css", import.meta.url), "utf8");
+  assert.match(header, /\.app-nav \{[^}]*min-width: 0;[^}]*overflow-x: auto;[^}]*scrollbar-width: none;/u);
+});
+
+test("detail page: repo cover carries the name, summary appears once, hint lives in the analyze button", async () => {
+  const page = await read("components/library/detail/site-detail-page.tsx");
+  assert.match(page, /<ResourceCover site=\{site\} size="hero" hideBlurb \/>/u);
+  assert.match(page, /coverType === "repo" \? "sr-only" : "sd-title"/u);
+  assert.doesNotMatch(page, /sd-desc-empty">\s*暂无详细介绍/u);
+  assert.match(page, /aria-label=\{site\.description \? undefined : /u);
+  const css = await read("app/styles/site-detail.css");
+  assert.match(css, /\.sd-cover \{[^}]*height: clamp\(200px, 30vw, 280px\)/u);
+});

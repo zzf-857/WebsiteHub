@@ -46,11 +46,15 @@ test("the header and library toolbar hand off one layout id without duplicate li
     readFile(GLOBAL_SHORTCUTS, "utf8"),
   ]);
 
-  assert.match(header, /isLibrarySection \? null : \(/u);
+  // 顶栏搜索入口在收藏库页也保留；那里只聚焦页内搜索框，不再挂共享 layoutId
+  assert.doesNotMatch(header, /isLibrarySection \? null : \(/u);
   assert.doesNotMatch(header, /agent-panel|data-compact/u, "首页紧凑态随 Agent 面板一起移除");
   assert.match(header, /<motion\.button/u);
-  assert.match(header, /layoutId=\{searchTransitionActive \? LIBRARY_SEARCH_LAYOUT_ID : undefined\}/u);
-  assert.match(header, /animate: trigger === "pointer"/u);
+  assert.match(
+    header,
+    /layoutId=\{searchTransitionActive && !isLibrarySection \? LIBRARY_SEARCH_LAYOUT_ID : undefined\}/u,
+  );
+  assert.match(header, /animate: trigger === "pointer" && !isLibrarySection/u);
   assert.match(header, /event\.detail === 0 \? "keyboard" : "pointer"/u);
   // ⌘K 与 “/” 归全站快捷键分发器：键盘唤起不播放长距离转场，直接聚焦搜索框（Q46）
   assert.doesNotMatch(header, /addEventListener\("keydown", handleKeydown\)/u);

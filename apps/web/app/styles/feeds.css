@@ -1,6 +1,11 @@
 /* feeds：订阅流 /feeds（Q50）。管理模式密度（方向稿 A 的紧凑卡片），只用 globals.css 的设计令牌，
    圆角 ≤8px。分区头、按钮、输入、徽标沿用 providers.css 的 provider-*；本文件命名一律 feed(s)- 前缀。 */
 
+/* 与收藏库 / 发现页同一档容器宽度（--discover-max），不再是窄阅读列 */
+.site-main.feeds-workspace {
+  width: min(calc(100% - 48px), var(--discover-max));
+}
+
 .feeds-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -44,7 +49,8 @@
 
 .feeds-tab:focus-visible,
 .feed-action:focus-visible,
-.feed-card-title:focus-visible {
+.feed-card-title:focus-visible,
+.feed-card-meta a:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -92,6 +98,49 @@
   background: var(--surface-hover);
 }
 
+.feed-card {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+/* 来源标识：颜色由封面令牌按 --site-hue 派生，与资源封面同一套色相哈希 */
+.feed-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: oklch(var(--cover-tint-l) var(--cover-tint-c) var(--site-hue));
+  color: oklch(var(--cover-domain-l) var(--cover-domain-c) var(--site-hue));
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.feed-mark img {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.feeds-picks-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 -12px;
+  color: var(--text-subtle);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.feeds-picks-note svg {
+  flex-shrink: 0;
+}
+
 .feed-card-main,
 .feed-manage-main {
   display: flex;
@@ -101,6 +150,7 @@
 }
 
 .feed-card-title {
+  display: inline;
   color: var(--text);
   font-size: 14px;
   font-weight: 600;
@@ -112,6 +162,20 @@
 a.feed-card-title:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* 标题是链接：悬停 / 键盘聚焦时出现右上箭头 */
+.feed-card-title-arrow {
+  display: inline-block;
+  margin-left: 4px;
+  vertical-align: -2px;
+  opacity: 0;
+  transition: opacity var(--duration-hover) var(--ease-standard);
+}
+
+a.feed-card-title:hover .feed-card-title-arrow,
+a.feed-card-title:focus-visible .feed-card-title-arrow {
+  opacity: 1;
 }
 
 .feed-card[data-read="true"] .feed-card-title {
@@ -143,6 +207,10 @@ a.feed-card-title:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-subtle);
+  color: var(--text-muted);
   font-family: var(--font-mono);
 }
 
@@ -173,6 +241,7 @@ a.feed-card-title:hover {
 }
 
 .feed-action {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -208,9 +277,54 @@ a.feed-card-title:hover {
 }
 
 .feed-action-icon {
-  width: 28px;
+  width: 32px;
+  height: 32px;
   justify-content: center;
   padding: 0;
+}
+
+/* 悬停设备：操作按钮平时淡出，行悬停 / 键盘聚焦到行内时全显；触屏始终全显。永远可 Tab 到达 */
+@media (hover: hover) {
+  .feed-card .feed-card-actions {
+    opacity: 0.4;
+    transition: opacity var(--duration-hover) var(--ease-standard);
+  }
+
+  .feed-card:hover .feed-card-actions,
+  .feed-card:focus-within .feed-card-actions {
+    opacity: 1;
+  }
+}
+
+/* 可见的文字提示（图标按钮的文字名也在 aria-label 里）；放在按钮左侧，不会被列表的 overflow 裁掉 */
+.feed-action[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 6px);
+  z-index: 5;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--action);
+  color: var(--on-action);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity var(--duration-hover) var(--ease-standard);
+}
+
+.feed-action[data-tooltip]:hover::after,
+.feed-action[data-tooltip]:focus-visible::after {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .feed-action[data-tooltip]::after {
+    display: none;
+  }
 }
 
 /* ============ 全部：按订阅源分组 ============ */
@@ -302,7 +416,15 @@ a.feed-card-title:hover {
 }
 
 @media (max-width: 640px) {
-  .feed-card,
+  .feed-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .feed-card .feed-card-actions {
+    grid-column: 2;
+  }
+
   .feed-manage-row {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -311,12 +433,19 @@ a.feed-card-title:hover {
   .feed-manage-actions {
     justify-content: flex-start;
   }
+
+  .feed-card-actions .feed-action[data-tooltip]::after {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .feeds-tab,
   .feed-card,
-  .feed-action {
+  .feed-card .feed-card-actions,
+  .feed-card-title-arrow,
+  .feed-action,
+  .feed-action[data-tooltip]::after {
     transition: none;
   }
 }
