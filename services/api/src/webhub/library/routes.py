@@ -71,8 +71,8 @@ _VISIBLE_ANALYSIS_LIMIT = 8
 _MAX_ANALYSIS_BACKFILL_REQUEST = 5_000
 
 
-def _schedule_analysis(request: Request, *, user_id: str, site_id: str) -> None:
-    schedule_site_enrichment(request.app.state.database, user_id=user_id, site_id=site_id)
+async def _schedule_analysis(request: Request, *, user_id: str, site_id: str) -> None:
+    await schedule_site_enrichment(request.app.state.database, user_id=user_id, site_id=site_id)
 
 
 WriteOriginDependency = Annotated[None, Depends(require_trusted_origin)]
@@ -347,7 +347,7 @@ async def add_site(
 ) -> SiteResponse:
     created = await _call(service.create_site(session, identity.user.id, payload))
     # 脱钩执行：保存一个网站不该等在别人家的慢服务器上，更不该因为对方宕机而失败。
-    _schedule_analysis(request, user_id=identity.user.id, site_id=created.id)
+    await _schedule_analysis(request, user_id=identity.user.id, site_id=created.id)
     return created
 
 
@@ -538,7 +538,7 @@ async def edit_site(
 ) -> SiteResponse:
     updated = await _call(service.update_site(session, identity.user.id, site_id, payload))
     if "url" in payload.model_fields_set and updated.analysis_status == "not_analyzed":
-        _schedule_analysis(request, user_id=identity.user.id, site_id=updated.id)
+        await _schedule_analysis(request, user_id=identity.user.id, site_id=updated.id)
     return updated
 
 

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { SECRET_MASK, type ProviderConfig, type ProviderRegistryItem } from "../lib/provider-contract.ts";
 import { providerCreatePayload, providerUpdatePayload } from "../lib/provider-contract.ts";
@@ -56,6 +57,7 @@ function storedConfig(overrides: Partial<ProviderConfig> = {}): ProviderConfig {
     baseUrl: "https://api.deepseek.com/v1",
     modelName: "deepseek-chat",
     enabled: true,
+    streamUsage: false,
     hasSecret: true,
     secretMask: SECRET_MASK,
     version: 4,
@@ -72,6 +74,7 @@ function draft(overrides: Partial<ProviderDraft> = {}): ProviderDraft {
     baseUrl: "",
     modelName: "deepseek-chat",
     enabled: true,
+    streamUsage: false,
     ...overrides,
   };
 }
@@ -365,6 +368,7 @@ test("新建草稿默认勾选启用，并按注册表预填厂商官方地址",
     baseUrl: "",
     modelName: "",
     enabled: true,
+    streamUsage: false,
   });
   // 选了有官方地址的厂商：Base URL 和配置名都不用用户自己敲。
   assert.deepEqual(
@@ -377,6 +381,7 @@ test("新建草稿默认勾选启用，并按注册表预填厂商官方地址",
       baseUrl: "https://api.openai.com/v1",
       modelName: "",
       enabled: true,
+      streamUsage: false,
     },
   );
   // 没有官方地址的厂商（Ollama / OpenAI-compatible）仍然要用户自己填。
@@ -387,6 +392,7 @@ test("新建草稿默认勾选启用，并按注册表预填厂商官方地址",
     baseUrl: "",
     modelName: "",
     enabled: true,
+    streamUsage: false,
   });
 });
 
@@ -516,4 +522,57 @@ test("Q45：代码托管分区存在，启用时不要求模型名称，也不�
     }).secret,
     "启用前必须填写 API Key",
   );
+});
+
+
+test("兼容模型默认关闭流式用量，创建携带选择值，编辑只提交变更", () => {
+  assert.equal(createProviderDraft().streamUsage, false);
+  const config = storedConfig({ provider: "openai_compatible", streamUsage: true });
+  assert.equal(editProviderDraft(config).streamUsage, true);
+  for (const value of [true, false]) {
+    const input = buildProviderCreateInput({
+      kind: "model",
+      draft: draft({ provider: "openai_compatible", streamUsage: value }),
+      secret: "",
+    });
+    assert.equal(input.streamUsage, value);
+  }
+  assert.deepEqual(buildProviderUpdateInput({
+    config,
+    draft: { ...editProviderDraft(config), streamUsage: false },
+    secretIntent: "keep",
+    secret: "",
+  }), { expectedVersion: 4, streamUsage: false });
+  assert.equal(buildProviderUpdateInput({
+    config,
+    draft: editProviderDraft(config),
+    secretIntent: "keep",
+    secret: "",
+  }), null);
+});
+
+test("非兼容模型与兼容向量配置均不提交流式用量", () => {
+  for (const [kind, provider] of [["model", "openai"], ["embedding", "openai_compatible"]] as const) {
+    const config = storedConfig({ kind, provider });
+    assert.equal("streamUsage" in buildProviderCreateInput({
+      kind,
+      draft: draft({ provider, streamUsage: true }),
+      secret: "",
+    }), false);
+    assert.equal(buildProviderUpdateInput({
+      config,
+      draft: { ...editProviderDraft(config), streamUsage: true },
+      secretIntent: "keep",
+      secret: "",
+    }), null);
+  }
+});
+
+test("表单仅为 OpenAI 兼容模型渲染用量复选框及关联风险提示", () => {
+  const source = readFileSync(new URL("../components/settings/provider-form.tsx", import.meta.url), "utf8");
+  assert.match(source, /kind === "model" && draft.provider === "openai_compatible" && \([\s\S]*?checked=\{draft.streamUsage\}/u);
+  assert.match(source, /支持流式用量统计（stream_options.include_usage）/u);
+  assert.match(source, /aria-describedby=\{streamUsageHintId\}/u);
+  assert.match(source, /端点不支持时开启会导致对话失败/u);
+  assert.match(source, /baseUrl: nextBaseUrl,\s*streamUsage: false,/u);
 });

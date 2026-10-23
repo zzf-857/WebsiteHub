@@ -221,7 +221,7 @@ async def save_item(
     )
     if created:
         # Same background enrichment as any other save from the website.
-        schedule_site_enrichment(
+        await schedule_site_enrichment(
             request.app.state.database, user_id=identity.user.id, site_id=site_id
         )
     return FeedSaveResponse(item=item_response(item), site_id=site_id, created=created)

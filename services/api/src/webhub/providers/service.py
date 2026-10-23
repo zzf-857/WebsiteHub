@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Never, cast
 
@@ -42,6 +43,7 @@ from webhub.providers.security import (
     decrypt_secret,
     encrypt_secret,
 )
+from webhub.providers.stream_usage import provider_config_values, stream_usage_enabled
 from webhub.providers.targets import (
     ProviderTargetError,
     normalize_base_url,
@@ -194,6 +196,9 @@ def _response(config: ProviderConfig) -> ProviderResponse:
         base_url=config.base_url,
         model_name=config.model_name,
         enabled=config.enabled,
+        stream_usage=stream_usage_enabled(
+            config.provider, provider_config_values(config.config_json)
+        ),
         has_secret=has_secret,
         secret_mask=SECRET_MASK if has_secret else None,
         version=config.version,
@@ -273,12 +278,20 @@ async def get_config(
     return _response(await _owned_config(session, user_id, config_id))
 
 
+def _validate_stream_usage(kind: str, provider: str, value: bool | None) -> None:
+    if value is not None and (kind != "model" or provider != "openai_compatible"):
+        raise ProviderValidationError(
+            "该服务商不支持此选项", code="stream_usage_not_applicable"
+        )
+
+
 async def create_config(
     session: AsyncSession,
     user_id: str,
     settings: Settings,
     payload: ProviderCreateRequest,
 ) -> ProviderResponse:
+    _validate_stream_usage(payload.kind, payload.provider, payload.stream_usage)
     prepared = _prepare(
         kind=payload.kind,
         provider=payload.provider,
@@ -318,6 +331,9 @@ async def create_config(
         secret_nonce=nonce,
         key_version=key_version,
         enabled=payload.enabled,
+        config_json=json.dumps(
+            {"stream_usage": payload.stream_usage} if payload.stream_usage is not None else {}
+        ),
         version=1,
         created_at=now,
         updated_at=now,
@@ -366,6 +382,12 @@ async def update_config(
         raise ProviderValidationError("Provider 更新至少需要一个字段")
 
     kind = cast(ProviderKind, config.kind)
+    _validate_stream_usage(kind, config.provider, payload.stream_usage)
+    config_json = config.config_json
+    if payload.stream_usage is not None:
+        config_values = provider_config_values(config_json)
+        config_values["stream_usage"] = payload.stream_usage
+        config_json = json.dumps(config_values)
     display_name = config.display_name
     if "display_name" in fields:
         if payload.display_name is None:
@@ -457,6 +479,7 @@ async def update_config(
                 secret_nonce=nonce,
                 key_version=key_version,
                 enabled=enabled,
+                config_json=config_json,
                 version=ProviderConfig.version + 1,
                 updated_at=now,
             )

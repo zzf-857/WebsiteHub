@@ -107,6 +107,8 @@ export function ProviderForm({
   const modelNameId = useId();
   const secretId = useId();
   const enabledId = useId();
+  const streamUsageId = useId();
+  const streamUsageHintId = useId();
 
   const definition = useMemo(
     () => registry.find((item) => item.provider === draft.provider) ?? null,
@@ -163,6 +165,7 @@ export function ProviderForm({
         // 首次选择时用厂商名做配置名的默认值，省掉一次输入；已经改过就不覆盖。
         displayName: draft.displayName.trim() ? draft.displayName : item.label,
         baseUrl: nextBaseUrl,
+        streamUsage: false,
       },
       "provider",
     );
@@ -528,6 +531,32 @@ export function ProviderForm({
             </a>
           )}
           {errors.secret && <p className="provider-form-error" role="alert">{errors.secret}</p>}
+        </div>
+      )}
+
+      {kind === "model" && draft.provider === "openai_compatible" && (
+        <div className="provider-form-field provider-form-field--full">
+          <label
+            className="provider-form-hint provider-checkbox"
+            htmlFor={streamUsageId}
+            style={{ minHeight: "var(--control-min-target)", alignItems: "center" }}
+          >
+            <input
+              id={streamUsageId}
+              type="checkbox"
+              checked={draft.streamUsage}
+              disabled={submitting}
+              aria-describedby={streamUsageHintId}
+              onChange={(event) => patchDraft({ streamUsage: event.target.checked })}
+            />
+            <span className="provider-checkbox-control" aria-hidden="true">
+              <Check />
+            </span>
+            <span>支持流式用量统计（stream_options.include_usage）</span>
+          </label>
+          <p className="provider-form-hint" id={streamUsageHintId}>
+            端点不支持时开启会导致对话失败
+          </p>
         </div>
       )}
 

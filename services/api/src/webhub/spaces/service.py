@@ -13,6 +13,7 @@ from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from webhub.db.locking import reserve_sites
 from webhub.db.models import (
     Site,
     Space,
@@ -424,6 +425,7 @@ async def add_member(
     payload: SpaceMemberAddRequest,
 ) -> SpaceMemberAddResponse:
     space = await _owned_space(session, user_id, space_id)
+    await reserve_sites(session, user_id, [payload.site_id])
     site = await _owned_site(session, user_id, payload.site_id)
     existing = await session.scalar(
         select(SpaceMember.site_id).where(
@@ -720,14 +722,10 @@ async def add_members_batch(
     user_id: str,
     payload: SpaceMemberBatchRequest,
 ) -> SpaceMemberBatchResponse:
-    """Create/use one Space and add all requested sites in one transaction.
-
-    Both modes bind the normalized payload and immutable result to a durable
-    operation receipt. Create additionally derives the Space id from the
-    account and operation id, so an empty create is safe to replay too.
-    """
+    """Atomically add sites, binding immutable receipts to account + operation ids."""
 
     site_ids = list(payload.site_ids)
+    await reserve_sites(session, user_id, site_ids)
     operation_id = payload.operation_id.strip()
     space_name, normalized_name = _space_name(payload.target.space_name)
     payload_hash = _space_batch_payload_hash(payload, normalized_name)

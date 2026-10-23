@@ -277,3 +277,37 @@ test("Q45：注册表与配置接受代码托管（GitHub 令牌）类型", () =
     "code_host",
   );
 });
+
+
+test("流式用量契约兼容旧响应并严格拒绝非布尔值", () => {
+  assert.equal(normalizeProviderConfig(sampleConfigResponse()).streamUsage, false);
+  for (const value of [true, false]) {
+    assert.equal(normalizeProviderConfig(sampleConfigResponse({ stream_usage: value })).streamUsage, value);
+  }
+  for (const value of [null, 1, "true", {}, []]) {
+    assert.throws(
+      () => normalizeProviderConfig(sampleConfigResponse({ stream_usage: value })),
+      ProviderContractError,
+    );
+  }
+});
+
+test("创建和单字段更新都序列化流式用量，未提供时省略", () => {
+  const base = { kind: "model" as const, provider: "openai_compatible", displayName: "自建网关" };
+  assert.equal("stream_usage" in providerCreatePayload(base), false);
+  for (const value of [true, false]) {
+    assert.equal(providerCreatePayload({ ...base, streamUsage: value }).stream_usage, value);
+    assert.deepEqual(providerUpdatePayload({ expectedVersion: 2, streamUsage: value }), {
+      expected_version: 2,
+      stream_usage: value,
+    });
+  }
+  assert.throws(
+    () => providerCreatePayload({ ...base, streamUsage: "true" as unknown as boolean }),
+    ProviderContractError,
+  );
+  assert.throws(
+    () => providerUpdatePayload({ expectedVersion: 2, streamUsage: 1 as unknown as boolean }),
+    ProviderContractError,
+  );
+});

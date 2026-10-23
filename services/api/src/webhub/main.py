@@ -14,6 +14,7 @@ from webhub.bookmarks.admission import BookmarkUploadAdmissionManager
 from webhub.config import Settings, get_settings
 from webhub.db.database import Database
 from webhub.feeds.scheduler import FeedPoller
+from webhub.ingestion import intents
 from webhub.ingestion import worker as ingestion_worker
 from webhub.ingestion.github import GitHubCredential, GitHubRepositoryEnricher
 from webhub.media.proxy import CACHE_DIRECTORY_NAME, MediaProxy
@@ -54,11 +55,14 @@ def create_app(
         # Resume its active leases before serving requests so a browser tab is
         # not required to recover work after an API process restart.
         await ingestion_worker.resume_metadata_backfills(selected_database)
+        await intents.tick(selected_database)
+        intent_poller = intents.IntentPoller(selected_database)
         # RSS / podcast polling (Q50). Tests drive ``feeds.scheduler.tick``
         # directly with a fake fetcher instead of a real background loop.
         feed_poller = FeedPoller(selected_database)
         if selected_settings.environment != "test":
             feed_poller.start()
+            intent_poller.start()
         try:
             # The MCP transport's session manager lives exactly as long as the
             # app; one instance per create_app() because it can run only once.
@@ -67,6 +71,7 @@ def create_app(
         finally:
             try:
                 await feed_poller.stop()
+                await intent_poller.stop()
                 await ingestion_worker.shutdown(selected_database)
             finally:
                 if owns_database:

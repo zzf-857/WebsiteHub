@@ -6,12 +6,20 @@ Agent save is enriched exactly like a save from the website.
 
 from __future__ import annotations
 
+import logging
+
 from webhub.db.database import Database
+from webhub.ingestion import intents
 from webhub.ingestion import worker as ingestion_worker
 from webhub.ingestion.enrichment import AnalysisIntent
 
 
-def schedule_site_enrichment(database: Database, *, user_id: str, site_id: str) -> None:
+async def schedule_site_enrichment(database: Database, *, user_id: str, site_id: str) -> None:
+    try:
+        await intents.record_site_intent(database, user_id=user_id, site_id=site_id)
+    except Exception:
+        # This best-effort side effect must never undo an already saved collection.
+        logging.getLogger(__name__).error("site analysis intent persistence failed")
     scheduled = ingestion_worker.schedule_analysis(
         database,
         user_id=str(user_id),

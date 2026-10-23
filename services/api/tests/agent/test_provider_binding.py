@@ -289,3 +289,49 @@ def test_chat_model_retry_count_defaults_to_one_and_allows_bulk_override(
     binding_module.build_chat_model(binding, max_retries=0)
 
     assert [item["max_retries"] for item in captured] == [1, 0]
+
+
+@pytest.mark.parametrize(
+    ("provider", "configured", "expected"),
+    [
+        ("openai_compatible", True, True),
+        ("openai_compatible", False, False),
+        ("openai_compatible", None, False),
+        ("openai", None, True),
+        ("deepseek", None, True),
+    ],
+)
+def test_resolved_binding_passes_stream_usage_to_chat_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    configured: bool | None,
+    expected: bool,
+) -> None:
+    from webhub.agent import openai_compatible
+
+    async def allow_target(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    captured: list[dict[str, object]] = []
+
+    class FakeChatModel:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+
+    monkeypatch.setattr(binding_module, "validate_connection_target", allow_target)
+    monkeypatch.setattr(openai_compatible, "ReasoningCompatibleChatOpenAI", FakeChatModel)
+    with _client(tmp_path) as (client, settings):
+        payload: dict[str, object] = {
+            "kind": "model", "provider": provider, "display_name": "流式用量",
+            "base_url": "https://llm.example.com/v1", "model_name": "test-model",
+            "secret": {"action": "write", "value": "test-only-key"}, "enabled": True,
+        }
+        if configured is not None:
+            payload["stream_usage"] = configured
+        created = client.post("/api/providers", json=payload, headers=ORIGIN)
+        assert created.status_code == 201, created.text
+    binding = _resolve(settings)
+    assert binding.stream_usage is expected
+    binding_module.build_chat_model(binding)
+    assert captured[0]["stream_usage"] is expected
