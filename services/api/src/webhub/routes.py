@@ -9,6 +9,7 @@ from webhub.config import Settings
 from webhub.feeds.routes import router as feeds_router
 from webhub.library.engagement_routes import router as library_engagement_router
 from webhub.library.routes import router as library_router
+from webhub.media.routes import router as media_router
 from webhub.providers.routes import router as providers_router
 from webhub.schemas import HealthResponse, ReadinessResponse
 from webhub.search.routes import router as search_router
@@ -23,6 +24,7 @@ router.include_router(bookmarks_router, prefix="")
 router.include_router(feeds_router, prefix="")
 router.include_router(library_router, prefix="")
 router.include_router(library_engagement_router, prefix="")
+router.include_router(media_router, prefix="")
 router.include_router(providers_router, prefix="")
 router.include_router(search_router, prefix="")
 router.include_router(spaces_router, prefix="")

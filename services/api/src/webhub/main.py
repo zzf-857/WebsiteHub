@@ -16,6 +16,7 @@ from webhub.db.database import Database
 from webhub.feeds.scheduler import FeedPoller
 from webhub.ingestion import worker as ingestion_worker
 from webhub.ingestion.github import GitHubCredential, GitHubRepositoryEnricher
+from webhub.media.proxy import CACHE_DIRECTORY_NAME, MediaProxy
 from webhub.routes import router
 
 
@@ -96,6 +97,11 @@ def create_app(
         account_quota_bytes=selected_settings.bookmark_upload_account_quota_bytes,
         minimum_free_bytes=selected_settings.bookmark_upload_minimum_free_bytes,
         disk_check_interval_bytes=(selected_settings.bookmark_upload_disk_check_interval_bytes),
+    )
+    # Q56: favicons / previews / feed thumbnails are fetched server-side and
+    # cached on disk; the browser never loads a third-party image directly.
+    application.state.media_proxy = MediaProxy(
+        selected_settings.data_directory / CACHE_DIRECTORY_NAME
     )
     application.include_router(router)
     # External Agents (Hermes, grokbot, …): bearer-token MCP at /api/mcp.

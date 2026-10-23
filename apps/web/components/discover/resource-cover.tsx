@@ -5,6 +5,7 @@ import { useState, type CSSProperties } from "react";
 
 import { SiteFavicon } from "@/components/site-favicon";
 import type { LibrarySite } from "@/lib/library-contract";
+import { proxiedImageUrl } from "@/lib/media-proxy";
 import {
   coverModel,
   siteHue,
@@ -136,8 +137,10 @@ export function ResourceCover({ site, size, hideBlurb }: Readonly<ResourceCoverP
   const model = coverModel(site, size);
   // 记录失败的具体地址：预览图换了新地址时自动重试，而不是永远停在生成封面
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  // 预览图经同源图片代理（Q56）加载；无法代理的地址直接用生成封面
+  const imageSrc = model.type === "image" ? proxiedImageUrl(model.src) : null;
 
-  if (model.type === "image" && model.src !== failedSrc) {
+  if (model.type === "image" && imageSrc && model.src !== failedSrc) {
     return (
       <span
         className="resource-cover"
@@ -148,7 +151,7 @@ export function ResourceCover({ site, size, hideBlurb }: Readonly<ResourceCoverP
         {/* 预览图来自第三方网页，域名不可枚举，无法进 next/image 的静态白名单 */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={model.src}
+          src={imageSrc}
           alt=""
           // 主卡在首屏，立即加载；卡片与缩略图交给浏览器按需加载
           loading={size === "hero" ? "eager" : "lazy"}
