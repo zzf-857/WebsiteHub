@@ -2225,7 +2225,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q51 · 订阅流补齐：无日期条目不复活、缩略图
 
-状态: 待做
+状态: 进行中（因额度中断，未合并；q51-work 分支未提交）
 
 - 清理后保留已见 guid 的轻量墓碑（或等价机制），使无发布时间、仍留在源里的条目不会在 30 天后重新出现。
 - 解析 `media:thumbnail` / `media:content`（图片）/ `itunes:image` / 图片型 enclosure，存 `image_url`（安全 http(s)），
@@ -2233,7 +2233,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q52 · 收藏库与详情补齐：仓库面板提示、重温状态同步、分类图标选择器、标签合并
 
-状态: 待做
+状态: 已完成（合并 4df8b27）
 
 - 详情页仓库面板：`meta.github.not_found` 显示“仓库不存在或为私有”，`rate_limited_at` 且无数据时显示“GitHub 限流，稍后自动重试”。
 - 发现页：从画廊卡片打开 / 标记已看的条目若在今日重温队列中，主卡与缩略图即时同步（移出或改状态）；“换一批”后撤销仍能恢复该项。
@@ -2242,7 +2242,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q53 · 数据导出与自有备份导入（PRD P0）
 
-状态: 待做
+状态: 进行中（因额度中断，未合并）
 
 - 设置页 `/settings/data`：导出当前账号为版本化 JSON（收藏含类型/状态/元数据、分类、标签、Space 与成员顺序、订阅源；
   不含密钥、会话、Agent 令牌明文、书签原文件），可下载。
@@ -2251,7 +2251,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q54 · 后端稳健性补齐
 
-状态: 待做
+状态: 进行中（因额度中断，未合并）
 
 - 新站 LLM 分析意图持久化：并入持久 run 或独立持久队列，进程重启 / 队列满后可恢复，保留现有并发与熔断。
 - 删除与 Space 新增成员并发窗口：删除前先锁定所选 Site 行（SQLite 兼容的条件 UPDATE 取写锁），补并发回归。
@@ -2260,14 +2260,14 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q55 · 书签来源台账（PRD P0）
 
-状态: 待做
+状态: 已完成（合并 aed8c43）
 
 确认导入时原子写入源快照、目录树、occurrence 与 `site_import_origins`（含合并到已有 Site 与跳过项），覆盖重复导入幂等与账号隔离；
 详情页显示“来自书签：<目录路径>”。
 
 ## Q56 · 图片代理与缓存
 
-状态: 待做
+状态: 已完成（合并 cd0d61e）
 
 账号鉴权的 `/api/media/proxy?url=…`：复用安全出站（逐跳 SSRF、DNS 固定）、只接受图片 MIME 且校验魔数、大小上限、SVG 严格策略，
 磁盘缓存（按 URL 哈希、过期与失败冷却），`SiteFavicon`、封面预览图、订阅缩略图统一走代理；外部图片不再由浏览器直连。
