@@ -1,6 +1,7 @@
 // 订阅流（Q50）的前端契约：把 /api/feeds 的响应规范化成页面直接可用的形状，
 // 并提供纯函数（时长、错误文案、按来源分组、安全链接），便于 Node 测试覆盖。
 
+import { createContractGuards } from "./contract-guards.ts";
 import { parseServerTime } from "./relative-time.ts";
 
 export type FeedKind = "rss" | "podcast";
@@ -11,6 +12,7 @@ export type Feed = {
   title: string;
   kind: FeedKind;
   siteUrl: string | null;
+  imageUrl: string | null;
   enabled: boolean;
   lastFetchedAt: string | null;
   nextFetchAt: string | null;
@@ -28,6 +30,7 @@ export type FeedItem = {
   author: string | null;
   publishedAt: string | null;
   audioUrl: string | null;
+  imageUrl: string | null;
   durationSeconds: number | null;
   fetchedAt: string;
   read: boolean;
@@ -51,6 +54,8 @@ export class FeedsContractError extends Error {
     this.name = "FeedsContractError";
   }
 }
+
+const { nullableText } = createContractGuards((message) => new FeedsContractError(message));
 
 function fail(path: string, expected: string): never {
   throw new FeedsContractError(`订阅接口返回格式异常：${path} 应为${expected}`);
@@ -111,6 +116,7 @@ export function normalizeFeed(value: unknown, path = "feed"): Feed {
     title: text(raw.title, `${path}.title`),
     kind: kind(raw.kind, `${path}.kind`),
     siteUrl: safeHref(optionalText(raw.site_url, `${path}.site_url`)),
+    imageUrl: safeHref(nullableText(raw.image_url, `${path}.image_url`)),
     enabled: bool(raw.enabled, `${path}.enabled`),
     lastFetchedAt: optionalText(raw.last_fetched_at, `${path}.last_fetched_at`),
     nextFetchAt: optionalText(raw.next_fetch_at, `${path}.next_fetch_at`),
@@ -132,6 +138,7 @@ export function normalizeFeedItem(value: unknown, path = "item"): FeedItem {
     author: optionalText(raw.author, `${path}.author`),
     publishedAt: optionalText(raw.published_at, `${path}.published_at`),
     audioUrl: safeHref(optionalText(raw.audio_url, `${path}.audio_url`)),
+    imageUrl: safeHref(nullableText(raw.image_url, `${path}.image_url`)),
     durationSeconds: duration === null || duration === undefined
       ? null
       : count(duration, `${path}.duration_seconds`),

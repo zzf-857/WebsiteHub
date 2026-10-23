@@ -103,6 +103,19 @@
   align-items: center;
 }
 
+.feed-card[data-has-image="true"] {
+  grid-template-columns: 36px minmax(0, 1fr) 96px auto;
+}
+
+.feeds-item-thumbnail {
+  display: block;
+  width: 96px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
 /* 来源标识：颜色由封面令牌按 --site-hue 派生，与资源封面同一套色相哈希 */
 .feed-mark {
   display: grid;
@@ -125,6 +138,12 @@
   width: 20px;
   height: 20px;
   object-fit: contain;
+}
+
+.feed-mark img.feeds-source-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .feeds-picks-note {
@@ -421,8 +440,21 @@ a.feed-card-title:focus-visible .feed-card-title-arrow {
     align-items: start;
   }
 
+  .feed-card[data-has-image="true"] {
+    grid-template-columns: 36px minmax(0, 1fr) 96px;
+  }
+
   .feed-card .feed-card-actions {
-    grid-column: 2;
+    grid-column: 2 / -1;
+  }
+
+  .feeds-tab,
+  .feed-card-actions .feed-action-icon {
+    min-height: 40px;
+  }
+
+  .feed-card-actions .feed-action-icon {
+    min-width: 40px;
   }
 
   .feed-manage-row {
@@ -436,6 +468,17 @@ a.feed-card-title:focus-visible .feed-card-title-arrow {
 
   .feed-card-actions .feed-action[data-tooltip]::after {
     display: none;
+  }
+}
+
+@media (width < 600px) {
+  .feed-card[data-has-image="true"] {
+    grid-template-columns: 36px minmax(0, 1fr) 72px;
+  }
+
+  .feeds-item-thumbnail {
+    width: 72px;
+    height: 48px;
   }
 }
 

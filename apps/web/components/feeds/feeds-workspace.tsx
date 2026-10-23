@@ -2,9 +2,6 @@
 
 import {
   AlertTriangle,
-  ArrowUpRight,
-  BookmarkCheck,
-  BookmarkPlus,
   Headphones,
   Info,
   List,
@@ -16,11 +13,10 @@ import {
   Settings2,
   Sparkles,
   Trash2,
-  X,
 } from "lucide-react";
-import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
+import { FeedItemRow, type FeedItemActions } from "@/components/feeds/feed-item-row";
 import { Spinner } from "@/components/react-bits/spinner";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -37,15 +33,12 @@ import {
 import {
   feedErrorLabel,
   feedKindLabel,
-  formatDuration,
   groupItemsByFeed,
   hostLabel,
-  itemMoment,
   type Feed,
   type FeedItem,
   type FeedPick,
 } from "@/lib/feeds-contract";
-import { feedMark } from "@/lib/feeds-mark";
 import { siteDetailHref } from "@/lib/quick-add";
 import { formatRelativeTime } from "@/lib/relative-time";
 
@@ -59,140 +52,6 @@ const TABS: ReadonlyArray<{ value: Tab; label: string; icon: typeof Rss }> = [
 
 function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
-}
-
-type ItemActions = {
-  open: (item: FeedItem) => void;
-  save: (item: FeedItem) => void;
-  dismiss: (item: FeedItem) => void;
-  saving: ReadonlySet<string>;
-};
-
-/** 条目左侧的来源标识：播客是耳机块；其余优先站点图标，没有或加载失败时退回按域名着色的字母块。 */
-function FeedSourceMark({ feed, title, podcast }: { feed?: Feed; title: string; podcast: boolean }) {
-  const mark = feedMark(feed, title);
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  const favicon = !podcast && mark.faviconUrl && mark.faviconUrl !== failedSrc ? mark.faviconUrl : null;
-  return (
-    <span
-      className="feed-mark"
-      data-kind={podcast ? "podcast" : "rss"}
-      style={{ "--site-hue": mark.hue } as CSSProperties}
-      aria-hidden="true"
-    >
-      {podcast ? (
-        <Headphones size={18} />
-      ) : favicon ? (
-        // 站点自己的 favicon，域名不可枚举，无法进 next/image 的静态白名单
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={favicon}
-          alt=""
-          width={20}
-          height={20}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          onError={() => setFailedSrc(favicon)}
-        />
-      ) : (
-        mark.letter
-      )}
-    </span>
-  );
-}
-
-function FeedItemCard({
-  item,
-  feed,
-  source,
-  reason,
-  now,
-  actions,
-}: {
-  item: FeedItem;
-  feed?: Feed;
-  source?: string;
-  reason?: string;
-  now: number;
-  actions: ItemActions;
-}) {
-  const duration = formatDuration(item.durationSeconds);
-  const moment = formatRelativeTime(itemMoment(item), now);
-  const saving = actions.saving.has(item.id);
-  const podcast = feed ? feed.kind === "podcast" : Boolean(item.audioUrl);
-  return (
-    <li className="feed-card" data-read={item.read ? "true" : undefined}>
-      <FeedSourceMark feed={feed} title={source ?? feed?.title ?? item.title} podcast={podcast} />
-      <div className="feed-card-main">
-        {item.url ? (
-          <a
-            className="feed-card-title"
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => actions.open(item)}
-          >
-            <span>{item.title}</span>
-            <ArrowUpRight className="feed-card-title-arrow" aria-hidden="true" size={14} />
-            <span className="sr-only">（在新标签页打开）</span>
-          </a>
-        ) : (
-          <span className="feed-card-title">{item.title}</span>
-        )}
-        <p className="feed-card-meta">
-          {source && <span className="feed-card-source">{source}</span>}
-          {moment && <span>{moment}</span>}
-          {item.author && <span>{item.author}</span>}
-          {duration && (
-            <span className="feed-card-duration">
-              <Headphones aria-hidden="true" size={12} />
-              {duration}
-            </span>
-          )}
-          {item.audioUrl && (
-            <a href={item.audioUrl} target="_blank" rel="noopener noreferrer">
-              音频
-            </a>
-          )}
-        </p>
-        {item.summary && <p className="feed-card-summary">{item.summary}</p>}
-        {reason && <p className="feed-card-reason">{reason}</p>}
-      </div>
-      <div className="feed-card-actions">
-        {item.savedSiteId ? (
-          <Link
-            className="feed-action feed-action-icon"
-            data-tone="saved"
-            data-tooltip="已收藏，查看详情"
-            aria-label={`已收藏「${item.title}」，查看详情`}
-            href={siteDetailHref(item.savedSiteId)}
-          >
-            <BookmarkCheck aria-hidden="true" size={16} />
-          </Link>
-        ) : (
-          <button
-            className="feed-action feed-action-icon"
-            type="button"
-            disabled={saving || !item.url}
-            onClick={() => actions.save(item)}
-            data-tooltip={item.url ? "收进收藏库" : "这个条目没有链接"}
-            aria-label={item.url ? `收进收藏库：${item.title}` : "这个条目没有链接，无法收藏"}
-          >
-            {saving ? <Spinner size={14} /> : <BookmarkPlus aria-hidden="true" size={16} />}
-          </button>
-        )}
-        <button
-          className="feed-action feed-action-icon"
-          type="button"
-          aria-label={`忽略「${item.title}」`}
-          data-tooltip="忽略"
-          onClick={() => actions.dismiss(item)}
-        >
-          <X aria-hidden="true" size={16} />
-        </button>
-      </div>
-    </li>
-  );
 }
 
 function FeedManageRow({
@@ -417,7 +276,7 @@ export function FeedsWorkspace() {
     [patchItem, toast],
   );
 
-  const actions: ItemActions = { open, save, dismiss, saving };
+  const actions: FeedItemActions = { open, save, dismiss, saving };
 
   const withFeedBusy = async (feedId: string, run: () => Promise<void>) => {
     setBusyFeeds((current) => new Set(current).add(feedId));
@@ -517,7 +376,7 @@ export function FeedsWorkspace() {
                 </p>
                 <ol className="feed-list">
                 {visiblePicks.map((pick) => (
-                  <FeedItemCard
+                  <FeedItemRow
                     key={pick.item.id}
                     item={pick.item}
                     feed={feedsById.get(pick.item.feedId)}
@@ -553,7 +412,7 @@ export function FeedsWorkspace() {
                   </h2>
                   <ul className="feed-list">
                     {feedItems.map((item) => (
-                      <FeedItemCard key={item.id} item={item} feed={feed} now={now} actions={actions} />
+                      <FeedItemRow key={item.id} item={item} feed={feed} now={now} actions={actions} />
                     ))}
                   </ul>
                 </section>

@@ -105,3 +105,24 @@ test("全部视图按订阅源分组、组内按时间倒序、跳过已忽略�
   assert.deepEqual(groups.map((group) => group.feed.id), ["f1", "f3"]);
   assert.deepEqual(groups[0].items.map((item) => item.id), ["new", "old"]);
 });
+
+
+test("订阅源与条目接受 image_url，并兼容旧响应缺失或空图片", () => {
+  for (const [normalize, value] of [
+    [normalizeFeed, FEED],
+    [normalizeFeedItem, ITEM],
+  ] as const) {
+    assert.equal(normalize({ ...value, image_url: "https://cdn.example/cover.jpg" }).imageUrl,
+      "https://cdn.example/cover.jpg");
+    assert.equal(normalize(value).imageUrl, null);
+    assert.equal(normalize({ ...value, image_url: null }).imageUrl, null);
+    assert.equal(normalize({ ...value, image_url: "javascript:alert(1)" }).imageUrl, null);
+  }
+});
+
+test("订阅源与条目拒绝错误类型的 image_url", () => {
+  for (const value of [42, true, [], {}]) {
+    assert.throws(() => normalizeFeed({ ...FEED, image_url: value }), FeedsContractError);
+    assert.throws(() => normalizeFeedItem({ ...ITEM, image_url: value }), FeedsContractError);
+  }
+});
