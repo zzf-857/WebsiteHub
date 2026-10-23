@@ -2229,7 +2229,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q51 · 订阅流补齐：无日期条目不复活、缩略图
 
-状态: 代码验收及集成完成，合并门禁通过，待用户统一验收（工作分支提交 1c79dd4、6ed4500）
+状态: 已完成（总负责人验收通过 2026-10-23；工作分支提交 1c79dd4、6ed4500；小问题并入 Q58）
 
 规格：`docs/architecture/specs/Q51-feeds-completion.md`
 
@@ -2248,7 +2248,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q53 · 数据导出与自有备份导入（PRD P0）
 
-状态: 代码验收及集成完成，合并门禁通过，待用户统一验收（工作分支提交 069edff、4a84fa7）
+状态: 有条件通过（总负责人验收 2026-10-23；工作分支提交 069edff、4a84fa7；订阅上限与暂存清理两项应修复并入 Q58）
 
 规格：`docs/architecture/specs/Q53-data-portability.md`
 
@@ -2259,7 +2259,7 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 ## Q54 · 后端稳健性补齐
 
-状态: 代码验收及集成完成，合并门禁通过，待用户统一验收（工作分支提交 d08a432、5cf56b9、03b1a91、955f1a6）
+状态: 已完成（总负责人验收通过 2026-10-23；工作分支提交 d08a432、5cf56b9、03b1a91、955f1a6；小问题并入 Q58）
 
 规格：`docs/architecture/specs/Q54-backend-robustness.md`
 
@@ -2281,6 +2281,15 @@ B. **全部收藏**（`fetchLibraryOverview()` 取计数，`listLibrarySites({ki
 
 账号鉴权的 `/api/media/proxy?url=…`：复用安全出站（逐跳 SSRF、DNS 固定）、只接受图片 MIME 且校验魔数、大小上限、SVG 严格策略，
 磁盘缓存（按 URL 哈希、过期与失败冷却），`SiteFavicon`、封面预览图、订阅缩略图统一走代理；外部图片不再由浏览器直连。
+
+## Q58 · Q51 / Q53 / Q54 验收跟进项
+
+状态: 待做
+
+规格：`docs/architecture/specs/Q58-acceptance-followups.md`
+
+恢复订阅遵守 100 个上限、过期备份暂存全局清理与每账号上限、`import_failed` 文案、`stream_usage: null` 不递增版本、
+poller 关闭顺序、订阅图片取第一个安全 `<img>` 等收尾。先于 Q57 完成。
 
 ## Q57 · 端到端自查与迭代修复
 
@@ -2458,7 +2467,7 @@ cd apps/web && npx tsc --noEmit && npx eslint . && node --test && npx next build
 cd services/api && uv run pytest -q && uv run ruff check .
 ```
 
-当前证据基线（2026-10-23 · Q51 / Q53 / Q54 合并后）：后端完整 pytest **1173 passed / 2 skipped**、Ruff 通过；前端 Node 测试
+当前证据基线（2026-10-23 · Q51 / Q53 / Q54 合并后，总负责人复跑一致）：后端完整 pytest **1173 passed / 2 skipped**、Ruff 通过；前端 Node 测试
 **446 项（445 通过、1 跳过、0 失败）**、ESLint、TypeScript 与 Next.js 生产构建通过。跳过仍为缺少私有书签样本的既有项，没有新增跳过。
 注意 `pyproject` 已设 `addopts = "-q"`，
 门禁再加 `-q` 会隐藏汇总行，需要计数时去掉 `-q` 运行。本轮新增功能必须带测试，已确认的基线只能涨不能降。
