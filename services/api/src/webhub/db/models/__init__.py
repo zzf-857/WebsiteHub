@@ -67,6 +67,7 @@ from webhub.db.models.metadata_backfill import (
     SiteMetadataBackfillItem,
     SiteMetadataBackfillRun,
 )
+from webhub.db.models.portability import PortabilityImport
 from webhub.db.models.site_metadata_preferences import SiteMetadataPreference
 from webhub.db.models.site_similarity import (
     SiteSimilarityDecision,
@@ -111,6 +112,7 @@ __all__ = [
     "DEFAULT_CATEGORY_NAME",
     "LoginSession",
     "ProviderConfig",
+    "PortabilityImport",
     "SITE_CONTENT_SOURCES",
     "Site",
     "SiteContent",
