@@ -99,6 +99,9 @@ test("the hero opens the original site synchronously and offers undo for reversi
   assert.match(hero, /<Sparkles aria-hidden="true" \/>/u);
   assert.match(hero, /为什么推荐：\{reasonDetail\}/u);
   assert.doesNotMatch(hero, /\{active\.reason\}/u);
+  // Q52：画廊的操作经广播进 reducer 同步队列；失败回滚后仍重新提为主卡
+  assert.match(hero, /subscribeSiteUpdated\(\(site\) => dispatch\(\{ type: "update", site \}\)\)/u);
+  assert.match(hero, /dispatch\(\{ type: "restore", id: entry\.site\.id \}\);\n\s+dispatch\(\{ type: "select", id: entry\.site\.id \}\);/u);
 });
 
 test("resource cards keep quick actions outside the detail link", async () => {

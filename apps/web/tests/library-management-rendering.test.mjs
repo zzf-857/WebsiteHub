@@ -60,6 +60,13 @@ test("the detail page keeps destructive actions behind the more menu and a confi
   assert.match(detail, /<RelatedSitesCard/u);
 });
 
+test("the repo panel shows its notice instead of the stats grid (Q52)", async () => {
+  const panel = await read("components/library/detail/repo-panel.tsx");
+  assert.match(panel, /model\.notice \? \(/u);
+  assert.match(panel, /<p className="sd-repo-notice" data-notice=\{model\.notice\.kind\}>/u);
+  assert.match(panel, /\{model\.notice\.text\}/u);
+});
+
 test("the library management mode exposes kind, state and Space filters next to the existing tools", async () => {
   const [workspace, hook] = await Promise.all([
     read("components/library/library-workspace.tsx"),

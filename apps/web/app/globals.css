@@ -2426,6 +2426,94 @@ textarea:focus-visible {
   gap: 6px;
 }
 
+/* Q52 分类图标选择器 */
+.taxonomy-row .taxonomy-name {
+  flex: 1 1 auto;
+}
+
+.taxonomy-row .taxonomy-icon-trigger {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.taxonomy-icon-trigger[aria-expanded="true"] {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.taxonomy-icon-trigger svg,
+.taxonomy-icon-option svg {
+  width: 16px;
+  height: 16px;
+}
+
+.taxonomy-icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+}
+
+.taxonomy-icon-option {
+  display: inline-flex;
+  min-width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.taxonomy-icon-option:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.taxonomy-icon-option[data-active="true"] {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: var(--accent-mid);
+}
+
+.taxonomy-icon-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Q52 标签合并 */
+.taxonomy-merge-panel {
+  background: var(--surface-subtle);
+  border-color: var(--line);
+}
+
+.taxonomy-merge-body {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.taxonomy-merge-body p {
+  margin: 0;
+}
+
+.taxonomy-merge-target {
+  max-width: 320px;
+}
+
 @media (max-width: 1160px) {
   .library-loading-grid,
   .library-site-collection[data-view="grid"] {

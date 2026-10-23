@@ -98,7 +98,32 @@ test("the repo panel maps every GitHub field", () => {
     pushed: "3 天前推送",
     pushedAt: "2026-10-19T08:00:00Z",
     archived: true,
+    notice: null,
   });
+});
+
+test("the repo panel explains a missing or private repository", () => {
+  const model = repoPanelModel({ github: { not_found: true, fetched_at: "2026-10-20T00:00:00Z" } }, NOW);
+  assert.deepEqual(model?.notice, { kind: "not_found", text: "仓库不存在或为私有" });
+  assert.equal(model?.stars, null);
+  assert.deepEqual(model?.topics, []);
+  // 限流时后端保留 not_found 标记：仍按不存在解释，不改成“稍后重试”
+  const limited = repoPanelModel({ github: { not_found: true, rate_limited_at: "2026-10-22T00:00:00Z" } }, NOW);
+  assert.equal(limited?.notice?.kind, "not_found");
+  // 残留的旧数字也不展示
+  const stale = repoPanelModel({ github: { not_found: true, stars: 10 } }, NOW);
+  assert.equal(stale?.stars, null);
+  assert.equal(repoPanelModel({ github: { not_found: "yes" } }, NOW), null, "只认布尔 true");
+});
+
+test("the repo panel shows a rate-limit notice only when nothing is known yet", () => {
+  const model = repoPanelModel({ github: { rate_limited_at: "2026-10-22T00:00:00Z" } }, NOW);
+  assert.deepEqual(model?.notice, { kind: "rate_limited", text: "GitHub 限流，稍后自动重试" });
+  const withData = repoPanelModel({ github: { stars: 5, forks: 1, rate_limited_at: "2026-10-22T00:00:00Z" } }, NOW);
+  assert.equal(withData?.notice, null, "有旧数据时照常展示，不打扰");
+  assert.equal(withData?.stars, "5");
+  assert.equal(repoPanelModel({ github: { rate_limited_at: "  " } }, NOW), null);
+  assert.equal(repoPanelModel({ github: { rate_limited_at: 1 } }, NOW), null);
 });
 
 test("repo panel fields degrade one by one", () => {

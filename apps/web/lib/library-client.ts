@@ -37,6 +37,8 @@ import {
   normalizeSiteSimilarityGroupPage,
   normalizeSiteSimilarityRecommendedDecision,
   normalizeSiteSimilarityScan,
+  normalizeTagMergePreview,
+  normalizeTagMergeResult,
   type LibraryCategory,
   type LibraryAnalysisBackfill,
   type LibraryBulkDeleteItem,
@@ -56,6 +58,8 @@ import {
   type LibrarySiteStateInput,
   type LibrarySiteUpdateInput,
   type LibraryTag,
+  type LibraryTagMergePreview,
+  type LibraryTagMergeResult,
   type MetadataBackfillPlan,
   type MetadataBackfillProgress,
   type MetadataBackfillRequest,
@@ -66,6 +70,7 @@ import {
   type SiteSimilarityRecommendedDecisionResult,
   type SiteSimilarityScan,
 } from "./library-contract.ts";
+import { isCategoryIconName } from "./category-icons.ts";
 
 const LIBRARY_BASE = "/api/backend/library";
 const DISCOVER_BASE = "/api/backend/discover";
@@ -201,17 +206,31 @@ export async function listLibraryCategories(signal?: AbortSignal): Promise<Libra
   return normalizeLibraryCategories(await request("/categories", { signal }));
 }
 
-export async function createLibraryCategory(name: string): Promise<LibraryCategory> {
+/** 分类图标只接受白名单里的 lucide 名称；"" 表示恢复按名称自动推断。 */
+function categoryIconField(icon: string | undefined): { icon?: string } {
+  if (icon === undefined) return {};
+  const normalized = icon.trim();
+  if (normalized && !isCategoryIconName(normalized)) throw new TypeError("不支持的分类图标");
+  return { icon: normalized };
+}
+
+export async function createLibraryCategory(name: string, icon?: string): Promise<LibraryCategory> {
   return normalizeLibraryCategory(await request("/categories", {
     method: "POST",
-    body: JSON.stringify({ name: assertLibraryCategoryName(name) }),
+    body: JSON.stringify({ name: assertLibraryCategoryName(name), ...categoryIconField(icon) }),
   }));
 }
 
-export async function updateLibraryCategory(id: string, name: string): Promise<LibraryCategory> {
+/** icon 省略 = 不动现有图标（纯重命名）；"" = 恢复自动推断。 */
+export async function updateLibraryCategory(
+  id: string,
+  name: string,
+  icon?: string,
+): Promise<LibraryCategory> {
+  const iconField = categoryIconField(icon);
   return normalizeLibraryCategory(await request(`/categories/${encodeId(id)}`, {
     method: "PATCH",
-    body: JSON.stringify({ name: assertLibraryCategoryName(name) }),
+    body: JSON.stringify({ name: assertLibraryCategoryName(name), ...iconField }),
   }));
 }
 
@@ -262,6 +281,33 @@ export async function updateLibraryTag(id: string, name: string): Promise<Librar
   return normalizeLibraryTag(await request(`/tags/${encodeId(id)}`, {
     method: "PATCH",
     body: JSON.stringify({ name: assertLibraryTagName(name) }),
+  }));
+}
+
+function mergePair(sourceId: string, targetId: string): { source: string; target: string } {
+  const source = encodeId(sourceId);
+  const target = encodeId(targetId);
+  if (source === target) throw new TypeError("不能把标签合并到它自己");
+  return { source, target };
+}
+
+export async function previewLibraryTagMerge(
+  sourceId: string,
+  targetId: string,
+  signal?: AbortSignal,
+): Promise<LibraryTagMergePreview> {
+  const { source, target } = mergePair(sourceId, targetId);
+  return normalizeTagMergePreview(
+    await request(`/tags/${source}/merge-preview?target_id=${target}`, { signal }),
+  );
+}
+
+/** 单事务：源标签的收藏改带目标标签，源标签删除。 */
+export async function mergeLibraryTag(sourceId: string, targetId: string): Promise<LibraryTagMergeResult> {
+  const { source } = mergePair(sourceId, targetId);
+  return normalizeTagMergeResult(await request(`/tags/${source}/merge`, {
+    method: "POST",
+    body: JSON.stringify({ target_id: targetId.trim() }),
   }));
 }
 

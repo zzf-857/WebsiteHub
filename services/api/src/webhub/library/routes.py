@@ -57,6 +57,9 @@ from webhub.library.schemas import (
     TagCreateRequest,
     TagDeleteResponse,
     TagListResponse,
+    TagMergePreviewResponse,
+    TagMergeRequest,
+    TagMergeResponse,
     TagResponse,
     TagUpdateRequest,
 )
@@ -235,6 +238,27 @@ async def rename_tag(
     _: WriteOriginDependency,
 ) -> TagResponse:
     return await _call(service.update_tag(session, identity.user.id, tag_id, payload.name))
+
+
+@router.get("/tags/{tag_id}/merge-preview", response_model=TagMergePreviewResponse)
+async def preview_tag_merge(
+    tag_id: str,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    target_id: Annotated[str, Query(min_length=1, max_length=36)],
+) -> TagMergePreviewResponse:
+    return await _call(service.tag_merge_preview(session, identity.user.id, tag_id, target_id))
+
+
+@router.post("/tags/{tag_id}/merge", response_model=TagMergeResponse)
+async def merge_tag(
+    tag_id: str,
+    payload: TagMergeRequest,
+    identity: CurrentIdentityDependency,
+    session: DatabaseSessionDependency,
+    _: WriteOriginDependency,
+) -> TagMergeResponse:
+    return await _call(service.merge_tag(session, identity.user.id, tag_id, payload.target_id))
 
 
 @router.delete("/tags/{tag_id}", response_model=TagDeleteResponse)

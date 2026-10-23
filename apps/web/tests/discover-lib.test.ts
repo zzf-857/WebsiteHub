@@ -189,13 +189,113 @@ test("exhausting the queue leaves no hero, and undo brings it back", () => {
   assert.equal(heroActive(state)?.site.id, "b");
 });
 
-test("loading a new batch resets the queue and the undo history", () => {
-  let state = initialHeroState([entry("a")]);
+test("loading a new batch replaces the queue but keeps the undo history", () => {
+  let state = initialHeroState([entry("a"), entry("b")]);
   state = heroReducer(state, { type: "dismiss", id: "a", dismissal: "seen" });
   state = heroReducer(state, { type: "load", entries: [entry("x"), entry("y")] });
   assert.deepEqual(ids(state), ["x", "y"]);
-  assert.equal(state.removed.length, 0);
+  assert.equal(state.removed.length, 1);
+  // “换一批”之后撤销：上一批的项放回队首并成为主卡
+  state = heroReducer(state, { type: "restore", id: "a" });
+  assert.deepEqual(ids(state), ["a", "x", "y"]);
+  assert.equal(heroActive(state)?.site.id, "a");
   assert.equal(heroReducer(state, { type: "restore", id: "a" }), state);
+});
+
+test("a new batch drops items that were just dismissed locally", () => {
+  let state = initialHeroState([entry("a"), entry("b")]);
+  state = heroReducer(state, { type: "dismiss", id: "a", dismissal: "seen" });
+  // 已看的请求还没落地，服务端的新一批又带回了 a
+  state = heroReducer(state, { type: "load", entries: [entry("a"), entry("x")] });
+  assert.deepEqual(ids(state), ["x"]);
+  assert.equal(heroActive(state)?.site.id, "x");
+});
+
+test("opening or marking a queued item seen elsewhere takes it out of the hero queue", () => {
+  let state = initialHeroState([entry("a"), entry("b"), entry("c")]);
+  const opened = withSiteOpened(entry("a").site, "2026-10-22T12:00:00Z");
+  state = heroReducer(state, { type: "update", site: opened });
+  assert.deepEqual(ids(state), ["b", "c"]);
+  assert.equal(heroActive(state)?.site.id, "b", "主卡被移出时下一项补位");
+  assert.equal(state.removed.at(-1)?.dismissal, "open");
+
+  state = heroReducer(state, { type: "update", site: siteFixture({ id: "c", seenAt: "2026-10-22T12:00:00Z" }) });
+  assert.deepEqual(ids(state), ["b"], "缩略图里的项同样移出");
+  assert.equal(heroActive(state)?.site.id, "b");
+  assert.equal(state.removed.at(-1)?.dismissal, "seen");
+
+  state = heroReducer(state, { type: "update", site: siteFixture({ id: "b", resurfaceMuted: true }) });
+  assert.equal(heroActive(state), null);
+  assert.equal(state.removed.at(-1)?.dismissal, "mute");
+});
+
+test("a gallery snooze leaves the queue, but an already-due snooze stays", () => {
+  const due = "2026-10-01T00:00:00Z";
+  const dueEntry = { ...entry("a"), site: siteFixture({ id: "a", resurfaceDueAt: due, resurfaceCount: 1 }) };
+  let state = initialHeroState([dueEntry, entry("b")]);
+  state = heroReducer(state, { type: "update", site: { ...dueEntry.site, starred: true } });
+  assert.deepEqual(ids(state), ["a", "b"], "入队时就带着的到期推迟不算被推迟走");
+  assert.equal(heroActive(state)?.site.starred, true, "其它状态就地更新");
+  state = heroReducer(state, { type: "update", site: { ...dueEntry.site, resurfaceDueAt: "2026-10-01T00:00:00" } });
+  assert.deepEqual(ids(state), ["a", "b"], "同一时刻换了写法也不算新的推迟");
+  const snoozed = withSiteState(entry("b").site, { snoozeDays: 7 }, "2026-10-22T12:00:00Z");
+  state = heroReducer(state, { type: "update", site: snoozed });
+  assert.deepEqual(ids(state), ["a"]);
+  assert.equal(state.removed.at(-1)?.dismissal, "snooze");
+  // 画廊里撤销推迟：放回原位，但不抢当前主卡
+  state = heroReducer(state, { type: "update", site: withSiteState(snoozed, { snoozeDays: 0 }, "2026-10-22T12:00:01Z") });
+  assert.deepEqual(ids(state), ["a", "b"]);
+  assert.equal(heroActive(state)?.site.id, "a");
+});
+
+test("a gallery rollback or undo puts the item back quietly, even after a new batch", () => {
+  let state = initialHeroState([entry("a"), entry("b")]);
+  const seen = withSiteState(entry("b").site, { seen: true }, "2026-10-22T12:00:00Z");
+  state = heroReducer(state, { type: "update", site: seen });
+  assert.deepEqual(ids(state), ["a"]);
+  state = heroReducer(state, { type: "update", site: withSiteState(seen, { seen: false }, "2026-10-22T12:00:01Z") });
+  assert.deepEqual(ids(state), ["a", "b"]);
+  assert.equal(heroActive(state)?.site.id, "a");
+
+  state = heroReducer(state, { type: "update", site: seen });
+  state = heroReducer(state, { type: "load", entries: [entry("x")] });
+  state = heroReducer(state, { type: "update", site: withSiteState(seen, { seen: false }, "2026-10-22T12:00:02Z") });
+  assert.deepEqual(ids(state), ["b", "x"], "上一批的项回到队首");
+  assert.equal(heroActive(state)?.site.id, "x");
+
+  // 队列已空时放回的项成为主卡
+  let empty = initialHeroState([entry("c")]);
+  const cSeen = withSiteState(entry("c").site, { seen: true }, "2026-10-22T12:00:00Z");
+  empty = heroReducer(empty, { type: "update", site: cSeen });
+  assert.equal(heroActive(empty), null);
+  empty = heroReducer(empty, { type: "update", site: withSiteState(cSeen, { seen: false }, "2026-10-22T12:00:01Z") });
+  assert.equal(heroActive(empty)?.site.id, "c");
+});
+
+test("a late response for the original dismissal does not knock an undone item out again", () => {
+  const at = "2026-10-22T12:00:00Z";
+  for (const [dismissal, input] of [
+    ["seen", { seen: true }],
+    ["snooze", { snoozeDays: 7 }],
+    ["mute", { resurfaceMuted: true }],
+  ] as const) {
+    let state = initialHeroState([entry("a"), entry("b")]);
+    const original = entry("a").site;
+    state = heroReducer(state, { type: "dismiss", id: "a", dismissal });
+    const optimistic = withSiteState(original, input, at);
+    state = heroReducer(state, { type: "update", site: optimistic });
+    // 用户在请求落地前点了撤销
+    state = heroReducer(state, { type: "restore", id: "a" });
+    assert.equal(heroActive(state)?.site.id, "a");
+    // 原请求晚到的服务端响应（推迟时间与本地估算略有不同）
+    const saved = dismissal === "snooze" ? { ...optimistic, resurfaceDueAt: "2026-10-29T12:00:03Z" } : optimistic;
+    state = heroReducer(state, { type: "update", site: saved });
+    assert.deepEqual(ids(state), ["a", "b"], `${dismissal}：晚到的响应不再把它挤掉`);
+    // 撤销请求的乐观更新与响应
+    state = heroReducer(state, { type: "update", site: original });
+    assert.deepEqual(ids(state), ["a", "b"]);
+    assert.equal(heroActive(state)?.site.id, "a");
+  }
 });
 
 test("site updates replace the entry data in the queue and the undo history", () => {
@@ -329,6 +429,11 @@ test("optimistic usage updates mirror the backend semantics", () => {
   assert.equal(isUnopened(seen), false);
   assert.equal(withSiteState(seen, { seen: false }, now).seenAt, null);
   assert.equal(withSiteState(site, { resurfaceMuted: true }, now).resurfaceMuted, true);
+
+  const snoozed = withSiteState(site, { snoozeDays: 7 }, now);
+  assert.equal(snoozed.resurfaceDueAt, "2026-10-29T12:00:00.000Z", "推迟先在本地算出到期时间");
+  assert.equal(withSiteState(snoozed, { snoozeDays: 0 }, now).resurfaceDueAt, null, "撤销推迟清空到期时间");
+  assert.equal(withSiteState(site, { starred: true }, now).resurfaceDueAt, null, "其它操作不动推迟");
 });
 
 test("in-place gallery updates take usage signals only, so a card keeps its cover and column", () => {

@@ -90,7 +90,8 @@ export function RediscoverSection() {
     return () => controller.abort();
   }, [shuffle, reloadKey, toast]);
 
-  // 画廊里的打开 / 星标 / 已看同步到主卡队列
+  // 画廊里的打开 / 星标 / 已看 / 推迟同步到主卡队列：不再符合重温条件的即时移出，
+  // 别处撤销或失败回滚后重新符合的放回（lib/discover-hero 的 update）
   useEffect(() => subscribeSiteUpdated((site) => dispatch({ type: "update", site })), []);
 
   const reshuffle = useCallback(() => {
@@ -131,7 +132,9 @@ export function RediscoverSection() {
       const message = heroToastMessage(dismissal);
       if (!input || !message) return;
       const request = changeSiteState(entry.site, input).catch((error: unknown) => {
+        // 回滚广播可能已经把它悄悄放回（不抢主卡）；失败时仍按原来的体验重新提为主卡
         dispatch({ type: "restore", id: entry.site.id });
+        dispatch({ type: "select", id: entry.site.id });
         toast.show({ message: `没有保存成功，已放回：${errorMessage(error, "请稍后重试")}`, tone: "danger" });
         throw error;
       });

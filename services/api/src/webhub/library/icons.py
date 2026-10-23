@@ -79,6 +79,30 @@ SEMANTIC_ICONS = {
 }
 
 
+# 分类图标白名单（Q52）：手选与自动推断都只能落在这里，前端
+# `apps/web/lib/category-icons.ts` 与 `components/ui/dynamic-icon.tsx` 渲染同一组 lucide 图标。
+CATEGORY_ICON_NAMES: frozenset[str] = frozenset(
+    {
+        "Book", "BookOpen", "Bookmark", "Bot", "Briefcase", "Camera", "Cloud", "Code",
+        "Coffee", "Cpu", "Database", "FileText", "Folder", "Gamepad2", "GraduationCap",
+        "Heart", "Image", "Kanban", "Layout", "LayoutTemplate", "Library", "Lightbulb",
+        "LineChart", "Monitor", "Music", "Newspaper", "PenTool", "Server", "Shield",
+        "ShoppingCart", "Star", "Terminal", "User", "Users", "Video", "Wrench", "Zap",
+    }
+)
+
+
+def validate_category_icon(value: object) -> object:
+    """``None`` keeps the icon, ``""`` restores the inferred one, anything else must be listed."""
+
+    if value is None or not isinstance(value, str):
+        return value
+    icon = value.strip()
+    if icon and icon not in CATEGORY_ICON_NAMES:
+        raise ValueError("不支持的分类图标")
+    return icon
+
+
 def infer_category_icon(category_name: str) -> str:
     """
     Infer a Lucide icon based on the category name's semantics.
