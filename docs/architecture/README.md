@@ -36,6 +36,10 @@
 | 1 | Q54 后端稳健性 | `specs/Q54-backend-robustness.md` | 步骤 0 | 与 Q51、Q53 并行 |
 | 2 | Q58 验收跟进项 | `specs/Q58-acceptance-followups.md` | Q51、Q53、Q54 已合并 | 否 |
 | 3 | Q57 端到端自查与迭代 | `specs/Q57-e2e-self-check.md` | Q58 合并 | 否 |
+| 4 | Q59 来源管理（M5 地基） | `specs/Q59-sources-and-groups.md` | Q57 合并 | 否 |
+| 5 | Q60 Agent 推送频道 | `specs/Q60-agent-channels.md` | Q59 合并 | 与 Q61 并行 |
+| 5 | Q61 分栏看板与单来源页 | `specs/Q61-feed-board.md` | Q59 合并 | 与 Q60 并行 |
+| 6 | Q62–Q64 | 开工前由总负责人写 spec | 见队列 | — |
 
 迁移编号：Q51 `20261023_0025`、Q54 `20261023_0026`、Q53 `20261023_0027`（以 spec 为准，取代队列里早先的预留；
 Q52 / Q55 / Q56 实际未加迁移）。并行条目各自接在基线 head（`20261022_0024`）之后；合并时由总负责人

@@ -33,7 +33,7 @@
 | `search` | FTS 关键词 + 可选向量召回与 RRF 融合、语义索引回填 | `/api/search/*` | `service.py`、`fusion.py`、`vectors.py` |
 | `spaces` | Space 与成员、批量回执 | `/api/spaces/*` | `service.py` |
 | `bookmarks` | 书签 HTML 导入：解析、暂存、分类、相似整理、应用、来源台账写入 | `/api/bookmark-imports/*` | `apply.py`、`source_ledger.py`、`persistence/` |
-| `feeds` | RSS / 播客订阅、拉取调度、每日精选 | `/api/feeds/*` | `service.py`、`fetch.py`、`parser.py`、`scheduler.py` |
+| `feeds` | 信息流：来源（RSS / 播客 / Agent 频道）、分组、看板布局、条目、拉取调度、每日精选、OPML | `/api/feeds/*` | `service.py`、`fetch.py`、`parser.py`、`scheduler.py`；M5 起 `groups.py`、`board.py`、`health.py`、`opml.py`、`channels.py` |
 | `media` | 账号鉴权的图片代理与磁盘缓存 | `/api/media/proxy` | `media/` |
 | `agent_access` | 外部 Agent 令牌、审计日志、MCP 服务与工具 | `/api/agent-tokens`、`/api/agent-activity`、`/api/mcp` | `tokens.py`、`mcp_server.py`、`tools.py` |
 | `providers` | 账号级模型 / 搜索 / Embedding / 代码托管 Provider，密钥加密，出站目标校验 | `/api/providers/*` | `service.py`、`registry.py`、`targets.py`、`security.py` |
@@ -55,7 +55,7 @@
 | `app/styles/<area>.css` | 区域样式，经 `globals.css` 引入 | 只用设计令牌；类名带区域前缀 |
 | `tests/` | Node 测试（`.ts` 逻辑 / `.mjs` 渲染源断言） | 见 `CODING_STANDARDS.md` §7 |
 
-导航：顶栏 `components/site-header.tsx`（发现 · 收藏库 · 订阅 · Space；账号菜单放设置类入口）。
+导航：顶栏 `components/site-header.tsx`（发现 · 收藏库 · 订阅 · Space；Q61 起“订阅”改称“信息流”；账号菜单放设置类入口）。
 **同一时间只允许一个执行条目修改 `site-header.tsx`**，spec 会写明归属。
 
 ## 4. 数据模型要点
@@ -66,7 +66,10 @@
   如 `github`）、`version`（乐观锁，只因用户编辑而增加）、`analysis_status/phase`。
 - `site_contents` + FTS `site_content_search`：每站最新一份正文 / README 快照。
 - `site_import_origins` + `bookmark_source_*`：书签来源台账（Q55）。
-- `feeds` / `feed_items`：订阅源与条目（只展示，不入收藏库；收进收藏库时建 `sites` 行并回填 `saved_site_id`）。
+- `feeds` / `feed_items`：信息流的**来源**与**条目**（D8 / D9）。来源种类 `rss` / `podcast` / `agent`；`agent` 来源的 `url`
+  为内部标识 `agent://<slug>`，从不轮询。条目按来源保留期回收为墓碑（Q51），星标或已收进收藏库的条目除外；
+  收进收藏库时建 `sites` 行并回填 `saved_site_id`。M5 新增 `feed_groups`（单层分组）、`feed_boards`（每账号一份看板布局 JSON）。
+  信息流的写入方只有两个：拉取调度（RSS / 播客）与 `feeds/channels.py`（Agent 推送）；`agent_access/` 只调用 `feeds/` 的服务函数。
 - `agent_tokens`（只存 SHA-256）/ `agent_audit_log`（只记写操作）。
 - `provider_configs`：每账号每类最多一个启用项；密钥 AES-256-GCM，AAD 绑定账号/配置/类型/厂商。
 - 迁移链当前 head：`20261022_0024`（以 `db/database.py` 的 `DATABASE_SCHEMA_HEADS` 为准，启动时校验）。
@@ -153,3 +156,9 @@ Provider 地址另有 `providers/targets.py` 校验。
 ### 7.4 新增一个 MCP 工具
 在 `agent_access/tools.py` 实现（复用服务层，不复制业务逻辑），在 `mcp_server.py` 注册；描述用英文写给 LLM；
 读工具无需 `write`；写工具检查 `write`、只做可逆增量操作、追加审计；结果保持紧凑。
+
+### 7.5 信息流的扩展规则（M5）
+- 新的来源种类：在 `feeds.kind` 加值（`feeds` 表允许 batch 重建，见 Q60 的外键处理方式），调度器显式声明是否轮询，
+  条目一律进 `feed_items`，复用已读 / 星标 / 墓碑 / 保存逻辑，不另建条目表。
+- 外部推送的内容是不可信数据（D12）：只存文本与受限 Markdown；前端渲染禁用原始 HTML；经 MCP 读出时带 `content_origin`。
+- 看板与单来源页只读写 Q59 定义的接口；新增栏类型需同时改后端校验、默认布局纯函数与前端判别联合。
