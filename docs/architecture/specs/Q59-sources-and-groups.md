@@ -1,7 +1,7 @@
 # Q59 · 来源管理：分组、每源设置、看板布局与 OPML
 
-- 基线：Q57 合并后的 `claude/loving-maxwell-gfbcxo` HEAD（开工前向总负责人确认哈希）；分支 `q59-work`
-- 迁移：`20261101_0028`，`down_revision` = 开工时的唯一 head（Q57 后预计为 `20261023_0027`）
+- 基线：Q65 合并后的 `claude/loving-maxwell-gfbcxo` HEAD（开工前向总负责人确认哈希）；分支 `q59-work`
+- 迁移：`20261101_0029`，`down_revision = "20261101_0028"`（Q65）
 - 区域：后端 `feeds/`；前端新页面 `/feeds/manage`，类名前缀 `feeds-`（管理页用 `feeds-manage-` 细分）
 - 并行关系：无（Q60、Q61 都依赖本条目）。**不改** `/feeds` 看板主页面的布局（那是 Q61），只把现有“管理”页签链接到新页面
 - 决策依据：`ITERATION_QUEUE.md` “2026-11 方向扩展” D9 / D10
@@ -86,7 +86,7 @@
 
 ## 3. 数据与迁移（必填）
 
-`20261101_0028_feed_groups_and_board.py`：
+`20261101_0029_feed_groups_and_board.py`：
 
 - 新表 `feed_groups`：`id` PK、`user_id` FK users CASCADE、`name` String(40)、`name_key` String(40)（规范化后的去重键）、
   `position` Integer NOT NULL `server_default '0'`、`version` Integer NOT NULL `server_default '1'`、`created_at`、`updated_at`；
@@ -100,7 +100,7 @@
 - 新表 `feed_boards`：`user_id` PK + FK users CASCADE、`version` Integer NOT NULL、`columns_json` Text NOT NULL、`updated_at`。
 - 回填：现有来源 `position` 按 `created_at` 顺序写 0..n-1（迁移内分块）。
 - 降级：删两张新表、删新增列与索引（`feeds` / `feed_items` 无 FTS 触发器，可直接 `drop_column`）。
-- `DATABASE_SCHEMA_HEADS = {"20261101_0028"}`。
+- `DATABASE_SCHEMA_HEADS = {"20261101_0029"}`。
 
 ## 4. 接口契约（必填）
 

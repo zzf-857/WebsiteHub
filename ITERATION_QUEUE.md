@@ -2345,14 +2345,43 @@ WebHub 从“收藏宝藏库”扩展为**个人信息台**：同一个站点里
 - **D13 首页（待用户确认）**：建议首页改为“今日”聚合页——Agent 简报置顶、各分组要闻、一张今日重温卡；发现画廊移到
   `/discover`。在 Q63 开工前由用户拍板；在此之前首页保持发现页不变。
 
+- **D14 内容契约（2026-10-31 追加）**：用户的内容来自 grokbot 转来的 X 帖子与 GitHub 仓库、浏览器书签、RSS 博客与播客、Agent 新闻，
+  形态各异（链接、带图帖子、长文、音频）。WebHub 服务端**一次定义好全部情况**：六种内容类型（`website`、`article`、`repo`、
+  `video`、`post`、`audio`）、每种类型的识别规则与必填 / 可选字段、媒体附件、输入入口总表、去处判定规则。唯一真源为
+  `docs/architecture/CONTENT_CONTRACT.md`，代码真源为 `content/kinds.py` 注册表；契约只追加不改义，带 `contract_version`。
+- **D15 MCP 自描述**：任何 Agent 接入后无需外部文档即可正确使用——`instructions` 摘要、`get_guide` 结构化说明、
+  `inspect_url` 预检（不联网：识别类型、告诉 Agent 需要补哪些字段、是否已收藏）、统一读出信封（`ref`、`kind`、`media`、
+  `content_origin`、`actions`）、可执行的结构化错误（`code` / `message` / `hint`）；支持的客户端另有 MCP resources 与 prompts。
+  WebHub 不抓取登录墙站点（X、微博、小红书等），这类内容由 Agent 提供正文与作者。
+- **D16 修改 CHECK 约束的标准方法**：给 `sites` / `feeds` 的 `kind` 等加取值时，用 SQLite 官方“修改约束”流程
+  （`writable_schema` + `schema_version` + `integrity_check`），不重建表；规则写入 `CODING_STANDARDS.md` §6.2。
+
 ### 里程碑 M5 与条目
 
-执行顺序：先完成 Q58、Q57（当前轮），再做 M5。依赖：Q59 → {Q60, Q61 可并行} → Q62 → Q63（待 D13）；Q64 可在 Q61 后任意时间。
-迁移编号预留：Q59 `20261101_0028`、Q60 `20261101_0029`、Q64 `20261101_0030`（Q61、Q62、Q63 预计无迁移）。
+执行顺序：先完成 Q58、Q57（当前轮），再做 M5。依赖：Q65 → {Q59, Q66 可并行} → {Q60, Q61 可并行} → Q62 → Q63（待 D13）；
+Q64 可在 Q61 后任意时间。
+迁移编号预留：Q65 `20261101_0028`、Q59 `20261101_0029`、Q60 `20261101_0030`、Q64 `20261101_0031`（Q61、Q62、Q63、Q66 预计无迁移）。
+
+## Q65 · 内容契约与自描述 MCP
+
+状态: 待做（M5 第一项）
+
+规格：`docs/architecture/specs/Q65-content-contract.md`
+
+对应: D14 / D15 / D16。`content/` 注册表与媒体校验；新增 `post`（X / 微博 / Threads 等帖子，永不抓取）与 `audio` 类型；
+`save_resource` 接收 Agent 提供的正文、作者、发布时间、媒体；`get_guide`、`inspect_url`、MCP resources / prompts；
+统一读出信封与 `ref`；结构化错误；`instructions` 重写；`WEBHUB_PUBLIC_URL`。
+
+## Q66 · 多形态内容展示
+
+状态: 待做（依赖 Q65；可与 Q59 并行；规格开工前写）
+
+帖子卡与帖子封面（作者、正文、最多 4 图宫格）、音频收藏的播放（卡片与详情页，复用订阅页播放器）、详情页媒体画廊、
+“内容不完整”提示与手动粘贴正文、视频时长徽标；发现页与收藏库的类型筛选与视觉统一（按 `CONTENT_CONTRACT.md` §2 的“展示”列）。
 
 ## Q59 · 来源管理：分组、每源设置、看板布局与 OPML
 
-状态: 待做
+状态: 待做（依赖 Q65）
 
 规格：`docs/architecture/specs/Q59-sources-and-groups.md`
 
@@ -2362,12 +2391,12 @@ WebHub 从“收藏宝藏库”扩展为**个人信息台**：同一个站点里
 
 ## Q60 · Agent 推送频道（MCP）
 
-状态: 待做（依赖 Q59）
+状态: 待做（依赖 Q59、Q65）
 
 规格：`docs/architecture/specs/Q60-agent-channels.md`
 
-对应: D9 / D11 / D12。`agent` 来源种类；MCP 新工具 `list_sources`、`list_feed_items`、`mark_feed_items`、
-`ensure_channel`、`publish_items`；条目新增正文 Markdown、多链接、标签、重要度；限流配额与审计；
+对应: D9 / D11 / D12 / D14。`agent` 来源种类；MCP 新工具 `list_sources`、`list_feed_items`、`get_feed_item`、`mark_feed_items`、
+`ensure_channel`、`publish_items`、`subscribe_feed`、`save_feed_item`；条目新增类型、作者、媒体、正文 Markdown、多链接、标签、重要度；限流配额与审计；
 `/settings/agents` 显示各频道最近推送；`docs/agent-publishing.md` 给 Agent 作者的接入说明。
 
 ## Q61 · 信息流分栏看板与单来源页

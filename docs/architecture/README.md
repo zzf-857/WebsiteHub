@@ -7,10 +7,11 @@
 
 1. `ITERATION_QUEUE.md` 文末“不可动摇的约束” —— 安全与产品红线，永远最高。
 2. `docs/architecture/ARCHITECTURE.md` —— 系统边界、模块职责、数据所有权、全局不变量。
-3. `docs/architecture/CODING_STANDARDS.md` —— 代码风格、目录结构、命名、测试、迁移、提交规范（强制）。
-4. `docs/architecture/specs/Qxx-*.md` —— 单个条目的可执行规格（接口、数据、步骤、测试清单、验收点）。
-5. `ITERATION_QUEUE.md` 条目正文 —— 条目范围与状态；与 spec 冲突时以 spec 为准（spec 更新更晚、更细）。
-6. `PRD.md` —— 产品背景；第 0 节（2026-10 定位修订）优先于正文。
+3. `docs/architecture/CONTENT_CONTRACT.md` —— 内容类型、输入入口、去处与 MCP 读出格式（对所有渠道与 Agent 的统一约定）。
+4. `docs/architecture/CODING_STANDARDS.md` —— 代码风格、目录结构、命名、测试、迁移、提交规范（强制）。
+5. `docs/architecture/specs/Qxx-*.md` —— 单个条目的可执行规格（接口、数据、步骤、测试清单、验收点）。
+6. `ITERATION_QUEUE.md` 条目正文 —— 条目范围与状态；与 spec 冲突时以 spec 为准（spec 更新更晚、更细）。
+7. `PRD.md` —— 产品背景；第 0 节（2026-10 定位修订）优先于正文。
 
 `ACCEPTANCE.md` 定义“做完”的标准与验收流程，执行前必须读。
 新开一个执行 Agent 时，把 `HANDOFF_PROMPT.md` 里的提示词正文发给它（替换条目编号）即可。
@@ -36,10 +37,12 @@
 | 1 | Q54 后端稳健性 | `specs/Q54-backend-robustness.md` | 步骤 0 | 与 Q51、Q53 并行 |
 | 2 | Q58 验收跟进项 | `specs/Q58-acceptance-followups.md` | Q51、Q53、Q54 已合并 | 否 |
 | 3 | Q57 端到端自查与迭代 | `specs/Q57-e2e-self-check.md` | Q58 合并 | 否 |
-| 4 | Q59 来源管理（M5 地基） | `specs/Q59-sources-and-groups.md` | Q57 合并 | 否 |
-| 5 | Q60 Agent 推送频道 | `specs/Q60-agent-channels.md` | Q59 合并 | 与 Q61 并行 |
-| 5 | Q61 分栏看板与单来源页 | `specs/Q61-feed-board.md` | Q59 合并 | 与 Q60 并行 |
-| 6 | Q62–Q64 | 开工前由总负责人写 spec | 见队列 | — |
+| 4 | Q65 内容契约与自描述 MCP（M5 地基） | `specs/Q65-content-contract.md` | Q57 合并 | 否 |
+| 5 | Q59 来源管理 | `specs/Q59-sources-and-groups.md` | Q65 合并 | 与 Q66 并行 |
+| 5 | Q66 多形态内容展示 | 开工前由总负责人写 spec | Q65 合并 | 与 Q59 并行 |
+| 6 | Q60 Agent 推送频道 | `specs/Q60-agent-channels.md` | Q59、Q65 合并 | 与 Q61 并行 |
+| 6 | Q61 分栏看板与单来源页 | `specs/Q61-feed-board.md` | Q59 合并 | 与 Q60 并行 |
+| 7 | Q62–Q64 | 开工前由总负责人写 spec | 见队列 | — |
 
 迁移编号：Q51 `20261023_0025`、Q54 `20261023_0026`、Q53 `20261023_0027`（以 spec 为准，取代队列里早先的预留；
 Q52 / Q55 / Q56 实际未加迁移）。并行条目各自接在基线 head（`20261022_0024`）之后；合并时由总负责人

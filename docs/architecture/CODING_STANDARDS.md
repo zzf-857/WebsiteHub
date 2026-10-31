@@ -100,7 +100,11 @@ db/models      SQLAlchemy 模型与约束
 `services/api/alembic/versions/YYYYMMDD_NNNN_<slug>.py`，`revision = "YYYYMMDD_NNNN"`，`NNNN` 全局递增。
 
 ### 6.2 写法
-- 加列用原生 `op.add_column`；`NOT NULL` 必须带 `server_default`；**禁止对 `sites` 做 batch 重建**（FTS 触发器）。
+- 加列用原生 `op.add_column`；`NOT NULL` 必须带 `server_default`；**禁止对 `sites` 做 batch 重建**（FTS 触发器、9 张表外键指向它、FTS 按 rowid 关联）。
+- **放宽 / 修改 CHECK 约束**（如给 `kind` 加取值）一律用 SQLite 官方“修改约束”流程（D16），不重建表：同一事务内读 `PRAGMA schema_version`
+  → `PRAGMA writable_schema=ON` → 对 `sqlite_master` 中该表建表 SQL 做**断言恰好出现一次**的精确字符串替换 → `PRAGMA schema_version = 原值 + 1`
+  → `PRAGMA writable_schema=OFF` → `PRAGMA integrity_check` 必须为 `ok`。只允许放宽（已有数据必然满足新约束）；收紧须先在迁移里改写数据。
+  函数以冻结副本放在迁移文件内（首个实现见 Q65 的 `20261101_0028`）。
 - 删列的降级参考 `20260731_0019`：先卸下引用该表的触发器，删列，再重建触发器。
 - 数据回填在迁移内分块（按 id 分页），不触碰 `version`、`updated_at`。
 - 迁移禁止 import 应用代码；需要的规则复制一份冻结副本并在注释说明。

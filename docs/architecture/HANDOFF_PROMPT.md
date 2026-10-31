@@ -9,8 +9,9 @@
 | 2 | `Q51` / `Q53` / `Q54` | `q51-work` / `q53-work` / `q54-work` | 三个可同时派给三个 Agent（各用独立克隆或 worktree） |
 | 3 | `Q58` | `q58-work` | 第 2 轮验收跟进项；第 2 轮已于 2026-10-23 验收合并 |
 | 4 | `Q57` | `q57-work` | Q58 合并后再派 |
-| 5 | `Q59` | `q59-work` | Q57 合并后再派（M5 地基） |
-| 6 | `Q60` / `Q61` | `q60-work` / `q61-work` | Q59 合并后，两个 Agent 并行 |
+| 5 | `Q65` | `q65-work` | Q57 合并后再派（M5 地基：内容契约与自描述 MCP） |
+| 6 | `Q59` | `q59-work` | Q65 合并后（Q66 的 spec 写好后可与之并行） |
+| 7 | `Q60` / `Q61` | `q60-work` / `q61-work` | Q59 合并后，两个 Agent 并行 |
 
 ---
 
@@ -41,6 +42,7 @@ WebHub 是个人“收藏宝藏库”：收藏网站 / 文章 / GitHub 仓库 / 
 3. docs/architecture/ARCHITECTURE.md —— 模块边界、数据所有权、不变量 I1–I12
 4. docs/architecture/CODING_STANDARDS.md —— 强制代码规范（结构、命名、样式、迁移、测试、提交）
 5. docs/architecture/ACCEPTANCE.md —— “做完”的定义、自查表、交付报告模板
+   （涉及内容类型、MCP 或输入入口的条目，另读 docs/architecture/CONTENT_CONTRACT.md）
 6. 你的 spec：docs/architecture/specs/ 下对应文件（Q57-0 读 Q57-e2e-self-check.md 的 §2）
 7. 本机若存在 LOCAL_DEV.md（不进 Git），按其中说明处理本机账号与数据目录
 spec 与 ITERATION_QUEUE.md 条目正文冲突时以 spec 为准；spec 没写清楚的地方不要自行发明，写进交付报告“偏差 / 疑问”。

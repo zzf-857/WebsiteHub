@@ -33,6 +33,7 @@
 | `search` | FTS 关键词 + 可选向量召回与 RRF 融合、语义索引回填 | `/api/search/*` | `service.py`、`fusion.py`、`vectors.py` |
 | `spaces` | Space 与成员、批量回执 | `/api/spaces/*` | `service.py` |
 | `bookmarks` | 书签 HTML 导入：解析、暂存、分类、相似整理、应用、来源台账写入 | `/api/bookmark-imports/*` | `apply.py`、`source_ledger.py`、`persistence/` |
+| `content` | 内容契约的代码实现：类型注册表、永不抓取名单、媒体附件校验、统一读出信封（纯函数，无 I/O；Q65） | — | `kinds.py`、`fetch_policy.py`、`media.py`、`envelope.py` |
 | `feeds` | 信息流：来源（RSS / 播客 / Agent 频道）、分组、看板布局、条目、拉取调度、每日精选、OPML | `/api/feeds/*` | `service.py`、`fetch.py`、`parser.py`、`scheduler.py`；M5 起 `groups.py`、`board.py`、`health.py`、`opml.py`、`channels.py` |
 | `media` | 账号鉴权的图片代理与磁盘缓存 | `/api/media/proxy` | `media/` |
 | `agent_access` | 外部 Agent 令牌、审计日志、MCP 服务与工具 | `/api/agent-tokens`、`/api/agent-activity`、`/api/mcp` | `tokens.py`、`mcp_server.py`、`tools.py` |
@@ -162,3 +163,10 @@ Provider 地址另有 `providers/targets.py` 校验。
   条目一律进 `feed_items`，复用已读 / 星标 / 墓碑 / 保存逻辑，不另建条目表。
 - 外部推送的内容是不可信数据（D12）：只存文本与受限 Markdown；前端渲染禁用原始 HTML；经 MCP 读出时带 `content_origin`。
 - 看板与单来源页只读写 Q59 定义的接口；新增栏类型需同时改后端校验、默认布局纯函数与前端判别联合。
+
+### 7.6 内容类型与输入（M5）
+- 内容类型、字段、去处与 MCP 读出格式的唯一真源是 `docs/architecture/CONTENT_CONTRACT.md`；代码侧的真源是 `content/kinds.py` 的注册表，
+  `get_guide`、类型筛选、封面选择都从注册表派生，**不得**在别处再写一份类型列表（前端的 `LIBRARY_SITE_KINDS` 是唯一例外，
+  由 Q65 的一致性测试与后端比对）。
+- 任何新的输入入口都要回答三件事并写进契约 §4：进哪个去处、类型怎么识别、服务端能否抓取。
+
